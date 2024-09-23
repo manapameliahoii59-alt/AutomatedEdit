@@ -3,5 +3,8 @@
 import os
 
 os.system("pyside6-rcc resource/resource.qrc -o resource_rc.py")  # 编译资源文件
-os.system("pyside6-uic view/login_window.ui -o view/ui_login_window.py")  # 编译ui文件
-os.system("pyside6-uic view/main_window.ui -o view/ui_main_window.py")  # 编译ui文件
+ui_dirs = ["view", "ui_page"]
+for ui_dir in ui_dirs:
+    for file in os.listdir(ui_dir):
+        if file.endswith(".ui"):
+            os.system("pyside6-uic -o %s/ui_%s.py %s/%s" % (ui_dir, file[:-3], ui_dir, file))  # 编译ui文件

@@ -38,5 +38,5 @@ def main():
 try:
     main()
 except Exception as e:
-    logger.error(e)
+    logger.exception(e)
     show_dialog(parent=None, content='程序出现异常，请尝试重新运行！')

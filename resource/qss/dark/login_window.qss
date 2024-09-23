@@ -12,6 +12,11 @@ border-radius:10px;
 background:rgba(39, 39, 39,.6);
 }
 
+#image{
+margin-top:8px;
+border-radius:2px;
+}
+
 #copyright{
 color:white;
 background:transparent;

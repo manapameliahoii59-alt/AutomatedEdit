@@ -1,4 +1,5 @@
 # coding:utf-8
+import datetime
 
 from qfluentwidgets import (qconfig, QConfig, ConfigItem, BoolValidator, ColorConfigItem)
 
@@ -18,11 +19,11 @@ class Config(MyQConfig):
     save_password = ConfigItem("MainWindow", "save_password", True, BoolValidator())
 
 
-YEAR = 2023
+YEAR = datetime.datetime.now().year
 AUTHOR = "Cheukfung"
 VERSION = '0.0.1'
 FEEDBACK_URL = "https://github.com/Cheukfung"
 
 cfg = Config()
-qconfig.themeColor = ColorConfigItem("QFluentWidgets", "ThemeColor", '#70d5f3')
+# qconfig.themeColor = ColorConfigItem("QFluentWidgets", "ThemeColor", '#70d5f3')
 qconfig.load('config.json', cfg)

@@ -92,7 +92,6 @@
             <font>
              <family>黑体</family>
              <pointsize>18</pointsize>
-             <weight>50</weight>
              <bold>false</bold>
             </font>
            </property>
@@ -235,7 +234,7 @@
              </property>
              <property name="minimumSize">
               <size>
-               <width>119</width>
+               <width>120</width>
                <height>40</height>
               </size>
              </property>
