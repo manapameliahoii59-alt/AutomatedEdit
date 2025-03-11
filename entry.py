@@ -1,6 +1,7 @@
 import sys
 
 from PySide6.QtCore import Qt, QTranslator
+from PySide6.QtGui import QFont
 from PySide6.QtWidgets import QApplication
 
 from common.config import cfg
@@ -11,8 +12,10 @@ from view.main_window import MainWindow
 
 # 适配缩放比例
 QApplication.setHighDpiScaleFactorRoundingPolicy(Qt.HighDpiScaleFactorRoundingPolicy.PassThrough)
-
 app = QApplication(sys.argv)
+font = app.font()
+font.setHintingPreference(QFont.HintingPreference.PreferNoHinting)
+app.setFont(font)
 app.setAttribute(Qt.AA_DontCreateNativeWidgetSiblings)
 translator = QTranslator()
 translator.load(":/resource/i18n/zh.qm")
