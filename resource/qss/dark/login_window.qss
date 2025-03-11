@@ -21,8 +21,3 @@ border-radius:2px;
 color:white;
 background:transparent;
 }
-
-CloseButton{
-    qproperty-normalColor: white;
-    qproperty-normalBackgroundColor: transparent;
-}

@@ -328,7 +328,7 @@
         <translation>PyQt-Fluent-Widgets 将在后台继续运行</translation>
     </message>
     <message>
-        <location filename="../../View/setting_interface/setting_interface.py" line="156"/>
+        <location filename="../../View/setting_interface/setting_page.py" line="156"/>
         <source>Software update</source>
         <translation>软件更新</translation>
     </message>

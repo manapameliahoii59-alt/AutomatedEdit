@@ -74,5 +74,5 @@ fabric.properties
 config.json
 logs
 resource_rc.py
-view/ui_login_window.py
+ui_view/ui_login_window.py
 view/ui_main_window.py

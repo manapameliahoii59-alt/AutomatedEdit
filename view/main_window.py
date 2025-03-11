@@ -1,11 +1,14 @@
+import sys
+
+from PySide6.QtCore import QRect
 from PySide6.QtGui import QIcon
 from qfluentwidgets import FluentWindow, NavigationItemPosition
 
 from components.icon import MyIcon
 from qfluentwidgets import FluentIcon as FIF
-from pages.page_one import PageOne
-from pages.page_two import PageTwo
-from view.setting_interface import SettingInterface
+from view.pages.page_one import PageOne
+from view.pages.page_two import PageTwo
+from view.pages.setting_page import SettingInterface
 
 
 class MainWindow(FluentWindow):
@@ -13,13 +16,18 @@ class MainWindow(FluentWindow):
 
     def __init__(self):
         super().__init__()
-
+        if sys.platform == "darwin":
+            self.navigationInterface.panel.setReturnButtonVisible(False)
+            self.navigationInterface.panel.topLayout.setContentsMargins(4, 24, 4, 0)
         # 创建子界面，实际使用时将 Widget 换成自己的子界面
         self.settingInterface = SettingInterface(self)
         self.pageOne = PageOne(self)
         self.pageTwo = PageTwo(self)
         self.init_navigation()
         self.init_window()
+
+    def systemTitleBarRect(self, size):
+        return QRect(0, 0, 75, size.height())
 
     def init_navigation(self):
         sub_interface_list = [
@@ -32,7 +40,12 @@ class MainWindow(FluentWindow):
         self.addSubInterface(self.settingInterface, FIF.SETTING, 'Settings', NavigationItemPosition.BOTTOM)
 
     def init_window(self):
+        if sys.platform != "darwin":
+            self.setWindowIcon(QIcon(':/resource/images/logo.png'))
+            self.setWindowTitle('MyApp')
         self.resize(900, 700)
-        # 访问qt资源
-        self.setWindowIcon(QIcon(':/resource/images/logo.png'))
-        self.setWindowTitle('MyApp')
+        # 把窗口放在屏幕中间
+        self.move((self.screen().size().width() - self.width()) / 2,
+                  (self.screen().size().height() - self.height()) / 2)
+
+

@@ -1,5 +1,6 @@
 *{
 outline:none;
+color:black;
 }
 
 #frame{
@@ -20,9 +21,4 @@ border-radius:2px;
 #copyright{
 color:rgba(152, 159, 188, 1);
 background:transparent;
-}
-
-CloseButton {
-    qproperty-normalColor: black;
-    qproperty-normalBackgroundColor: transparent;
 }

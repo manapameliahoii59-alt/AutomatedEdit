@@ -3,7 +3,7 @@
 ################################################################################
 ## Form generated from reading UI file 'page_two.ui'
 ##
-## Created by: Qt User Interface Compiler version 6.6.2
+## Created by: Qt User Interface Compiler version 6.7.0
 ##
 ## WARNING! All changes made in this file will be lost when recompiling UI file!
 ################################################################################
@@ -26,7 +26,7 @@ class Ui_page_two(object):
         page_two.resize(723, 456)
         self.pushButton = PushButton(page_two)
         self.pushButton.setObjectName(u"pushButton")
-        self.pushButton.setGeometry(QRect(310, 190, 111, 31))
+        self.pushButton.setGeometry(QRect(290, 190, 111, 31))
 
         self.retranslateUi(page_two)
 

@@ -16,14 +16,27 @@
   <widget class="PushButton" name="pushButton">
    <property name="geometry">
     <rect>
-     <x>310</x>
-     <y>190</y>
+     <x>280</x>
+     <y>120</y>
      <width>111</width>
      <height>31</height>
     </rect>
    </property>
    <property name="text">
     <string>测试按钮</string>
+   </property>
+  </widget>
+  <widget class="PushButton" name="pushButton_2">
+   <property name="geometry">
+    <rect>
+     <x>280</x>
+     <y>190</y>
+     <width>111</width>
+     <height>31</height>
+    </rect>
+   </property>
+   <property name="text">
+    <string>耗时操作演示</string>
    </property>
   </widget>
  </widget>

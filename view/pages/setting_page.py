@@ -2,12 +2,12 @@
 from PySide6.QtCore import Qt, QUrl, Signal
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import QWidget, QLabel
-from qfluentwidgets import FluentIcon as FIcon, CustomColorSettingCard, setThemeColor, InfoBarPosition
+from qfluentwidgets import FluentIcon as FIcon, CustomColorSettingCard, setThemeColor, InfoBarPosition, qconfig
 from qfluentwidgets import (SettingCardGroup, SwitchSettingCard, OptionsSettingCard, PrimaryPushSettingCard, ScrollArea,
                             ExpandLayout, InfoBar, setTheme)
 
 from common.config import cfg, FEEDBACK_URL, VERSION, YEAR, AUTHOR
-from common.public import set_stylesheet
+from common.utils import StyleSheet, show_dialog
 from components.icon import MyIcon
 
 
@@ -16,12 +16,14 @@ class SettingInterface(ScrollArea):
 
     def __init__(self, parent=None):
         super().__init__(parent=parent)
+        self._parent = parent
         self.setObjectName("setting_interface")
         self.scrollWidget = QWidget()
 
         self.expandLayout = ExpandLayout(self.scrollWidget)
         # setting label
         self.settingLabel = QLabel("设置", self)
+        self.settingLabel.setObjectName('settingLabel')
 
         # personalization
         self.personalGroup = SettingCardGroup("账号设置", self.scrollWidget)
@@ -72,7 +74,7 @@ class SettingInterface(ScrollArea):
         )
 
         self.__init_widget()
-        set_stylesheet(self, 'setting_interface')
+        StyleSheet.SETTINGS.apply(self)
 
     def __init_widget(self):
         self.resize(500, 400)
@@ -113,13 +115,17 @@ class SettingInterface(ScrollArea):
         )
 
     def __logout(self):
-        self.logout.emit()
+        def do_logout():
+            qconfig.set(cfg.password, '')
+            qconfig.set(cfg.auto_login, False)
+            self._parent.close()
+        show_dialog(self, '退出登录', '提示',callback= do_logout)
+
 
     def __connect_signal_to_slot(self):
         """ connect signal to slot """
         cfg.appRestartSig.connect(self.__show_restart_tooltip)
         cfg.themeChanged.connect(setTheme)
-        cfg.themeChanged.connect(lambda: set_stylesheet(self, 'setting_interface'))
         self.themeColorCard.colorChanged.connect(setThemeColor)
         # about
         self.logoutCard.clicked.connect(self.__logout)
