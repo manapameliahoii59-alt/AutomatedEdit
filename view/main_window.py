@@ -19,6 +19,8 @@ class MainWindow(FluentWindow):
         if sys.platform == "darwin":
             self.navigationInterface.panel.setReturnButtonVisible(False)
             self.navigationInterface.panel.topLayout.setContentsMargins(4, 24, 4, 0)
+        else:
+            self.navigationInterface.setExpandWidth(150)
         # 创建子界面，实际使用时将 Widget 换成自己的子界面
         self.settingInterface = SettingInterface(self)
         self.pageOne = PageOne(self)
@@ -30,14 +32,15 @@ class MainWindow(FluentWindow):
         return QRect(0, 0, 75, size.height())
 
     def init_navigation(self):
+        # 新增页面需要再此处添加
         sub_interface_list = [
-            {'widget': self.pageOne, 'icon': MyIcon.CLICK, 'text': 'Home'},
-            {'widget': self.pageTwo, 'icon': MyIcon.EXCEL, 'text': 'Video library'}
+            {'widget': self.pageOne, 'icon': MyIcon.CLICK, 'text': '页面一'},
+            {'widget': self.pageTwo, 'icon': MyIcon.EXCEL, 'text': '页面二'}
         ]
         for item in sub_interface_list:
             self.addSubInterface(item['widget'], item['icon'], item['text'])
 
-        self.addSubInterface(self.settingInterface, FIF.SETTING, 'Settings', NavigationItemPosition.BOTTOM)
+        self.addSubInterface(self.settingInterface, FIF.SETTING, '设置', NavigationItemPosition.BOTTOM)
 
     def init_window(self):
         if sys.platform != "darwin":
@@ -47,5 +50,3 @@ class MainWindow(FluentWindow):
         # 把窗口放在屏幕中间
         self.move((self.screen().size().width() - self.width()) / 2,
                   (self.screen().size().height() - self.height()) / 2)
-
-
