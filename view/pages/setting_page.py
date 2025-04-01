@@ -78,7 +78,7 @@ class SettingInterface(ScrollArea):
 
     def __init_widget(self):
         self.resize(500, 400)
-        self.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.setViewportMargins(0, 70, 0, 50)
         self.setWidget(self.scrollWidget)
         self.setWidgetResizable(True)
@@ -107,7 +107,7 @@ class SettingInterface(ScrollArea):
         InfoBar.warning(
             title='配置修改成功',
             content='修改会在重启软件后生效',
-            orient=Qt.Horizontal,
+            orient=Qt.Orientation.Horizontal,
             isClosable=True,
             position=InfoBarPosition.TOP_RIGHT,
             duration=1500,  # won't disappear automatically

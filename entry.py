@@ -16,7 +16,7 @@ app = QApplication(sys.argv)
 font = app.font()
 font.setHintingPreference(QFont.HintingPreference.PreferNoHinting)
 app.setFont(font)
-app.setAttribute(Qt.AA_DontCreateNativeWidgetSiblings)
+app.setAttribute(Qt.ApplicationAttribute.AA_DontCreateNativeWidgetSiblings) # 解决弹dialog后frameless窗口无法在调整大小
 translator = QTranslator()
 translator.load(":/resource/i18n/zh.qm")
 app.installTranslator(translator)
