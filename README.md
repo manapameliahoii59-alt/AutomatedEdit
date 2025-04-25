@@ -4,6 +4,8 @@
 
 <div align="center">
 
+**中文** | [English](./README_EN.md)
+
 [![Python 3.8+](https://img.shields.io/badge/Python-3.8%2B-blue?color=#4ec820)]()
 [![Download](https://img.shields.io/badge/PySide6-6.7.0-green?color=#4ec820)]()
 [![GPLv3](https://img.shields.io/badge/License-GPLv3-blue?color=#4ec820)](LICENSE)
