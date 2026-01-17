@@ -76,3 +76,13 @@ logs
 resource_rc.py
 ui_view/ui_login_window.py
 view/ui_main_window.py
+
+# Python
+__pycache__/
+*.egg-info/
+dist/
+build/
+*.spec
+
+# uv
+.venv/

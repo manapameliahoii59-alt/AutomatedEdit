@@ -50,11 +50,11 @@ Designer使用，专为PySide6开发者打造的快速开发解决方案。
 git clone https://github.com/Cheukfung/pyqt-fluent-widgets-template.git
 cd pyqt-fluent-widgets-template
 # 安装依赖
-pip install -r requirements.txt
+uv sync
 # 打包资源
-python pack_resources.py
+uv run pack_resources.py
 # 运行
-python entry.py
+uv run entry.py
 ```
 
 ### 开发流程
@@ -83,10 +83,10 @@ python pack_resources.py
 
 ```bash
 # 安装打包工具
-pip install nuitka
+# (已包含在依赖中)
 
 # 执行打包脚本
-python build.py
+uv run build.py
 ```
 
 ### 生成安装包

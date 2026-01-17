@@ -49,11 +49,11 @@ A modern UI template based on [PyQt-Fluent-Widgets](https://github.com/zhiyiYo/P
 git clone [https://github.com/Cheukfung/pyqt-fluent-widgets-template.git](https://github.com/Cheukfung/pyqt-fluent-widgets-template.git)
 cd pyqt-fluent-widgets-template
 # Install dependencies
-pip install -r requirements.txt
+uv sync
 # Pack resources
-python pack_resources.py
+uv run pack_resources.py
 # Run the application
-python entry.py
+uv run entry.py
 ```
 
 ### Development Workflow
@@ -82,10 +82,10 @@ python pack_resources.py
 
 ```bash
 # Install the packaging tool
-pip install nuitka
+# (Included in dependencies)
 
 # Execute the build script
-python build.py
+uv run build.py
 ```
 
 ### Generating an Installer
