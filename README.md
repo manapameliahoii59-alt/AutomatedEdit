@@ -19,7 +19,10 @@ Designer使用，专为PySide6开发者打造的快速开发解决方案。
 ## ✨ 主要特性
 
 - 🎨 内置Fluent Design风格组件库
-- 📝 Qt Designer友好，支持可视化设计
+- 🏗️ **MVVM 架构设计**，逻辑与界面彻底分离
+- ⚡ **懒加载机制**，优化应用启动速度
+- � **依赖注入容器**，提升代码可测试性
+- �📝 Qt Designer友好，支持可视化设计
 - 🔄 预置登录界面与主界面切换逻辑
 - ⚡ QRunnable异步任务封装
 - 📦 开箱即用的项目模板结构
@@ -69,13 +72,23 @@ uv run entry.py
 python pack_resources.py
 ```
 
-#### 业务逻辑开发
+#### 业务逻辑开发 (MVVM)
 
-- 控件事件绑定：在 `view/pages/` 对应的handler文件中添加逻辑
-- 新增页面：
-    1. 在 `ui_page/` 添加新.ui文件
-    2. 运行资源打包脚本
-    3. 在 `view/pages/` 创建对应的.py和_handler.py文件（参考现有页面结构）
+本项目采用 MVVM 架构，开发新页面推荐遵循以下流程：
+
+1. **定义 View (视图)**:
+   - 在 `app/ui/views/` 下创建新目录（如 `my_page/`）。
+   - 创建 `view.py`，继承自 `QWidget` 和 UI 类。
+   - 仅负责 UI 初始化和信号绑定，**不包含业务逻辑**。
+
+2. **定义 ViewModel (视图模型)**:
+   - 在同级目录创建 `view_model.py`，继承自 `app.core.view_model.ViewModel`。
+   - 定义 `Signal` 用于通知 View 更新。
+   - 实现业务方法（如网络请求、数据处理）。
+
+3. **注册导航**:
+   - 在 `app/ui/views/main_window/view.py` 中使用 `LazyViewProxy` 注册新页面。
+   - 这样可以确保页面只有在被点击时才初始化，提升启动性能。
 
 ## 📦 项目打包
 
@@ -98,6 +111,20 @@ uv run build.py
 ```
 ├── api/                    # API接口层
 │   └── api.py              # 接口主模块
+├── app/                    # 应用核心代码
+│   ├── core/               # 核心架构
+│   │   ├── container.py    # 依赖注入容器
+│   │   ├── navigation.py   # 导航与懒加载代理
+│   │   └── view_model.py   # ViewModel基类
+│   ├── data/               # 数据层
+│   │   ├── models/         # 数据模型 (User等)
+│   │   └── services/       # 业务服务 (AuthService等)
+│   └── ui/                 # 界面层
+│       └── views/          # 页面模块
+│           ├── login/      # 登录模块 (MVVM)
+│           ├── main_window/# 主窗口
+│           ├── page_one/   # 示例页面1
+│           └── settings/   # 设置页面
 ├── common/                 # 通用工具库
 │   ├── aes.py              # AES加密模块
 │   ├── config.py           # 配置管理
@@ -107,17 +134,7 @@ uv run build.py
 ├── resource/               # 资源文件目录
 ├── ui_page/                # 页面UI文件目录
 ├── ui_view/                # 登录界面UI文件
-├── view/                   # 视图层
-│   ├── login_window/       # 登录窗口模块
-│   │   ├── handler.py      # 登录逻辑处理
-│   │   └── window.py       # 登录窗口实现
-│   ├── pages/              # 功能页面
-│   │   ├── page_one.py              # 页面1视图
-│   │   ├── page_one_handler.py      # 页面1业务逻辑
-│   │   ├── page_two.py              # 页面2视图
-│   │   └── setting_page.py          # 设置页面
-│   └── main_window.py      # 主窗口控制器
-├── worker/                 # 异步任务管理
+├── workers/                # 异步任务管理
 │   └── TaskManager.py      # 任务管理器
 ├── build.py                # 打包脚本
 ├── entry.py                # 程序入口
@@ -126,7 +143,9 @@ uv run build.py
 
 ## 💡 最佳实践
 
-- 使用 **Handler分层架构** 分离UI与业务逻辑
+- 使用 **MVVM 架构** 分离UI与业务逻辑
+- 通过 **LazyViewProxy** 实现页面的懒加载
+- 使用 **依赖注入** 管理服务实例
 - 通过 **QRunnable** 实现耗时操作异步化
 - 利用 **config.json** 管理用户配置
 - 使用预置的 **Logger** 模块进行日志记录
