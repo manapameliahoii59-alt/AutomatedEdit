@@ -11,11 +11,14 @@ from common.utils import StyleSheet, show_dialog
 from components.icon import MyIcon
 
 
+from app.ui.views.settings.view_model import SettingsViewModel
+
 class SettingInterface(ScrollArea):
     logout = Signal()
 
     def __init__(self, parent=None):
         super().__init__(parent=parent)
+        self.vm = SettingsViewModel(self)
         self._parent = parent
         self.setObjectName("setting_interface")
         self.scrollWidget = QWidget()
