@@ -14,7 +14,7 @@ class LoginViewModel(ViewModel):
     
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.auth_service = AuthService()
+        self.auth_service = None # Injected via DI
 
     def login(self, username, password, captcha, code, remember_me, auto_login):
         # Validation

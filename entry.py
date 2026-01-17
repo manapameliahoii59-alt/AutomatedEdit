@@ -9,7 +9,8 @@ from common.my_logger import my_logger as logger
 from common.utils import show_dialog
 # from view.login_window.window import LoginWindow
 from app.ui.views.login.view import LoginWindow
-from view.main_window import MainWindow
+# from view.main_window import MainWindow
+from app.ui.views.main_window.view import MainWindow
 
 # 适配缩放比例
 QApplication.setHighDpiScaleFactorRoundingPolicy(Qt.HighDpiScaleFactorRoundingPolicy.PassThrough)

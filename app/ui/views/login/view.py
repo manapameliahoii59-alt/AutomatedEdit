@@ -8,12 +8,12 @@ from common.config import cfg, YEAR, AUTHOR
 from common.utils import set_window_center, StyleSheet, show_dialog
 from common.aes import aes_decrypt
 from ui_view.ui_login_window import Ui_Dialog
-from app.ui.views.login.view_model import LoginViewModel
+from app.core.container import Container
 
 class LoginWindow(FramelessDialog):
     def __init__(self):
         super().__init__()
-        self.vm = LoginViewModel(self)
+        self.vm = Container.login_view_model(self)
         self.ui = Ui_Dialog()
         self.ui.setupUi(self)
         
