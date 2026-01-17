@@ -1,8 +1,6 @@
 import argparse
 import os
-import shutil
 import sys
-import subprocess
 from pathlib import Path
 
 # Add project root to path
@@ -42,7 +40,8 @@ def main():
 
     if not args.quick_test:
         build_command = "nuitka --standalone --mingw64 --enable-plugin=pyside6 "
-        build_command += "--windows-disable-console "
+        build_command += "--assume-yes-for-downloads "
+        build_command += "--windows-console-mode=disable "
         build_command += "--windows-icon-from-ico=resource/images/logo.png "
         build_command += f"--output-dir=out "
         build_command += f"--windows-company-name={AUTHOR} --windows-product-name={APP_NAME} "

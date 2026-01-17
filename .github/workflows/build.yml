@@ -12,7 +12,7 @@ jobs:
     permissions:
       contents: write
     env:
-      NUITKA_AssumeYesForDownloads: 1
+      NUITKA_ASSUME_YES_FOR_DOWNLOADS: 1
     
     steps:
     - name: Checkout code
