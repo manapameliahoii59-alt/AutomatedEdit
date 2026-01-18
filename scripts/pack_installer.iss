@@ -6,7 +6,7 @@
 #define MyAppPublisher "Cheukfung"
 #define MyAppURL "https://github.com/Cheukfung"
 #define MyAppExeName "entry.exe"
-#define P ".\"
+#define P "..\"
 
 [Setup]
 ; NOTE: The value of AppId uniquely identifies this application. Do not use the same AppId value in installers for other applications.
@@ -24,7 +24,7 @@ DefaultGroupName={#MyAppName}
 PrivilegesRequired=lowest
 ; LicenseFile="{#P}\resource\license.txt"
 OutputDir="{#P}\release"
-OutputBaseFilename="{#MyAppName}-v{#MyAppVersion}"
+OutputBaseFilename="{#MyAppName}-v{#MyAppVersion}-installer"
 ; SetupIconFile={#P}\resource\images\logo.ico
 UninstallDisplayName=Uninstall {#MyAppName}
 ; UninstallDisplayIcon={#P}\resource\images\logo.ico

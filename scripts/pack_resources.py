@@ -2,6 +2,11 @@
 # 用于运行前编译pyside的资源文件和ui文件
 import os
 import site
+from pathlib import Path
+
+# Ensure we are running from project root
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+os.chdir(PROJECT_ROOT)
 
 # 找到site-packages目录
 site_packages_path = site.getsitepackages()[-1]

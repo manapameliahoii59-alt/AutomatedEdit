@@ -27,7 +27,7 @@ def run_cmd(cmd: str) -> int:
 def build_resources() -> None:
     """Run pack_resources.py"""
     print("Building resources...")
-    if run_cmd(f"{sys.executable} pack_resources.py") != 0:
+    if run_cmd(f"{sys.executable} scripts/pack_resources.py") != 0:
         sys.exit("Failed to build resources")
 
 def main():

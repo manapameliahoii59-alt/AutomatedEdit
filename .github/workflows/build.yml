@@ -33,13 +33,13 @@ jobs:
         
     - name: Build Windows
       run: |
-        uv run python build.py
+        uv run python scripts/build.py
 
     - name: Install Inno Setup
       run: choco install innosetup --no-progress
 
     - name: Build Installer
-      run: iscc pack_installer.iss
+      run: iscc scripts/pack_installer.iss
       shell: cmd
         
     - name: Create Portable Zip

@@ -99,46 +99,33 @@ python pack_resources.py
 # (已包含在依赖中)
 
 # 执行打包脚本
-uv run build.py
+uv run python scripts/build.py
 ```
 
 ### 生成安装包
 
 推荐使用 [Inno Setup](https://jrsoftware.org/isinfo.php) 创建Windows安装程序
+(脚本位于 `scripts/pack_installer.iss`)
 
 ## 🛠 项目结构
 
 ```
-├── api/                    # API接口层
-│   └── api.py              # 接口主模块
 ├── app/                    # 应用核心代码
-│   ├── core/               # 核心架构
-│   │   ├── container.py    # 依赖注入容器
-│   │   ├── navigation.py   # 导航与懒加载代理
-│   │   └── view_model.py   # ViewModel基类
-│   ├── data/               # 数据层
-│   │   ├── models/         # 数据模型 (User等)
-│   │   └── services/       # 业务服务 (AuthService等)
+│   ├── common/             # 通用工具库 (Config, Logger等)
+│   ├── core/               # 核心架构 (Container, Navigation等)
+│   ├── data/               # 数据层 (API, Models, Services)
 │   └── ui/                 # 界面层
-│       └── views/          # 页面模块
-│           ├── login/      # 登录模块 (MVVM)
-│           ├── main_window/# 主窗口
-│           ├── page_one/   # 示例页面1
-│           └── settings/   # 设置页面
-├── common/                 # 通用工具库
-│   ├── aes.py              # AES加密模块
-│   ├── config.py           # 配置管理
-│   ├── my_logger.py        # 日志系统
-│   └── utils.py            # 通用工具类
-├── components/             # 自定义组件库
-├── resource/               # 资源文件目录
-├── ui_page/                # 页面UI文件目录
-├── ui_view/                # 登录界面UI文件
-├── workers/                # 异步任务管理
-│   └── TaskManager.py      # 任务管理器
-├── build.py                # 打包脚本
+│       ├── components/     # 自定义组件
+│       ├── generated/      # UI文件编译生成的Python代码
+│       └── views/          # 页面模块 (MVVM)
+├── resource/               # 资源文件目录 (i18n, images, qss)
+├── scripts/                # 构建与工具脚本
+│   ├── build.py            # 打包脚本
+│   ├── pack_installer.iss  # Inno Setup安装包配置
+│   └── pack_resources.py   # 资源编译脚本
 ├── entry.py                # 程序入口
-└── pack_resources.py       # 资源编译脚本
+├── pyproject.toml          # 项目配置与依赖
+└── README.md               # 项目说明
 ```
 
 ## 💡 最佳实践
