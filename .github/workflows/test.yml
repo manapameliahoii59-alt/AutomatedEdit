@@ -1,0 +1,35 @@
+name: Tests
+
+on:
+  push:
+    branches: [ "master", "main" ]
+  pull_request:
+    branches: [ "master", "main" ]
+
+jobs:
+  test:
+    name: Run Tests
+    runs-on: windows-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.12'
+        
+    - name: Install uv
+      run: |
+        pip install uv
+        
+    - name: Install dependencies
+      run: |
+        uv sync
+        
+    - name: Run Tests
+      env:
+        QT_QPA_PLATFORM: offscreen
+      run: |
+        uv run pytest

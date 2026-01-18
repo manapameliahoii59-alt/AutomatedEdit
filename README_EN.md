@@ -18,6 +18,10 @@ A modern UI template based on [PyQt-Fluent-Widgets](https://github.com/zhiyiYo/P
 ## ✨ Key Features
 
 - 🎨 Built-in Fluent Design style component library
+- 🏗️ **MVVM Architecture**, separating logic from UI
+- ⚡ **Lazy Loading**, optimizing startup speed
+- 💉 **Dependency Injection**, improving testability
+- 🧪 **Comprehensive Testing Module**
 - 📝 Qt Designer friendly, supports visual design
 - 🔄 Pre-built logic for switching between login and main interfaces
 - ⚡ Encapsulation for asynchronous tasks using QRunnable
@@ -95,19 +99,23 @@ It is recommended to use [Inno Setup](https://jrsoftware.org/isinfo.php) to crea
 ## 🛠 Project Structure
 
 ```
-├── app/
-│   ├── common/          # Common utilities (Config, Logger, AES)
-│   ├── core/            # Core infrastructure (DI, Navigation, TaskManager)
-│   ├── data/            # Data layer
-│   │   └── api/         # API interface
-│   └── ui/              # User Interface
-│       ├── components/  # Custom components
-│       ├── generated/   # Generated UI code & .ui files
-│       └── views/       # MVVM Views & ViewModels
-├── resource/            # Resource files
-├── build.py             # Build script
-├── entry.py             # Program entry point
-└── pack_resources.py    # Resource compilation script
+├── app/                    # Application Core
+│   ├── common/             # Common utilities (Config, Logger, AES)
+│   ├── core/               # Core infrastructure (DI, Navigation, TaskManager)
+│   ├── data/               # Data layer (API, Models, Services)
+│   └── ui/                 # User Interface
+│       ├── components/     # Custom components
+│       ├── generated/      # Generated UI code & .ui files
+│       └── views/          # MVVM Views & ViewModels
+├── resource/               # Resource files (i18n, images, qss)
+├── scripts/                # Build and utility scripts
+│   ├── build.py            # Build script
+│   ├── pack_installer.iss  # Inno Setup config
+│   └── pack_resources.py   # Resource compilation script
+├── tests/                  # Test suite
+├── entry.py                # Program entry point
+├── pyproject.toml          # Project configuration & dependencies
+└── README.md               # Project documentation
 ```
 
 ## 💡 Best Practices
