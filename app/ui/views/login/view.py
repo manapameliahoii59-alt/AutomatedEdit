@@ -4,10 +4,10 @@ from qframelesswindow import FramelessDialog
 from PySide6.QtGui import QPixmap, QBitmap, QPainter, QColor
 from PySide6.QtCore import Qt, QByteArray
 
-from common.config import cfg, YEAR, AUTHOR
-from common.utils import set_window_center, StyleSheet, show_dialog
-from common.aes import aes_decrypt
-from ui_view.ui_login_window import Ui_Dialog
+from app.common.config import cfg, YEAR, AUTHOR
+from app.common.utils import set_window_center, StyleSheet, show_dialog
+from app.common.aes import aes_decrypt
+from app.ui.generated.ui_login_window import Ui_Dialog
 from app.core.container import Container
 
 class LoginWindow(FramelessDialog):

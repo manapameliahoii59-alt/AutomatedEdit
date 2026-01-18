@@ -2,7 +2,7 @@ import base64
 
 from Crypto.Cipher import AES
 
-from common.my_logger import my_logger as logger
+from app.common.my_logger import my_logger as logger
 
 
 def pkcs7padding(plaintext, block_size=16):

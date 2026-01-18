@@ -1,9 +1,9 @@
 from PySide6.QtCore import Signal
 from app.core.view_model import ViewModel
 from app.data.services.auth_service import AuthService
-from workers.TaskManager import task_manager
-from common.config import cfg
-from common.aes import aes_encrypt
+from app.core.task_manager import task_manager
+from app.common.config import cfg
+from app.common.aes import aes_encrypt
 from qfluentwidgets import qconfig
 
 class LoginViewModel(ViewModel):

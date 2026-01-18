@@ -1,7 +1,7 @@
 from PySide6.QtCore import Signal
 from app.core.view_model import ViewModel
-from workers.TaskManager import task_manager
-from api.api import demo_api
+from app.core.task_manager import task_manager
+from app.data.api.api import demo_api
 
 class PageOneViewModel(ViewModel):
     loadingChanged = Signal(bool)

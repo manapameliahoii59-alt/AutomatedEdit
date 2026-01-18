@@ -6,9 +6,9 @@ from qfluentwidgets import FluentIcon as FIcon, CustomColorSettingCard, setTheme
 from qfluentwidgets import (SettingCardGroup, SwitchSettingCard, OptionsSettingCard, PrimaryPushSettingCard, ScrollArea,
                             ExpandLayout, InfoBar, setTheme)
 
-from common.config import cfg, FEEDBACK_URL, VERSION, YEAR, AUTHOR
-from common.utils import StyleSheet, show_dialog
-from components.icon import MyIcon
+from app.common.config import cfg, FEEDBACK_URL, VERSION, YEAR, AUTHOR
+from app.common.utils import StyleSheet, show_dialog
+from app.ui.components.icon import MyIcon
 
 
 from app.ui.views.settings.view_model import SettingsViewModel

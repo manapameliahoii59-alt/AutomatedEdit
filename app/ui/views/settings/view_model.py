@@ -1,7 +1,7 @@
 from PySide6.QtCore import Signal, QUrl
 from PySide6.QtGui import QDesktopServices
 from app.core.view_model import ViewModel
-from common.config import cfg, FEEDBACK_URL
+from app.common.config import cfg, FEEDBACK_URL
 from qfluentwidgets import setTheme, setThemeColor
 
 class SettingsViewModel(ViewModel):

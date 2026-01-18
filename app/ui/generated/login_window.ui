@@ -439,7 +439,7 @@
   <customwidget>
    <class>ClickableLabel</class>
    <extends>QLabel</extends>
-   <header>components/label_widget.h</header>
+   <header>app/ui/components/label_widget.h</header>
   </customwidget>
   <customwidget>
    <class>PushButton</class>

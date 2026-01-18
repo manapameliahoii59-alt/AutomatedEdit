@@ -10,9 +10,9 @@ sys.path.insert(0, str(PROJECT_ROOT))
 # Try to import config, handle missing dependencies gracefully for build script if possible,
 # but since we need VERSION and AUTHOR, we assume dependencies are there.
 try:
-    from common.config import VERSION, AUTHOR
+    from app.common.config import VERSION, AUTHOR
 except ImportError:
-    print("Warning: Could not import common.config. Using default values.")
+    print("Warning: Could not import app.common.config. Using default values.")
     VERSION = "1.0.0"
     AUTHOR = "Unknown"
 
@@ -46,7 +46,7 @@ def main():
         build_command += f"--output-dir=out "
         build_command += f"--windows-company-name={AUTHOR} --windows-product-name={APP_NAME} "
         build_command += f"--windows-product-version={VERSION} "
-        build_command += "--follow-import-to=app,common,components "
+        build_command += "--follow-import-to=app "
         build_command += "entry.py"
 
         if run_cmd(build_command) != 0:

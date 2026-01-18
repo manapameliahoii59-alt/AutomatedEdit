@@ -64,7 +64,7 @@ uv run entry.py
 
 #### UI设计
 
-1. 使用Qt Designer打开 `ui_page/` 目录下的.ui文件
+1. 使用Qt Designer打开 `app/ui/generated/` 目录下的.ui文件（或新建）
 2. 添加/修改需要的控件
 3. 保存修改后运行资源打包脚本：
 

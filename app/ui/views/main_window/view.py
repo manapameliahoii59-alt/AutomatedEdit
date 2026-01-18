@@ -3,7 +3,7 @@ from PySide6.QtCore import QRect
 from PySide6.QtGui import QIcon
 from qfluentwidgets import FluentWindow, NavigationItemPosition, FluentIcon as FIF
 
-from components.icon import MyIcon
+from app.ui.components.icon import MyIcon
 from app.core.navigation import LazyViewProxy
 from app.ui.views.page_one.view import PageOne
 from app.ui.views.page_two.view import PageTwo

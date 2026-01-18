@@ -95,29 +95,16 @@ It is recommended to use [Inno Setup](https://jrsoftware.org/isinfo.php) to crea
 ## 🛠 Project Structure
 
 ```
-├── api/                 # API interface layer
-│   └── api.py           # Main API module
-├── common/              # Common utilities library
-│   ├── aes.py           # AES encryption module
-│   ├── config.py        # Configuration management
-│   ├── my_logger.py     # Logging system
-│   └── utils.py         # General utility classes
-├── components/          # Custom component library
-├── resource/            # Resource file directory
-├── ui_page/             # Page UI file directory
-├── ui_view/             # Login interface UI file
-├── view/                # View layer
-│   ├── login_window/    # Login window module
-│   │   ├── handler.py   # Login logic handler
-│   │   └── window.py    # Login window implementation
-│   ├── pages/           # Feature pages
-│   │   ├── page_one.py        # Page 1 view
-│   │   ├── page_one_handler.py# Page 1 business logic
-│   │   ├── page_two.py        # Page 2 view
-│   │   └── setting_page.py    # Settings page
-│   └── main_window.py   # Main window controller
-├── worker/              # Asynchronous task management
-│   └── TaskManager.py   # Task manager
+├── app/
+│   ├── common/          # Common utilities (Config, Logger, AES)
+│   ├── core/            # Core infrastructure (DI, Navigation, TaskManager)
+│   ├── data/            # Data layer
+│   │   └── api/         # API interface
+│   └── ui/              # User Interface
+│       ├── components/  # Custom components
+│       ├── generated/   # Generated UI code & .ui files
+│       └── views/       # MVVM Views & ViewModels
+├── resource/            # Resource files
 ├── build.py             # Build script
 ├── entry.py             # Program entry point
 └── pack_resources.py    # Resource compilation script

@@ -4,9 +4,9 @@ from PySide6.QtCore import Qt, QTranslator
 from PySide6.QtGui import QFont
 from PySide6.QtWidgets import QApplication
 
-from common.config import cfg
-from common.my_logger import my_logger as logger
-from common.utils import show_dialog
+from app.common.config import cfg
+from app.common.my_logger import my_logger as logger
+from app.common.utils import show_dialog
 # from view.login_window.window import LoginWindow
 from app.ui.views.login.view import LoginWindow
 # from view.main_window import MainWindow

@@ -1,7 +1,7 @@
 from PySide6.QtWidgets import QWidget
-from common.utils import show_dialog
-from components.bar import ProgressInfoBar
-from ui_page.ui_page_one import Ui_page_one
+from app.common.utils import show_dialog
+from app.ui.components.bar import ProgressInfoBar
+from app.ui.generated.ui_page_one import Ui_page_one
 from .view_model import PageOneViewModel
 
 class PageOne(QWidget, Ui_page_one):

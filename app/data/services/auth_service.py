@@ -1,4 +1,4 @@
-from api.api import demo_api
+from app.data.api.api import demo_api
 
 class AuthService:
     def login(self, username, password, captcha, sms_code):

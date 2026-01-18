@@ -3,7 +3,7 @@ import sys
 
 from loguru import logger
 
-from common.config import VERSION
+from app.common.config import VERSION
 
 
 class MyLogger:
