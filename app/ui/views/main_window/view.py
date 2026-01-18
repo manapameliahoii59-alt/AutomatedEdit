@@ -38,7 +38,8 @@ class MainWindow(FluentWindow):
         # Use LazyViewProxy for lazy loading
         self.pageOne = LazyViewProxy(lambda: PageOne(self), "pageOne")
         self.pageTwo = LazyViewProxy(lambda: PageTwo(self), "pageTwo")
-        self.settingInterface = LazyViewProxy(lambda: SettingInterface(self), "settingInterface")
+        # self.settingInterface = LazyViewProxy(lambda: SettingInterface(self), "settingInterface")
+        self.settingInterface = SettingInterface(self)
 
         self.addSubInterface(self.pageOne, MyIcon.CLICK, '页面一')
         self.addSubInterface(self.pageTwo, MyIcon.EXCEL, '页面二')

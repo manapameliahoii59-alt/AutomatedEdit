@@ -22,6 +22,7 @@ class SettingInterface(ScrollArea):
         self._parent = parent
         self.setObjectName("setting_interface")
         self.scrollWidget = QWidget()
+        self.scrollWidget.setObjectName("scrollWidget")
 
         self.expandLayout = ExpandLayout(self.scrollWidget)
         # setting label

@@ -1,10 +1,10 @@
 SettingInterface, #scrollWidget {
-    background-color: transparent;
+    background-color: rgb(32, 32, 32);
 }
 
 QScrollArea {
     border: none;
-    background-color: transparent;
+    background-color: rgb(32, 32, 32);
 }
 
 
