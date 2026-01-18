@@ -25,19 +25,26 @@ app.installTranslator(translator)
 
 
 def main():
-    if cfg.auto_login.value:
-        logger.debug('判断是否登录')
-        if True:
-            logger.debug('已登录')
+    while True:
+        if cfg.auto_login.value:
+            logger.debug('判断是否登录')
+            if True:
+                logger.debug('已登录')
+                main_window = MainWindow()
+                main_window.show()
+                app.exec()
+                if not getattr(main_window, 'is_logout', False):
+                    break
+                continue
+        login_window = LoginWindow()
+        if login_window.exec() == LoginWindow.DialogCode.Accepted:
             main_window = MainWindow()
             main_window.show()
             app.exec()
-            return
-    login_window = LoginWindow()
-    if login_window.exec() == LoginWindow.DialogCode.Accepted:
-        main_window = MainWindow()
-        main_window.show()
-        app.exec()
+            if not getattr(main_window, 'is_logout', False):
+                break
+        else:
+            break
 
 
 try:

@@ -1,8 +1,9 @@
 import sys
 from PySide6.QtCore import QRect
 from PySide6.QtGui import QIcon
-from qfluentwidgets import FluentWindow, NavigationItemPosition, FluentIcon as FIF
+from qfluentwidgets import FluentWindow, NavigationItemPosition, FluentIcon as FIF, qconfig
 
+from app.common.config import cfg
 from app.ui.components.icon import MyIcon
 from app.core.navigation import LazyViewProxy
 from app.ui.views.page_one.view import PageOne
@@ -14,6 +15,7 @@ class MainWindow(FluentWindow):
 
     def __init__(self):
         super().__init__()
+        self.is_logout = False
         self.init_window()
         self.init_navigation()
 
@@ -40,11 +42,17 @@ class MainWindow(FluentWindow):
         self.pageTwo = LazyViewProxy(lambda: PageTwo(self), "pageTwo")
         # self.settingInterface = LazyViewProxy(lambda: SettingInterface(self), "settingInterface")
         self.settingInterface = SettingInterface(self)
+        self.settingInterface.logout.connect(self.logout)
 
         self.addSubInterface(self.pageOne, MyIcon.CLICK, '页面一')
         self.addSubInterface(self.pageTwo, MyIcon.EXCEL, '页面二')
         
         self.addSubInterface(self.settingInterface, FIF.SETTING, '设置', NavigationItemPosition.BOTTOM)
+
+    def logout(self):
+        qconfig.set(cfg.auto_login, False)
+        self.is_logout = True
+        self.close()
 
     def systemTitleBarRect(self, size):
         return QRect(0, 0, 75, size.height())

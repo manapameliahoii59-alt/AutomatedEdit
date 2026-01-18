@@ -4,7 +4,7 @@ from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import QWidget, QLabel
 from qfluentwidgets import FluentIcon as FIcon, CustomColorSettingCard, setThemeColor, InfoBarPosition, qconfig
 from qfluentwidgets import (SettingCardGroup, SwitchSettingCard, OptionsSettingCard, PrimaryPushSettingCard, ScrollArea,
-                            ExpandLayout, InfoBar, setTheme)
+                            ExpandLayout, InfoBar, setTheme, Dialog)
 
 from app.common.config import cfg, FEEDBACK_URL, VERSION, YEAR, AUTHOR
 from app.common.utils import StyleSheet, show_dialog
@@ -108,4 +108,21 @@ class SettingInterface(ScrollArea):
         self.themeCard.optionChanged.connect(lambda ci: setTheme(cfg.themeMode.value))
         self.themeColorCard.colorChanged.connect(setThemeColor)
         self.aboutCard.clicked.connect(lambda: QDesktopServices.openUrl(QUrl(FEEDBACK_URL)))
-        self.logoutCard.clicked.connect(self.logout)
+        self.logoutCard.clicked.connect(self.__on_logout_clicked)
+        self.save_password.checkedChanged.connect(self.__on_save_password_changed)
+
+    def __on_save_password_changed(self, is_checked: bool):
+        if not is_checked:
+            qconfig.set(cfg.password, '')
+
+    def __on_logout_clicked(self):
+        w = Dialog(
+            '退出登录',
+            '确定要退出登录吗？',
+            self.window()
+        )
+        w.yesButton.setText('确定')
+        w.cancelButton.setText('取消')
+        
+        if w.exec():
+            self.logout.emit()
