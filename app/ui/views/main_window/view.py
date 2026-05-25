@@ -8,6 +8,7 @@ from app.ui.components.icon import MyIcon
 from app.core.navigation import LazyViewProxy
 from app.ui.views.page_one.view import PageOne
 from app.ui.views.page_two.view import PageTwo
+from app.ui.views.batch_edit.view import BatchEditPage
 from app.ui.views.settings.view import SettingInterface
 
 class MainWindow(FluentWindow):
@@ -40,12 +41,14 @@ class MainWindow(FluentWindow):
         # Use LazyViewProxy for lazy loading
         self.pageOne = LazyViewProxy(lambda: PageOne(self), "pageOne")
         self.pageTwo = LazyViewProxy(lambda: PageTwo(self), "pageTwo")
+        self.batchEditPage = LazyViewProxy(lambda: BatchEditPage(self), "batchEditPage")
         # self.settingInterface = LazyViewProxy(lambda: SettingInterface(self), "settingInterface")
         self.settingInterface = SettingInterface(self)
         self.settingInterface.logout.connect(self.logout)
 
         self.addSubInterface(self.pageOne, MyIcon.CLICK, '页面一')
         self.addSubInterface(self.pageTwo, MyIcon.EXCEL, '页面二')
+        self.addSubInterface(self.batchEditPage, MyIcon.TOOL, '批量打码')
         
         self.addSubInterface(self.settingInterface, FIF.SETTING, '设置', NavigationItemPosition.BOTTOM)
 
