@@ -9,6 +9,7 @@ class ThreeStageMaskWidget(QWidget):
     stageChanged = Signal(int)
     confirmed = Signal()
 
+    STAGE_KEYS = ("stage_select", "stage_preview", "stage_export")
     STAGE_LABELS = ("① 框选区域", "② 打码预览", "③ 确认导出")
 
     def __init__(self, parent=None):
@@ -22,8 +23,8 @@ class ThreeStageMaskWidget(QWidget):
         layout.setSpacing(12)
 
         self.segment = SegmentedWidget(self)
-        for label in self.STAGE_LABELS:
-            self.segment.addItem(label)
+        for key, label in zip(self.STAGE_KEYS, self.STAGE_LABELS):
+            self.segment.addItem(key, label)
         self.segment.currentItemChanged.connect(self._on_segment_changed)
         layout.addWidget(self.segment)
 
@@ -66,22 +67,22 @@ class ThreeStageMaskWidget(QWidget):
 
     def _on_segment_changed(self, route_key: str):
         try:
-            index = self.STAGE_LABELS.index(route_key)
+            index = self.STAGE_KEYS.index(route_key)
         except ValueError:
             index = 0
         self._set_stage(index)
 
     def _set_stage(self, index: int):
-        index = max(0, min(index, len(self.STAGE_LABELS) - 1))
+        index = max(0, min(index, len(self.STAGE_KEYS) - 1))
         self._stage_index = index
         self.stack.setCurrentIndex(index)
-        if self.segment.currentItem() != self.STAGE_LABELS[index]:
-            self.segment.setCurrentItem(self.STAGE_LABELS[index])
+        if self.segment.currentItem() != self.STAGE_KEYS[index]:
+            self.segment.setCurrentItem(self.STAGE_KEYS[index])
         self._sync_nav()
         self.stageChanged.emit(index)
 
     def _sync_nav(self):
-        last = self._stage_index >= len(self.STAGE_LABELS) - 1
+        last = self._stage_index >= len(self.STAGE_KEYS) - 1
         self.prev_btn.setEnabled(self._stage_index > 0)
         self.next_btn.setVisible(not last)
         self.confirm_btn.setVisible(last)
