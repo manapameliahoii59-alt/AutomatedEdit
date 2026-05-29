@@ -1,7 +1,10 @@
+import uuid
+
 from PySide6.QtCore import Signal
 
 from app.core.view_model import ViewModel
 from app.data.models.drama_project import DramaProject, DramaStatus
+from app.data.services.drama_folder_service import DramaFolderError, scan_drama_folder
 
 
 class BatchEditViewModel(ViewModel):
@@ -13,16 +16,6 @@ class BatchEditViewModel(ViewModel):
     def __init__(self, parent=None):
         super().__init__(parent)
         self._projects: list[DramaProject] = []
-        self._load_demo_projects()
-
-    def _load_demo_projects(self):
-        """占位数据：后续改为扫描文件夹或读取任务配置。"""
-        self._projects = [
-            DramaProject("1", "霸道总裁爱上我", 12, r"D:\videos\drama_01"),
-            DramaProject("2", "重生之我在古代当厨神", 8, r"D:\videos\drama_02"),
-            DramaProject("3", "都市异能觉醒记", 15, r"D:\videos\drama_03"),
-            DramaProject("4", "校园恋爱物语", 10, r"D:\videos\drama_04"),
-        ]
         self.projectsChanged.emit(self._projects)
 
     def get_projects(self) -> list[DramaProject]:
@@ -53,5 +46,38 @@ class BatchEditViewModel(ViewModel):
         else:
             self.messageReceived.emit(f"《{project.name}》已确认，本批次全部完成。")
 
-    def import_batch_folder(self):
-        self.messageReceived.emit("导入批次：后续接入文件夹选择并解析多部短剧。")
+    def import_drama_folder(self, folder_path: str):
+        """从剧集文件夹导入一部短剧（扫描视频文件并加入列表）。"""
+        try:
+            scan = scan_drama_folder(folder_path)
+        except DramaFolderError as exc:
+            self.errorOccurred.emit(str(exc))
+            return
+
+        existing = next(
+            (p for p in self._projects if p.folder_path == scan.folder_path),
+            None,
+        )
+        if existing:
+            existing.name = scan.name
+            existing.episode_count = scan.episode_count
+            existing.video_files = scan.video_files
+            existing.status = DramaStatus.PENDING
+            self.projectsChanged.emit(self._projects)
+            self.messageReceived.emit(
+                f"已更新《{scan.name}》，共 {scan.episode_count} 集。"
+            )
+            return
+
+        project = DramaProject(
+            id=uuid.uuid4().hex,
+            name=scan.name,
+            episode_count=scan.episode_count,
+            folder_path=scan.folder_path,
+            video_files=scan.video_files,
+        )
+        self._projects.append(project)
+        self.projectsChanged.emit(self._projects)
+        self.messageReceived.emit(
+            f"已导入《{scan.name}》，共 {scan.episode_count} 集。"
+        )

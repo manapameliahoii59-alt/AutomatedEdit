@@ -29,6 +29,8 @@ Designer使用，专为PySide6开发者打造的快速开发解决方案。
 - 🌙 支持亮/暗主题切换
 - 🧪 全面的自动化测试模块
 - 📌 内置配置管理（密码保存）和日志模块
+- uv run python scripts/pack_resources.py
+- uv run python .\entry.py
 
 ## ⚠️ 注意事项
 

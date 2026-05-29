@@ -1,5 +1,11 @@
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QHBoxLayout, QLabel, QTableWidgetItem, QVBoxLayout, QWidget
+from PySide6.QtWidgets import (
+    QFileDialog,
+    QHBoxLayout,
+    QTableWidgetItem,
+    QVBoxLayout,
+    QWidget,
+)
 from qfluentwidgets import (
     BodyLabel,
     PrimaryPushButton,
@@ -41,13 +47,16 @@ class BatchEditPage(ScrollArea):
         header = QHBoxLayout()
         header.addWidget(SubtitleLabel("批量视频打码", self.scroll_widget))
         header.addStretch(1)
-        self.import_btn = PrimaryPushButton(FIF.FOLDER_ADD, "导入批次", self.scroll_widget)
-        self.import_btn.clicked.connect(self.vm.import_batch_folder)
+        self.import_btn = PrimaryPushButton(FIF.FOLDER_ADD, "导入剧目", self.scroll_widget)
+        self.import_btn.clicked.connect(self._pick_drama_folder)
         header.addWidget(self.import_btn)
         layout.addLayout(header)
 
         layout.addWidget(
-            BodyLabel("点击「开始打码」打开弹窗，完成三段式打码并确认后返回本页继续下一部。", self.scroll_widget)
+            BodyLabel(
+                "点击「导入剧目」选择包含多集视频的文件夹；再点「开始打码」打开打码窗口。",
+                self.scroll_widget,
+            )
         )
 
         self.table = TableWidget(self.scroll_widget)
@@ -90,6 +99,16 @@ class BatchEditPage(ScrollArea):
             self.table.setCellWidget(row, 3, cell)
 
         self.table.resizeColumnsToContents()
+
+    def _pick_drama_folder(self):
+        folder = QFileDialog.getExistingDirectory(
+            self,
+            "选择剧集文件夹",
+            "",
+            QFileDialog.Option.ShowDirsOnly | QFileDialog.Option.DontResolveSymlinks,
+        )
+        if folder:
+            self.vm.import_drama_folder(folder)
 
     def _open_mask_dialog(self, project: DramaProject):
         parent = self._parent_window or self.window()

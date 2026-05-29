@@ -1,3 +1,9 @@
+import os
+
+# 须在 QApplication / QMediaPlayer 之前设置，减轻 FFmpeg 探测类警告刷屏
+os.environ.setdefault("AV_LOG_LEVEL", "quiet")
+os.environ.setdefault("QT_LOGGING_RULES", "qt.multimedia.*=false")
+
 import sys
 
 from PySide6.QtCore import Qt, QTranslator

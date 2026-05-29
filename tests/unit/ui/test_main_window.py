@@ -36,6 +36,7 @@ class TestMainWindow:
         window = MainWindow()
         assert window.pageOne is not None
         assert window.pageTwo is not None
+        assert window.batchEditPage is not None
         assert window.settingInterface is not None
 
     def test_logout(self, mock_lazy_proxy, mock_settings, mocker, qapp):

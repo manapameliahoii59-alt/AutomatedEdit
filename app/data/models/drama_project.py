@@ -16,6 +16,7 @@ class DramaProject:
     name: str
     episode_count: int
     folder_path: str = ""
+    video_files: tuple[str, ...] = ()
     status: DramaStatus = field(default=DramaStatus.PENDING)
 
     @property
