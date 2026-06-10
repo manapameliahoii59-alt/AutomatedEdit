@@ -2,25 +2,18 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PySide6.QtCore import QPointF, QRectF, QSizeF, Qt, QUrl, Signal
-from PySide6.QtGui import QColor, QPainter, QPen
-from PySide6.QtMultimedia import QAudioOutput, QMediaMetaData, QMediaPlayer
-from PySide6.QtMultimediaWidgets import QGraphicsVideoItem
+import cv2
+from PySide6.QtCore import QPointF, QRectF, QSizeF, Qt, QTimer, Signal
+from PySide6.QtGui import QColor, QImage, QPainter, QPen, QPixmap
+from PySide6.QtWidgets import QSizePolicy, QVBoxLayout, QWidget
 
 from app.common.my_logger import my_logger as logger
 from app.common.video_coords import normalized_to_overlay_rect, overlay_rect_to_normalized
 from app.data.models.mask_region import MaskRegion
-from PySide6.QtWidgets import (
-    QFrame,
-    QGraphicsScene,
-    QGraphicsView,
-    QSizePolicy,
-    QVBoxLayout,
-    QWidget,
-)
 
 
 _CLICK_DRAG_THRESHOLD_PX = 6
+_DEFAULT_FPS = 30.0
 
 
 class SelectionOverlay(QWidget):
@@ -219,8 +212,82 @@ class SelectionOverlay(QWidget):
         self.update()
 
 
+class VideoFrameDisplay(QWidget):
+    """OpenCV 帧绘制层，保持视频宽高比。"""
+
+    nativeSizeChanged = Signal()
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setStyleSheet("background-color: #18181c;")
+        self._native_size = QSizeF(16, 9)
+        self._display_rect = QRectF()
+        self._pixmap: QPixmap | None = None
+
+    def set_native_size(self, width: int, height: int):
+        if width > 0 and height > 0:
+            self._native_size = QSizeF(width, height)
+        else:
+            self._native_size = QSizeF(16, 9)
+        self._update_display_rect()
+        self.nativeSizeChanged.emit()
+        self.update()
+
+    def set_frame_bgr(self, frame):
+        if frame is None:
+            self._pixmap = None
+            self.update()
+            return
+        rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        height, width, channels = rgb.shape
+        image = QImage(
+            rgb.data,
+            width,
+            height,
+            channels * width,
+            QImage.Format.Format_RGB888,
+        ).copy()
+        self._pixmap = QPixmap.fromImage(image)
+        self._update_display_rect()
+        self.update()
+
+    def video_display_rect(self) -> QRectF:
+        return QRectF(self._display_rect)
+
+    def native_video_size(self) -> QSizeF:
+        return QSizeF(self._native_size)
+
+    def _update_display_rect(self):
+        widget_rect = self.rect()
+        if widget_rect.width() < 1 or widget_rect.height() < 1:
+            self._display_rect = QRectF()
+            return
+        native = self._native_size
+        if native.width() < 1 or native.height() < 1:
+            self._display_rect = QRectF(widget_rect)
+            return
+        scale = min(widget_rect.width() / native.width(), widget_rect.height() / native.height())
+        width = native.width() * scale
+        height = native.height() * scale
+        x = (widget_rect.width() - width) / 2
+        y = (widget_rect.height() - height) / 2
+        self._display_rect = QRectF(x, y, width, height)
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.fillRect(self.rect(), QColor(24, 24, 28))
+        if self._pixmap and not self._pixmap.isNull() and not self._display_rect.isEmpty():
+            painter.drawPixmap(self._display_rect.toRect(), self._pixmap)
+        painter.end()
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._update_display_rect()
+        self.update()
+
+
 class VideoSurfaceContainer(QWidget):
-    """用 QGraphicsVideoItem 在场景内渲染，避免 QVideoWidget 原生窗口跑偏。"""
+    """视频帧 + 框选叠加层。"""
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -228,66 +295,31 @@ class VideoSurfaceContainer(QWidget):
         self.setMinimumSize(480, 360)
         self.setStyleSheet("background-color: #18181c;")
 
-        self._scene = QGraphicsScene(self)
-        self._video_item = QGraphicsVideoItem()
-        self._video_item.setAspectRatioMode(Qt.AspectRatioMode.KeepAspectRatio)
-        self._scene.addItem(self._video_item)
-        self._video_item.nativeSizeChanged.connect(self._fit_video_in_view)
-
-        self._view = QGraphicsView(self._scene, self)
-        self._view.setFrameShape(QFrame.Shape.NoFrame)
-        self._view.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        self._view.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        self._view.setStyleSheet("background-color: #18181c; border: none;")
-        self._view.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._frame = VideoFrameDisplay(self)
+        self._frame.nativeSizeChanged.connect(self.relayout)
 
         self.overlay = SelectionOverlay(self)
         self.overlay.raise_()
 
-    @property
-    def video_item(self) -> QGraphicsVideoItem:
-        return self._video_item
+    def set_frame_bgr(self, frame):
+        self._frame.set_frame_bgr(frame)
+
+    def set_native_size(self, width: int, height: int):
+        self._frame.set_native_size(width, height)
 
     def video_display_rect(self) -> QRectF:
-        """视频实际画面在 overlay 坐标系中的矩形（不含 letterbox 黑边）。"""
-        item_rect = self._video_item.sceneBoundingRect()
-        top_left = self._view.mapFromScene(item_rect.topLeft())
-        bottom_right = self._view.mapFromScene(item_rect.bottomRight())
-        return QRectF(
-            QPointF(top_left),
-            QPointF(bottom_right),
-        ).normalized()
+        return self._frame.video_display_rect()
 
     def native_video_size(self) -> QSizeF:
-        return self._video_item.nativeSize()
+        return self._frame.native_video_size()
 
     def relayout(self):
         rect = self.rect()
         if rect.width() < 1 or rect.height() < 1:
             return
-        self._view.setGeometry(rect)
+        self._frame.setGeometry(rect)
         self.overlay.setGeometry(rect)
         self.overlay.raise_()
-        self._scene.setSceneRect(QRectF(0, 0, rect.width(), rect.height()))
-        self._fit_video_in_view()
-
-    def _fit_video_in_view(self):
-        view_w = self._view.viewport().width()
-        view_h = self._view.viewport().height()
-        if view_w < 1 or view_h < 1:
-            return
-
-        native = self._video_item.nativeSize()
-        if not native.isValid() or native.isEmpty():
-            self._video_item.setSize(QSizeF(view_w, view_h))
-            self._video_item.setPos(0, 0)
-            return
-
-        scale = min(view_w / native.width(), view_h / native.height())
-        width = native.width() * scale
-        height = native.height() * scale
-        self._video_item.setSize(QSizeF(width, height))
-        self._video_item.setPos((view_w - width) / 2, (view_h - height) / 2)
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
@@ -299,7 +331,7 @@ class VideoSurfaceContainer(QWidget):
 
 
 class VideoPreviewPlayer(QWidget):
-    """视频预览 + 播放控制 + 框选叠加层。"""
+    """视频预览 + 播放控制 + 框选叠加层（OpenCV 解码，避免 QMediaPlayer 换源卡死）。"""
 
     selectionFinished = Signal(QRectF)
     regionClicked = Signal(int)
@@ -313,23 +345,19 @@ class VideoPreviewPlayer(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        self._cap: cv2.VideoCapture | None = None
+        self._video_path = ""
         self._duration_ms = 0
+        self._position_ms = 0
+        self._fps = _DEFAULT_FPS
+        self._paused = True
         self._seeking = False
         self._mask_regions: list[MaskRegion] = []
         self._edit_overlay_visible = True
         self._selected_region_index: int = -1
-        self._init_player()
+        self._play_timer = QTimer(self)
+        self._play_timer.timeout.connect(self._advance_playback)
         self._init_ui()
-
-    def _init_player(self):
-        self._player = QMediaPlayer(self)
-        self._audio = QAudioOutput(self)
-        self._player.setAudioOutput(self._audio)
-        self._player.positionChanged.connect(self._on_player_position)
-        self._player.durationChanged.connect(self._on_player_duration)
-        self._player.playbackStateChanged.connect(self._on_playback_state)
-        self._player.mediaStatusChanged.connect(self._on_media_status)
-        self._player.errorOccurred.connect(self._on_player_error)
 
     def _init_ui(self):
         layout = QVBoxLayout(self)
@@ -337,7 +365,6 @@ class VideoPreviewPlayer(QWidget):
 
         self._surface = VideoSurfaceContainer(self)
         layout.addWidget(self._surface, 1)
-        self._player.setVideoOutput(self._surface.video_item)
         self._overlay = self._surface.overlay
         self._overlay.selectionFinished.connect(self._on_overlay_selection)
         self._overlay.regionClicked.connect(self.regionClicked.emit)
@@ -346,11 +373,39 @@ class VideoPreviewPlayer(QWidget):
 
     def load(self, file_path: str):
         path = Path(file_path)
-        self._player.setSource(QUrl.fromLocalFile(str(path.resolve())))
+        if not path.is_file():
+            raise OSError(f"视频文件不存在: {path}")
+
+        self.pause()
+        self._release_capture()
+
+        cap = cv2.VideoCapture(str(path.resolve()))
+        if not cap.isOpened():
+            raise OSError(f"无法打开视频: {path.name}")
+
+        fps = float(cap.get(cv2.CAP_PROP_FPS) or 0)
+        if fps <= 0:
+            fps = _DEFAULT_FPS
+        frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
+        width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH) or 0)
+        height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT) or 0)
+
+        self._cap = cap
+        self._video_path = str(path.resolve())
+        self._fps = fps
+        self._duration_ms = int(frame_count * 1000 / fps) if frame_count > 0 else 0
         self._mask_regions.clear()
         self._overlay.clear_regions()
+        self._surface.set_native_size(width, height)
         self._surface.relayout()
-        self.pause()
+
+        self._seeking = True
+        self._show_frame_at_ms(0)
+        self._seeking = False
+        self.durationChanged.emit(self._duration_ms)
+        self.positionChanged.emit(self._position_ms)
+        self._overlay.set_interactive(True)
+        self._overlay.set_show_regions(True)
 
     def video_display_rect(self) -> QRectF:
         return self._surface.video_display_rect()
@@ -364,7 +419,7 @@ class VideoPreviewPlayer(QWidget):
     def refresh_regions_at(self, position_ms: int | None = None):
         """按当前播放时刻刷新应显示的打码框（仅显示该时刻有效的区域）。"""
         if position_ms is None:
-            position_ms = self._player.position()
+            position_ms = self._position_ms
 
         if not self._edit_overlay_visible and self.is_paused():
             self._overlay.set_regions([])
@@ -384,19 +439,27 @@ class VideoPreviewPlayer(QWidget):
         self._overlay.set_selected_source_index(self._selected_region_index)
 
     def is_paused(self) -> bool:
-        return self._player.playbackState() != QMediaPlayer.PlaybackState.PlayingState
+        return self._paused
 
     def play(self):
-        self._player.play()
+        if self._cap is None:
+            return
+        self._paused = False
+        self._play_timer.start(max(1, round(1000 / self._fps)))
         self._overlay.set_interactive(False)
         self._overlay.set_show_regions(True)
         self.refresh_regions_at()
+        self.pausedChanged.emit(False)
 
     def pause(self):
-        self._player.pause()
+        was_playing = not self._paused
+        self._paused = True
+        self._play_timer.stop()
         self._overlay.set_interactive(True)
         self._overlay.set_show_regions(True)
         self.refresh_regions_at()
+        if was_playing:
+            self.pausedChanged.emit(True)
 
     def toggle_playback(self):
         if self.is_paused():
@@ -411,26 +474,18 @@ class VideoPreviewPlayer(QWidget):
 
     def set_position_ms(self, position_ms: int):
         self._seeking = True
-        self._player.setPosition(max(0, position_ms))
+        self._show_frame_at_ms(position_ms)
         self._seeking = False
+        self.positionChanged.emit(self._position_ms)
 
     def duration_ms(self) -> int:
         return self._duration_ms
 
     def position_ms(self) -> int:
-        return self._player.position()
+        return self._position_ms
 
     def frame_duration_ms(self) -> int:
-        """单帧时长（毫秒），优先读视频帧率，否则按 30fps 估算。"""
-        fps = self._player.metaData().value(QMediaMetaData.Key.VideoFrameRate)
-        if fps is not None:
-            try:
-                rate = float(fps)
-                if rate > 0:
-                    return max(1, round(1000 / rate))
-            except (TypeError, ValueError):
-                pass
-        return 34
+        return max(1, round(1000 / self._fps))
 
     def set_selected_region_index(self, index: int):
         self._selected_region_index = index
@@ -450,33 +505,40 @@ class VideoPreviewPlayer(QWidget):
         self._overlay.clear_regions()
         self.regionsChanged.emit()
 
-    def _on_player_position(self, position_ms: int):
-        self.refresh_regions_at(position_ms)
-        if not self._seeking:
-            self.positionChanged.emit(position_ms)
-
-    def _on_player_duration(self, duration_ms: int):
-        self._duration_ms = max(0, duration_ms)
-        self.durationChanged.emit(self._duration_ms)
-
-    def _on_playback_state(self, state: QMediaPlayer.PlaybackState):
-        paused = state != QMediaPlayer.PlaybackState.PlayingState
-        self._overlay.set_interactive(paused)
-        self._overlay.set_show_regions(True)
-        self.refresh_regions_at()
-        self.pausedChanged.emit(paused)
-
-    def _on_media_status(self, status: QMediaPlayer.MediaStatus):
-        if status in (
-            QMediaPlayer.MediaStatus.LoadedMedia,
-            QMediaPlayer.MediaStatus.BufferedMedia,
-        ):
-            self._surface.relayout()
-            self.refresh_regions_at()
-
-    def _on_player_error(self, error: QMediaPlayer.Error, message: str = ""):
-        if error == QMediaPlayer.Error.NoError:
+    def _show_frame_at_ms(self, position_ms: int):
+        if self._cap is None:
             return
-        detail = message or str(error)
-        logger.warning("视频播放异常 [{}]: {}", Path(self._player.source().toLocalFile()).name, detail)
-        self.playbackError.emit(detail)
+        ms = max(0, position_ms)
+        if self._duration_ms > 0:
+            ms = min(self._duration_ms, ms)
+        self._cap.set(cv2.CAP_PROP_POS_MSEC, ms)
+        ok, frame = self._cap.read()
+        if ok:
+            self._surface.set_frame_bgr(frame)
+            self._position_ms = int(self._cap.get(cv2.CAP_PROP_POS_MSEC) or ms)
+        else:
+            logger.warning("读取视频帧失败 [{} @ {}ms]", Path(self._video_path).name, ms)
+            self._position_ms = ms
+            self.playbackError.emit(f"无法读取视频帧（{Path(self._video_path).name}）")
+        self.refresh_regions_at(self._position_ms)
+
+    def _advance_playback(self):
+        frame_ms = self.frame_duration_ms()
+        next_ms = self._position_ms + frame_ms
+        if self._duration_ms > 0 and next_ms >= self._duration_ms:
+            next_ms = self._duration_ms
+            self._show_frame_at_ms(next_ms)
+            self.positionChanged.emit(self._position_ms)
+            self.pause()
+            return
+        self._show_frame_at_ms(next_ms)
+        self.positionChanged.emit(self._position_ms)
+
+    def _release_capture(self):
+        if self._cap is not None:
+            self._cap.release()
+            self._cap = None
+
+    def closeEvent(self, event):
+        self._release_capture()
+        super().closeEvent(event)

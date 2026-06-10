@@ -1,14 +1,17 @@
 from __future__ import annotations
 
+import threading
 from pathlib import Path
 
 from PySide6.QtCore import QRectF, Qt, Signal
-from PySide6.QtGui import QColor, QKeySequence, QPainter, QPen, QShortcut
+from PySide6.QtGui import QColor, QImage, QKeySequence, QPainter, QPen, QPixmap, QShortcut
 from PySide6.QtWidgets import (
     QApplication,
     QComboBox,
+    QDialog,
     QFrame,
     QHBoxLayout,
+    QLabel,
     QLineEdit,
     QListWidget,
     QListWidgetItem,
@@ -21,7 +24,14 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
-from qfluentwidgets import BodyLabel, PrimaryPushButton, PushButton, SegmentedWidget, SubtitleLabel
+from qfluentwidgets import (
+    BodyLabel,
+    IndeterminateProgressRing,
+    PrimaryPushButton,
+    PushButton,
+    SegmentedWidget,
+    SubtitleLabel,
+)
 
 from app.data.models.mask_region import (
     MODE_HINTS,
@@ -31,10 +41,120 @@ from app.data.models.mask_region import (
     format_time_ms,
 )
 from app.core.task_manager import task_manager
-from app.common.utils import show_dialog
+from app.common.utils import set_window_center, show_dialog
 from app.data.services.object_tracker import track_object_in_video
+from app.data.services.llm_object_tracker import track_object_with_llm
 from app.ui.components.mask_edit_history import MaskEditHistory
 from app.ui.components.video_preview_player import VideoPreviewPlayer
+
+
+def _disable_button_keyboard_activation(button) -> None:
+    """防止按钮用空格/回车误触发（例如焦点落到「取消」后空格关闭弹窗）。"""
+    button.setAutoDefault(False)
+    button.setDefault(False)
+    button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+
+
+def _build_anchor_preview_pixmap(
+    video_path: str,
+    time_ms: int,
+    nx: float,
+    ny: float,
+    nw: float,
+    nh: float,
+    *,
+    max_width: int = 480,
+) -> QPixmap | None:
+    """读取锚点时刻的视频帧并标出框选区域，供弹窗预览。"""
+    import cv2
+
+    capture = cv2.VideoCapture(video_path)
+    if not capture.isOpened():
+        return None
+    try:
+        fps = float(capture.get(cv2.CAP_PROP_FPS) or 0)
+        if fps <= 0:
+            fps = 30.0
+        frame_index = max(0, int(time_ms / 1000 * fps))
+        capture.set(cv2.CAP_PROP_POS_FRAMES, frame_index)
+        ok, frame = capture.read()
+        if not ok or frame is None:
+            return None
+
+        height, width = frame.shape[:2]
+        x1 = int(nx * width)
+        y1 = int(ny * height)
+        x2 = int((nx + nw) * width)
+        y2 = int((ny + nh) * height)
+        cv2.rectangle(frame, (x1, y1), (x2, y2), (80, 80, 255), 2)
+
+        rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        image = QImage(
+            rgb.data,
+            width,
+            height,
+            3 * width,
+            QImage.Format.Format_RGB888,
+        ).copy()
+        pixmap = QPixmap.fromImage(image)
+        if pixmap.width() > max_width:
+            pixmap = pixmap.scaledToWidth(max_width, Qt.TransformationMode.SmoothTransformation)
+        return pixmap
+    finally:
+        capture.release()
+
+
+class LlmAnchorTrackingDialog(QDialog):
+    """大模型追踪进行中的锚点说明弹窗（非模态，追踪结束自动关闭）。"""
+
+    def __init__(
+        self,
+        parent: QWidget | None,
+        *,
+        region_label: str,
+        anchor_time_ms: int,
+        preview: QPixmap | None,
+    ):
+        super().__init__(parent)
+        self.setWindowTitle("大模型追踪锚点")
+        self.setWindowModality(Qt.WindowModality.NonModal)
+        self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(16, 14, 16, 14)
+        layout.setSpacing(10)
+
+        layout.addWidget(SubtitleLabel("锚点画面", self))
+        layout.addWidget(
+            BodyLabel(
+                f"片段「{region_label}」· 时刻 {format_time_ms(anchor_time_ms)}",
+                self,
+            )
+        )
+        layout.addWidget(BodyLabel("以下画面将作为大模型追踪的参考锚点", self))
+
+        preview_label = QLabel(self)
+        preview_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        preview_label.setStyleSheet("background-color: #18181c; border-radius: 4px;")
+        if preview is not None and not preview.isNull():
+            preview_label.setPixmap(preview)
+        else:
+            preview_label.setText("无法预览锚点画面")
+            preview_label.setMinimumHeight(120)
+        layout.addWidget(preview_label)
+
+        status_row = QHBoxLayout()
+        spinner = IndeterminateProgressRing(self)
+        spinner.setFixedSize(20, 20)
+        spinner.setStrokeWidth(3)
+        status_row.addWidget(spinner)
+        status_row.addWidget(BodyLabel("大模型追踪中，完成后自动关闭…", self))
+        status_row.addStretch(1)
+        layout.addLayout(status_row)
+
+        self.adjustSize()
+        self.setMinimumWidth(max(360, self.width()))
+        set_window_center(self)
 
 
 class EpisodeListWidget(QFrame):
@@ -59,14 +179,29 @@ class EpisodeListWidget(QFrame):
         self.list.currentRowChanged.connect(self._on_row_changed)
         layout.addWidget(self.list, 1)
 
-    def set_episodes(self, video_paths: list[str]):
+    def set_episodes(self, video_paths: list[str], *, emit_initial: bool = False):
         self._paths = list(video_paths)
-        self.list.clear()
-        for index, path in enumerate(self._paths, start=1):
-            name = Path(path).name
-            self.list.addItem(QListWidgetItem(f"第 {index} 集\n{name}"))
-        if self._paths:
-            self.list.setCurrentRow(0)
+        self.list.blockSignals(True)
+        try:
+            self.list.clear()
+            for index, path in enumerate(self._paths, start=1):
+                name = Path(path).name
+                self.list.addItem(QListWidgetItem(f"第 {index} 集\n{name}"))
+            if self._paths:
+                self.list.setCurrentRow(0)
+        finally:
+            self.list.blockSignals(False)
+        if emit_initial and self._paths:
+            self.episodeSelected.emit(0, self._paths[0])
+
+    def select_row(self, row: int, *, emit_signal: bool = False):
+        self.list.blockSignals(True)
+        try:
+            self.list.setCurrentRow(row)
+        finally:
+            self.list.blockSignals(False)
+        if emit_signal and 0 <= row < len(self._paths):
+            self.episodeSelected.emit(row, self._paths[row])
 
     def current_path(self) -> str | None:
         row = self.list.currentRow()
@@ -111,6 +246,7 @@ class MaskControlPanel(QFrame):
         self.track_btn = PrimaryPushButton("开始追踪", self)
         self.track_btn.setEnabled(False)
         self.track_btn.setToolTip("在画面上选中要打码的框后点击，从当前帧自动追踪至视频结尾")
+        _disable_button_keyboard_activation(self.track_btn)
         layout.addWidget(self.track_btn)
 
         layout.addWidget(BodyLabel("打码类型", self))
@@ -291,6 +427,7 @@ class MaskTimelineWidget(QWidget):
     segmentActivated = Signal(int)
     segmentTimeChanged = Signal(int, int, int)
     segmentDeleteRequested = Signal(int)
+    llmTrackRequested = Signal(int)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -300,6 +437,7 @@ class MaskTimelineWidget(QWidget):
         self._mark_out_ms: int | None = None
         self._selected_index: int = -1
         self._syncing_segment_sliders = False
+        self._segment_times_adjusted = False
         self._init_ui()
 
     def _init_ui(self):
@@ -365,12 +503,34 @@ class MaskTimelineWidget(QWidget):
         self.segment_list.currentRowChanged.connect(self._on_segment_row_changed)
         self.segment_list.itemClicked.connect(self._on_segment_item_clicked)
         segment_row.addWidget(self.segment_list, 1)
+
+        segment_actions = QHBoxLayout()
+        segment_actions.setSpacing(6)
         self.delete_segment_btn = PushButton("删除片段", self)
         self.delete_segment_btn.setEnabled(False)
         self.delete_segment_btn.setToolTip("删除当前选中的打码片段（可撤销）")
         self.delete_segment_btn.clicked.connect(self._on_delete_segment_clicked)
-        segment_row.addWidget(self.delete_segment_btn)
+        segment_actions.addWidget(self.delete_segment_btn)
+
+        self.llm_track_btn = PushButton("大模型追踪", self)
+        self.llm_track_btn.setEnabled(False)
+        self.llm_track_btn.setToolTip(
+            "将锚定框选图与片段画面（5fps）发送给通义千问视觉模型，"
+            "补充 OpenCV 跟丢或拉长入出点后的追踪"
+        )
+        self.llm_track_btn.clicked.connect(self._on_llm_track_clicked)
+        segment_actions.addWidget(self.llm_track_btn)
+        segment_row.addLayout(segment_actions)
         layout.addLayout(segment_row)
+
+        for btn in (
+            self.mark_in_btn,
+            self.mark_out_btn,
+            self.clear_marks_btn,
+            self.delete_segment_btn,
+            self.llm_track_btn,
+        ):
+            _disable_button_keyboard_activation(btn)
 
     def set_time_range_mode(self, enabled: bool):
         self._mark_row.setVisible(enabled)
@@ -421,9 +581,18 @@ class MaskTimelineWidget(QWidget):
         self.segment_track.set_selected_index(self._selected_index)
         self._refresh_segment_list()
         self._sync_segment_sliders()
-        self.delete_segment_btn.setEnabled(
-            0 <= self._selected_index < len(self._segments)
-        )
+        self._sync_segment_action_buttons()
+
+    def _sync_segment_action_buttons(self):
+        has_selection = 0 <= self._selected_index < len(self._segments)
+        self.delete_segment_btn.setEnabled(has_selection)
+        if not has_selection:
+            self.llm_track_btn.setEnabled(False)
+            return
+        region = self._segments[self._selected_index]
+        seed = region.seed_bbox_for_tracking()
+        has_anchor = seed is not None or (region.nw > 0 and region.nh > 0)
+        self.llm_track_btn.setEnabled(has_anchor and self._segment_times_adjusted)
 
     def _mark_in(self):
         self._mark_in_ms = self.position_ms()
@@ -485,9 +654,10 @@ class MaskTimelineWidget(QWidget):
 
     def _on_segment_row_changed(self, row: int):
         self._selected_index = row
+        self._segment_times_adjusted = False
         self.segment_track.set_selected_index(row)
-        self.delete_segment_btn.setEnabled(0 <= row < len(self._segments))
         self._sync_segment_sliders()
+        self._sync_segment_action_buttons()
         self.segmentSelected.emit(row)
 
     def _on_segment_item_clicked(self, item: QListWidgetItem):
@@ -499,6 +669,11 @@ class MaskTimelineWidget(QWidget):
         if self._selected_index < 0 or self._selected_index >= len(self._segments):
             return
         self.segmentDeleteRequested.emit(self._selected_index)
+
+    def _on_llm_track_clicked(self):
+        if self._selected_index < 0 or self._selected_index >= len(self._segments):
+            return
+        self.llmTrackRequested.emit(self._selected_index)
 
     def _sync_segment_sliders(self):
         self._syncing_segment_sliders = True
@@ -529,6 +704,8 @@ class MaskTimelineWidget(QWidget):
             self._syncing_segment_sliders = True
             self.segment_start_slider.setValue(start_ms)
             self._syncing_segment_sliders = False
+        self._segment_times_adjusted = True
+        self._sync_segment_action_buttons()
         self.segmentTimeChanged.emit(self._selected_index, start_ms, end_ms)
 
     def _on_segment_end_changed(self, end_ms: int):
@@ -540,6 +717,8 @@ class MaskTimelineWidget(QWidget):
             self._syncing_segment_sliders = True
             self.segment_end_slider.setValue(end_ms)
             self._syncing_segment_sliders = False
+        self._segment_times_adjusted = True
+        self._sync_segment_action_buttons()
         self.segmentTimeChanged.emit(self._selected_index, start_ms, end_ms)
 
     def _on_position_changed(self, position_ms: int):
@@ -565,11 +744,16 @@ class MaskEditorWorkspace(QWidget):
 
     def __init__(self, parent=None):
         super().__init__(parent)
+        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self._current_path: str | None = None
         self._episode_states: dict[str, list[MaskRegion]] = {}
         self._history = MaskEditHistory()
         self._syncing_timeline = False
         self._pending_tracking_index: int | None = None
+        self._episode_index = -1
+        self._episode_load_token = 0
+        self._track_cancel_event: threading.Event | None = None
+        self._llm_anchor_dialog: LlmAnchorTrackingDialog | None = None
         self._init_ui()
         self._bind_shortcuts()
 
@@ -601,6 +785,8 @@ class MaskEditorWorkspace(QWidget):
         self.play_toggle_btn = PushButton("播放", self)
         self.play_toggle_btn.clicked.connect(self._toggle_playback)
         preview_header.addWidget(self.play_toggle_btn)
+        for btn in (self.undo_btn, self.redo_btn, self.play_toggle_btn):
+            _disable_button_keyboard_activation(btn)
         preview_column.addLayout(preview_header)
 
         self.preview = VideoPreviewPlayer(self)
@@ -638,6 +824,7 @@ class MaskEditorWorkspace(QWidget):
         self.timeline.segmentSelected.connect(self._on_segment_selected)
         self.timeline.segmentActivated.connect(self._on_segment_activated)
         self.timeline.segmentDeleteRequested.connect(self._on_segment_deleted)
+        self.timeline.llmTrackRequested.connect(self._on_llm_track_requested)
         layout.addWidget(self.timeline)
 
         self.control_panel.track_btn.clicked.connect(self._on_start_tracking_clicked)
@@ -645,6 +832,10 @@ class MaskEditorWorkspace(QWidget):
         self.applyModeChanged.emit(MODE_TRACKING)
         self._sync_undo_buttons()
         self._sync_track_button()
+        self.setFocus(Qt.FocusReason.OtherFocusReason)
+
+    def _refocus_editor(self):
+        self.setFocus(Qt.FocusReason.OtherFocusReason)
 
     def _select_region_index(self, index: int):
         """同步预览高亮、时间轴列表与待追踪目标。"""
@@ -656,7 +847,7 @@ class MaskEditorWorkspace(QWidget):
             self.timeline.segment_list.setCurrentRow(-1)
             self.timeline.segment_list.blockSignals(False)
             self.timeline.segment_track.set_selected_index(-1)
-            self.timeline.delete_segment_btn.setEnabled(False)
+            self.timeline._sync_segment_action_buttons()
             self._sync_track_button()
             return
         regions = self._history.current()
@@ -669,7 +860,7 @@ class MaskEditorWorkspace(QWidget):
         self.timeline.segment_list.setCurrentRow(index)
         self.timeline.segment_list.blockSignals(False)
         self.timeline.segment_track.set_selected_index(index)
-        self.timeline.delete_segment_btn.setEnabled(True)
+        self.timeline._sync_segment_action_buttons()
         self._sync_track_button()
 
     def _on_preview_region_clicked(self, region_index: int):
@@ -793,12 +984,15 @@ class MaskEditorWorkspace(QWidget):
         self._seek_to_ms(new_pos)
 
     def load_episodes(self, video_paths: list[str]):
+        self._cancel_background_tracking()
         self._episode_states.clear()
         self._history.reset()
-        self.episode_list.set_episodes(video_paths)
+        self._episode_index = -1
         if video_paths:
+            self.episode_list.set_episodes(video_paths)
             self._load_episode(0, video_paths[0], save_previous=False)
         else:
+            self.episode_list.set_episodes([])
             self._current_path = None
             self.timeline.set_duration_ms(60_000)
             self.timeline.set_segments([])
@@ -842,7 +1036,24 @@ class MaskEditorWorkspace(QWidget):
     def _sync_play_button(self, paused: bool):
         self.play_toggle_btn.setText("播放" if paused else "暂停")
 
+    def _cancel_background_tracking(self):
+        if self._track_cancel_event is not None:
+            self._track_cancel_event.set()
+        self._episode_load_token += 1
+        self._close_llm_anchor_dialog()
+        self._sync_track_button()
+        self._sync_llm_track_button()
+
+    def _close_llm_anchor_dialog(self):
+        if self._llm_anchor_dialog is None:
+            return
+        self._llm_anchor_dialog.close()
+        self._llm_anchor_dialog.deleteLater()
+        self._llm_anchor_dialog = None
+
     def _on_episode_selected(self, index: int, path: str):
+        if index == self._episode_index and path == self._current_path:
+            return
         self.episodeChanged.emit(index, path)
         self._load_episode(index, path)
 
@@ -851,10 +1062,46 @@ class MaskEditorWorkspace(QWidget):
             self._episode_states[self._current_path] = self._history.current()
 
     def _load_episode(self, index: int, path: str, *, save_previous: bool = True):
+        if self.episode_list.list.currentRow() != index:
+            return
+
+        path_obj = Path(path)
+        if not path_obj.is_file():
+            show_dialog(
+                self,
+                f"找不到视频文件：{path_obj.name}\n请检查剧集文件夹。",
+                "剧集切换",
+            )
+            if 0 <= self._episode_index < self.episode_list.list.count():
+                self.episode_list.select_row(self._episode_index)
+            return
+
+        previous_index = self._episode_index
+
         if save_previous and self._current_path:
             self._persist_current_episode()
+
+        self._cancel_background_tracking()
+        load_token = self._episode_load_token
+        self._episode_index = index
         self._current_path = path
-        self.preview.load(path)
+
+        self._syncing_timeline = True
+        self.timeline.set_position_ms(0)
+        self._syncing_timeline = False
+
+        try:
+            self.preview.load(str(path_obj))
+        except OSError as exc:
+            show_dialog(self, f"无法加载视频：{exc}", "剧集切换")
+            self._episode_index = previous_index
+            if 0 <= previous_index < self.episode_list.list.count():
+                self.episode_list.select_row(previous_index)
+            return
+
+        if load_token != self._episode_load_token:
+            return
+
         regions = self._episode_states.get(path, [])
         self._history.reset(regions)
         self._pending_tracking_index = None
@@ -988,8 +1235,16 @@ class MaskEditorWorkspace(QWidget):
 
         self.control_panel.track_btn.setEnabled(False)
         self.control_panel.track_btn.setText("追踪中…")
+        self._refocus_editor()
+
+        cancel_event = threading.Event()
+        self._track_cancel_event = cancel_event
+        load_token = self._episode_load_token
 
         def on_success(keyframes: list[tuple[int, float, float, float, float]]):
+            if load_token != self._episode_load_token:
+                self._sync_track_button()
+                return
             regions = self._history.current()
             if region_index >= len(regions):
                 self._sync_track_button()
@@ -1002,6 +1257,9 @@ class MaskEditorWorkspace(QWidget):
             self._sync_track_button()
 
         def on_error(message: str):
+            if load_token != self._episode_load_token:
+                self._sync_track_button()
+                return
             show_dialog(
                 self,
                 f"智能追踪未完成：{message}\n已保留初始框选，可调整框后重试。",
@@ -1019,10 +1277,124 @@ class MaskEditorWorkspace(QWidget):
                 "ny": ny,
                 "nw": nw,
                 "nh": nh,
+                "should_cancel": cancel_event.is_set,
             },
             on_success=on_success,
             on_error=on_error,
         )
+
+    def _anchor_for_llm_tracking(
+        self, region: MaskRegion
+    ) -> tuple[int, float, float, float, float] | None:
+        """返回锚定时刻与归一化框（用户最初框选）。"""
+        if region.track_keyframes:
+            anchor_time_ms, nx, ny, nw, nh = sorted(
+                region.track_keyframes, key=lambda item: item[0]
+            )[0]
+            if nw > 0 and nh > 0:
+                return anchor_time_ms, nx, ny, nw, nh
+        if region.nw > 0 and region.nh > 0:
+            return region.start_ms, region.nx, region.ny, region.nw, region.nh
+        seed = region.seed_bbox_for_tracking()
+        if seed is None:
+            return None
+        return region.start_ms, *seed
+
+    def _on_llm_track_requested(self, index: int):
+        if not self._current_path:
+            show_dialog(self, "请先加载视频后再使用大模型追踪。", "大模型追踪")
+            return
+        regions = self._history.current()
+        if index < 0 or index >= len(regions):
+            return
+        region = regions[index]
+        anchor = self._anchor_for_llm_tracking(region)
+        if anchor is None:
+            show_dialog(
+                self,
+                "当前片段缺少锚定框选，请暂停到入点并重新框选目标。",
+                "大模型追踪",
+            )
+            return
+        anchor_time_ms, anchor_nx, anchor_ny, anchor_nw, anchor_nh = anchor
+        self._select_region_index(index)
+
+        self.timeline.llm_track_btn.setEnabled(False)
+        self.timeline.llm_track_btn.setText("大模型追踪中…")
+        self._refocus_editor()
+
+        self._close_llm_anchor_dialog()
+        anchor_preview = _build_anchor_preview_pixmap(
+            self._current_path,
+            anchor_time_ms,
+            anchor_nx,
+            anchor_ny,
+            anchor_nw,
+            anchor_nh,
+        )
+        self._llm_anchor_dialog = LlmAnchorTrackingDialog(
+            self,
+            region_label=region.label or f"区域{index + 1}",
+            anchor_time_ms=anchor_time_ms,
+            preview=anchor_preview,
+        )
+        self._llm_anchor_dialog.show()
+
+        cancel_event = threading.Event()
+        self._track_cancel_event = cancel_event
+        load_token = self._episode_load_token
+
+        def on_success(keyframes: list[tuple[int, float, float, float, float]]):
+            self._close_llm_anchor_dialog()
+            if load_token != self._episode_load_token:
+                self._sync_llm_track_button()
+                return
+            current = self._history.current()
+            if index >= len(current):
+                self._sync_llm_track_button()
+                return
+            updated = current[index].with_tracking_keyframes(keyframes)
+            new_regions = list(current)
+            new_regions[index] = updated
+            self._apply_regions(new_regions, record_undo=False)
+            self._persist_current_episode()
+            self.timeline._segment_times_adjusted = False
+            self._sync_llm_track_button()
+
+        def on_error(message: str):
+            self._close_llm_anchor_dialog()
+            if load_token != self._episode_load_token:
+                self._sync_llm_track_button()
+                return
+            show_dialog(
+                self,
+                f"大模型追踪未完成：{message}\n已保留现有追踪结果，可调整后重试。",
+                "提示",
+            )
+            self._sync_llm_track_button()
+
+        task_manager.submit_task(
+            track_object_with_llm,
+            kwargs={
+                "video_path": self._current_path,
+                "start_ms": region.start_ms,
+                "end_ms": region.end_ms,
+                "anchor_time_ms": anchor_time_ms,
+                "anchor_nx": anchor_nx,
+                "anchor_ny": anchor_ny,
+                "anchor_nw": anchor_nw,
+                "anchor_nh": anchor_nh,
+                "existing_keyframes": list(region.track_keyframes),
+                "should_cancel": cancel_event.is_set,
+            },
+            on_success=on_success,
+            on_error=on_error,
+        )
+
+    def _sync_llm_track_button(self):
+        btn = self.timeline.llm_track_btn
+        btn.setText("大模型追踪")
+        self.timeline._sync_segment_action_buttons()
 
 
 class ThreeStageMaskWidget(QWidget):
@@ -1076,6 +1448,8 @@ class ThreeStageMaskWidget(QWidget):
         self.next_btn = PrimaryPushButton("下一步", self)
         self.confirm_btn = PrimaryPushButton("确认完成", self)
         self.cancel_btn = PushButton("取消", self)
+        for btn in (self.prev_btn, self.next_btn, self.confirm_btn, self.cancel_btn):
+            _disable_button_keyboard_activation(btn)
         self.confirm_btn.hide()
         self.prev_btn.clicked.connect(self._go_prev)
         self.next_btn.clicked.connect(self._go_next)

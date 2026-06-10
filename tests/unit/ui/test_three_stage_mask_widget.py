@@ -191,6 +191,23 @@ class TestThreeStageMaskWidget:
         assert len(widget.editor.timeline.segments()) == 0
         assert not widget.editor.timeline.delete_segment_btn.isEnabled()
 
+    def test_llm_track_button_enabled_after_segment_drag(self, qapp, qtbot):
+        widget = ThreeStageMaskWidget()
+        widget.set_duration_ms(60_000)
+        widget.editor._current_path = "dummy.mp4"
+        widget.editor.timeline.set_position_ms(0)
+
+        with qtbot.waitSignal(widget.selectionFinished, timeout=1000):
+            widget.editor.preview.selectionFinished.emit(
+                QRectF(0.1, 0.1, 0.2, 0.2)
+            )
+
+        timeline = widget.editor.timeline
+        assert not timeline.llm_track_btn.isEnabled()
+        timeline.segment_list.setCurrentRow(0)
+        timeline.segment_end_slider.setValue(45_000)
+        assert timeline.llm_track_btn.isEnabled()
+
     def test_timeline_segment_track_click_seeks(self, qapp, qtbot):
         widget = ThreeStageMaskWidget()
         widget.set_duration_ms(60_000)

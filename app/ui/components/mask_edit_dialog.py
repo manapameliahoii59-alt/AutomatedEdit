@@ -1,5 +1,5 @@
-from PySide6.QtCore import Qt, Signal
-from PySide6.QtWidgets import QHBoxLayout, QVBoxLayout
+from PySide6.QtCore import QEvent, Qt, Signal
+from PySide6.QtWidgets import QApplication, QHBoxLayout, QVBoxLayout, QWidget
 from qfluentwidgets import BodyLabel, FluentStyleSheet, SubtitleLabel
 from qframelesswindow import FramelessDialog
 
@@ -40,6 +40,7 @@ class MaskEditDialog(FramelessDialog):
         self.resize(self._DIALOG_WIDTH, self._DIALOG_HEIGHT)
         FluentStyleSheet.DIALOG.apply(self)
         set_window_center(self)
+        QApplication.instance().installEventFilter(self)
 
     def _init_ui(self):
         self.setWindowTitle(f"打码 · {self.project.name}")
@@ -68,6 +69,30 @@ class MaskEditDialog(FramelessDialog):
         self.mask_widget.cancelled.connect(self.reject)
         self.titleBar.raise_()
 
+    def eventFilter(self, watched, event):
+        if (
+            event.type() == QEvent.Type.KeyPress
+            and event.key() == Qt.Key.Key_Space
+            and self.isVisible()
+        ):
+            focus = QApplication.focusWidget()
+            if focus is not None:
+                focus_window = focus.window()
+                if focus_window is not None and focus_window is not self:
+                    return super().eventFilter(watched, event)
+            editor = self.mask_widget.editor
+            if not editor._shortcut_blocked() and isinstance(watched, QWidget):
+                if watched is self or self.isAncestorOf(watched):
+                    editor._toggle_playback_if_allowed()
+                    return True
+        return super().eventFilter(watched, event)
+
+    def done(self, code):
+        app = QApplication.instance()
+        if app is not None:
+            app.removeEventFilter(self)
+        super().done(code)
+
     def _on_confirm(self):
         self.finished_ok.emit(self.project.id)
         self.accept()
@@ -77,3 +102,4 @@ class MaskEditDialog(FramelessDialog):
         video_files = resolve_video_files(self.project)
         self.mask_widget.load_episodes(video_files)
         super().showEvent(event)
+        self.mask_widget.editor.setFocus(Qt.FocusReason.OtherFocusReason)

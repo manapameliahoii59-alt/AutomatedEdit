@@ -18,6 +18,8 @@ class Config(MyQConfig):
     auto_login = ConfigItem("MainWindow", "auto_login", False, BoolValidator())
     save_password = ConfigItem("MainWindow", "save_password", True, BoolValidator())
 
+    dashscope_api_key = ConfigItem("LLM", "dashscope_api_key", "")
+
 
 YEAR = datetime.datetime.now().year
 AUTHOR = "Cheukfung"

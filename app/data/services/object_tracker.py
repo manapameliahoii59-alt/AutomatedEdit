@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from collections.abc import Callable
+
 from app.common.my_logger import my_logger as logger
 
 # 色彩相关性低于此值视为跟丢（略严于参考脚本 0.35，减少跟到背景上）
@@ -206,6 +208,7 @@ def track_object_in_video(
     sample_interval_ms: int = 100,
     similarity_threshold: float = DEFAULT_SIMILARITY_THRESHOLD,
     backward_buffer_seconds: float = 3.0,
+    should_cancel: Callable[[], bool] | None = None,
 ) -> list[tuple[int, float, float, float, float]]:
     """手动框选 + CSRT 追踪，返回归一化关键帧。
 
@@ -257,6 +260,9 @@ def track_object_in_video(
     peak_similarity = 1.0
     frame_index = start_frame
     while frame_index < end_frame:
+        if should_cancel and should_cancel():
+            logger.info("追踪已取消（切换剧集或新任务）")
+            break
         ok, frame = capture.read()
         if not ok or frame is None:
             break
