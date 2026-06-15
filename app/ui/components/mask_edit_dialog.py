@@ -23,7 +23,7 @@ def resolve_video_files(project: DramaProject) -> list[str]:
 class MaskEditDialog(FramelessDialog):
     """单部剧的打码弹窗：独立模态窗口，内含三段式打码组件。"""
 
-    finished_ok = Signal(str)
+    finished_ok = Signal(object)
 
     _DIALOG_WIDTH = 1280
     _DIALOG_HEIGHT = 880
@@ -93,8 +93,17 @@ class MaskEditDialog(FramelessDialog):
             app.removeEventFilter(self)
         super().done(code)
 
-    def _on_confirm(self):
-        self.finished_ok.emit(self.project.id)
+    def _on_confirm(self, export_path: str):
+        self.mask_widget.editor._persist_current_episode()
+        episodes = []
+        for path in self.mask_widget.editor.episode_list._paths:
+            regions = self.mask_widget.editor._episode_states.get(path, [])
+            episodes.append((path, list(regions)))
+        self.finished_ok.emit({
+            "project_id": self.project.id,
+            "export_dir": export_path,
+            "episodes": episodes,
+        })
         self.accept()
 
     def showEvent(self, event):

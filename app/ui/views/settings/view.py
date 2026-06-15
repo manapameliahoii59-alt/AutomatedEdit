@@ -1,9 +1,9 @@
 # coding:utf-8
 from PySide6.QtCore import Qt, QUrl, Signal
 from PySide6.QtGui import QDesktopServices
-from PySide6.QtWidgets import QWidget, QLabel
+from PySide6.QtWidgets import QWidget, QLabel, QFileDialog, QInputDialog
 from qfluentwidgets import FluentIcon as FIcon, CustomColorSettingCard, setThemeColor, InfoBarPosition, qconfig
-from qfluentwidgets import (SettingCardGroup, SwitchSettingCard, OptionsSettingCard, PrimaryPushSettingCard, ScrollArea,
+from qfluentwidgets import (SettingCardGroup, SwitchSettingCard, OptionsSettingCard, PrimaryPushSettingCard, PushSettingCard, ScrollArea,
                             ExpandLayout, InfoBar, setTheme, Dialog)
 
 from app.common.config import cfg, FEEDBACK_URL, VERSION, YEAR, AUTHOR
@@ -48,6 +48,27 @@ class SettingInterface(ScrollArea):
             FIcon.EMBED,
             '退出登录', '退出当前登录的账号，下次你必须重新登录',
             self.personalGroup
+        )
+
+        # clip tools
+        self.clipGroup = SettingCardGroup('剪辑工具', self.scrollWidget)
+        self.api_key_card = PushSettingCard(
+            '修改', FIcon.CERTIFICATE,
+            'DeepSeek API Key',
+            '当前已设置' if cfg.deepseek_api_keys.value else '未设置',
+            self.clipGroup
+        )
+        self.ffmpeg_card = PushSettingCard(
+            '浏览', FIcon.VIDEO,
+            'FFmpeg 路径',
+            cfg.ffmpeg_path.value or '未设置',
+            self.clipGroup
+        )
+        self.ffprobe_card = PushSettingCard(
+            '浏览', FIcon.VIDEO,
+            'FFprobe 路径',
+            cfg.ffprobe_path.value or '未设置',
+            self.clipGroup
         )
 
         # application
@@ -96,12 +117,16 @@ class SettingInterface(ScrollArea):
         self.personalGroup.addSettingCard(self.save_password)
         self.personalGroup.addSettingCard(self.auto_login)
         self.personalGroup.addSettingCard(self.logoutCard)
+        self.clipGroup.addSettingCard(self.api_key_card)
+        self.clipGroup.addSettingCard(self.ffmpeg_card)
+        self.clipGroup.addSettingCard(self.ffprobe_card)
         self.aboutGroup.addSettingCard(self.themeCard)
         self.aboutGroup.addSettingCard(self.themeColorCard)
         self.aboutGroup.addSettingCard(self.aboutCard)
         self.expandLayout.setSpacing(28)
         self.expandLayout.setContentsMargins(60, 0, 60, 0)
         self.expandLayout.addWidget(self.personalGroup)
+        self.expandLayout.addWidget(self.clipGroup)
         self.expandLayout.addWidget(self.aboutGroup)
 
     def __connect_signal_to_slot(self):
@@ -110,6 +135,9 @@ class SettingInterface(ScrollArea):
         self.aboutCard.clicked.connect(lambda: QDesktopServices.openUrl(QUrl(FEEDBACK_URL)))
         self.logoutCard.clicked.connect(self.__on_logout_clicked)
         self.save_password.checkedChanged.connect(self.__on_save_password_changed)
+        self.api_key_card.clicked.connect(self.__on_set_api_key)
+        self.ffmpeg_card.clicked.connect(self.__on_set_ffmpeg)
+        self.ffprobe_card.clicked.connect(self.__on_set_ffprobe)
 
     def __on_save_password_changed(self, is_checked: bool):
         if not is_checked:
@@ -126,3 +154,25 @@ class SettingInterface(ScrollArea):
         
         if w.exec():
             self.logout.emit()
+
+    def __on_set_api_key(self):
+        keys, ok = QInputDialog.getMultiLineText(self, 'DeepSeek API Key',
+            '输入 DeepSeek API Key（多个用逗号分隔）：',
+            cfg.deepseek_api_keys.value)
+        if ok:
+            qconfig.set(cfg.deepseek_api_keys, keys)
+            self.api_key_card.setContent('已设置' if keys else '未设置')
+
+    def __on_set_ffmpeg(self):
+        path, _ = QFileDialog.getOpenFileName(self, '选择 FFmpeg 可执行文件',
+            cfg.ffmpeg_path.value or '', '可执行文件 (*.exe);;所有文件 (*.*)')
+        if path:
+            qconfig.set(cfg.ffmpeg_path, path)
+            self.ffmpeg_card.setContent(path)
+
+    def __on_set_ffprobe(self):
+        path, _ = QFileDialog.getOpenFileName(self, '选择 FFprobe 可执行文件',
+            cfg.ffprobe_path.value or '', '可执行文件 (*.exe);;所有文件 (*.*)')
+        if path:
+            qconfig.set(cfg.ffprobe_path, path)
+            self.ffprobe_card.setContent(path)

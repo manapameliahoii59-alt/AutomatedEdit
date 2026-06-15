@@ -9,6 +9,7 @@ from PySide6.QtWidgets import (
     QApplication,
     QComboBox,
     QDialog,
+    QFileDialog,
     QFrame,
     QHBoxLayout,
     QLabel,
@@ -46,6 +47,7 @@ from app.data.services.object_tracker import track_object_in_video
 from app.data.services.llm_object_tracker import track_object_with_llm
 from app.ui.components.mask_edit_history import MaskEditHistory
 from app.ui.components.video_preview_player import VideoPreviewPlayer
+from app.ui.components.masked_video_preview import MaskedVideoPreview
 
 
 def _disable_button_keyboard_activation(button) -> None:
@@ -1398,10 +1400,10 @@ class MaskEditorWorkspace(QWidget):
 
 
 class ThreeStageMaskWidget(QWidget):
-    """三段式视频打码工作区（框选 → 预览打码 → 确认导出）。"""
+    """三段式视频打码工作区（框选 → 预览打码 → 导出）。"""
 
     stageChanged = Signal(int)
-    confirmed = Signal()
+    confirmed = Signal(str)
     cancelled = Signal()
     maskTypeChanged = Signal(str)
     intensityChanged = Signal(int)
@@ -1409,8 +1411,8 @@ class ThreeStageMaskWidget(QWidget):
     selectionFinished = Signal(QRectF)
     positionChanged = Signal(int)
 
-    STAGE_KEYS = ("stage_select", "stage_preview", "stage_export")
-    STAGE_LABELS = ("① 框选区域", "② 打码预览", "③ 确认导出")
+    STAGE_KEYS = ("stage_select", "stage_preview")
+    STAGE_LABELS = ("① 框选区域", "② 打码预览")
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -1430,9 +1432,9 @@ class ThreeStageMaskWidget(QWidget):
 
         self.stack = QStackedWidget(self)
         self.editor = MaskEditorWorkspace(self)
-        self.stack.addWidget(self.editor)
-        for i, title in enumerate(self.STAGE_LABELS[1:], start=1):
-            self.stack.addWidget(self._create_stage_page(i, title))
+        self.stack.addWidget(self.editor)                       # index 0 — 框选区域
+        self.masked_preview = MaskedVideoPreview(self)
+        self.stack.addWidget(self.masked_preview)               # index 1 — 打码预览
         layout.addWidget(self.stack, 1)
 
         self.editor.maskTypeChanged.connect(self.maskTypeChanged.emit)
@@ -1446,42 +1448,23 @@ class ThreeStageMaskWidget(QWidget):
         nav.addStretch(1)
         self.prev_btn = PushButton("上一步", self)
         self.next_btn = PrimaryPushButton("下一步", self)
-        self.confirm_btn = PrimaryPushButton("确认完成", self)
+        self.export_btn = PrimaryPushButton("导出打码视频", self)
         self.cancel_btn = PushButton("取消", self)
-        for btn in (self.prev_btn, self.next_btn, self.confirm_btn, self.cancel_btn):
+        for btn in (self.prev_btn, self.next_btn, self.export_btn, self.cancel_btn):
             _disable_button_keyboard_activation(btn)
-        self.confirm_btn.hide()
+        self.export_btn.hide()
         self.prev_btn.clicked.connect(self._go_prev)
         self.next_btn.clicked.connect(self._go_next)
-        self.confirm_btn.clicked.connect(self.confirmed.emit)
         self.cancel_btn.clicked.connect(self.cancelled.emit)
+        self.export_btn.clicked.connect(self._on_export_clicked)
         nav.addWidget(self.prev_btn)
         nav.addWidget(self.next_btn)
-        nav.addWidget(self.confirm_btn)
+        nav.addWidget(self.export_btn)
         nav.addWidget(self.cancel_btn)
         layout.addLayout(nav)
 
         self._sync_nav()
         self._sync_stage_overlay()
-
-    def _create_stage_page(self, index: int, title: str) -> QWidget:
-        page = QWidget(self)
-        page_layout = QVBoxLayout(page)
-        page_layout.addWidget(SubtitleLabel(title, page))
-        hint = (
-            "在此展示打码效果预览（阶段二，待接入渲染引擎）。"
-            if index == 1
-            else "核对输出路径与集数后确认导出（阶段三，待接入导出服务）。"
-        )
-        page_layout.addWidget(BodyLabel(hint, page))
-        page_layout.addWidget(
-            BodyLabel(
-                "点击「上一步」可返回继续编辑已标记的打码区域。",
-                page,
-            )
-        )
-        page_layout.addStretch(1)
-        return page
 
     def set_duration_ms(self, duration_ms: int):
         self.editor.set_duration_ms(duration_ms)
@@ -1512,21 +1495,42 @@ class ThreeStageMaskWidget(QWidget):
         self._sync_stage_overlay()
         self.stageChanged.emit(index)
 
+        if index == 1:
+            self._sync_preview()
+            self.masked_preview.pause()
+
     def _sync_stage_overlay(self):
         show_overlay = self._stage_index == 0
         self.editor.set_edit_overlay_visible(show_overlay)
 
     def _sync_nav(self):
-        last = self._stage_index >= len(self.STAGE_KEYS) - 1
+        at_preview = self._stage_index == 1
         self.prev_btn.setEnabled(self._stage_index > 0)
-        self.next_btn.setVisible(not last)
-        self.confirm_btn.setVisible(last)
+        self.next_btn.setVisible(self._stage_index == 0)
+        self.export_btn.setVisible(at_preview)
 
     def _go_prev(self):
         self._set_stage(self._stage_index - 1)
 
     def _go_next(self):
         self._set_stage(self._stage_index + 1)
+
+    def _on_export_clicked(self):
+        export_dir = QFileDialog.getExistingDirectory(self, "选择导出目录")
+        if export_dir:
+            self.confirmed.emit(export_dir)
+
+    def _sync_preview(self):
+        self.editor._persist_current_episode()
+        episodes = []
+        for path in self.editor.episode_list._paths:
+            regions = self.editor._episode_states.get(path, [])
+            episodes.append((path, regions))
+        if episodes:
+            self.masked_preview.load_episodes(episodes)
+            self.masked_preview.select_episode(max(0, self.editor._episode_index))
+        else:
+            self.masked_preview.clear()
 
     def reset_stages(self):
         self._set_stage(0)

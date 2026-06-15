@@ -11,8 +11,6 @@ class MyIcon(FluentIconBase, Enum):
     OCR = 'ocr'
     LOGOUT = 'logout'
     SAVE_SESSION = 'save_session'
-    CLICK = 'click'
-    EXCEL = 'excel'
     TOOL = 'tool'
     SETTING = 'setting'
 

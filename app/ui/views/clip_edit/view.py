@@ -8,6 +8,7 @@ from PySide6.QtWidgets import (
 )
 from qfluentwidgets import (
     BodyLabel,
+    Dialog,
     PrimaryPushButton,
     PushButton,
     ScrollArea,
@@ -19,27 +20,29 @@ from qfluentwidgets import (
 from app.common.utils import show_dialog
 from app.data.models.drama_project import DramaProject, DramaStatus
 from app.ui.components.bar import ProgressInfoBar
-from app.ui.components.mask_edit_dialog import MaskEditDialog
-from qfluentwidgets import Dialog
 
-from .view_model import BatchEditViewModel
+from .view_model import ClipEditViewModel
+
+STATUS_LABELS = {
+    DramaStatus.PENDING: "待处理",
+    DramaStatus.IN_PROGRESS: "处理中",
+    DramaStatus.DONE: "已完成",
+}
 
 
-class BatchEditPage(ScrollArea):
-    """批量短剧列表：点击单部剧弹出三段式打码窗口。"""
-
+class ClipEditPage(ScrollArea):
     def __init__(self, parent=None):
         super().__init__(parent=parent)
         self._parent_window = parent
-        self.vm = BatchEditViewModel(self)
-        self.setObjectName("batch_edit_page")
+        self.vm = ClipEditViewModel(self)
+        self.setObjectName("clip_edit_page")
         self.loading_bar = None
         self._init_ui()
         self._bind_view_model()
 
     def _init_ui(self):
         self.scroll_widget = QWidget()
-        self.scroll_widget.setObjectName("batchEditScrollWidget")
+        self.scroll_widget.setObjectName("clipEditScrollWidget")
         self.setWidget(self.scroll_widget)
         self.setWidgetResizable(True)
 
@@ -48,23 +51,27 @@ class BatchEditPage(ScrollArea):
         layout.setSpacing(16)
 
         header = QHBoxLayout()
-        header.addWidget(SubtitleLabel("批量视频打码", self.scroll_widget))
+        header.addWidget(SubtitleLabel("自动化剪辑", self.scroll_widget))
         header.addStretch(1)
-        self.import_btn = PrimaryPushButton(FIF.FOLDER_ADD, "导入剧目", self.scroll_widget)
+        self.import_btn = PrimaryPushButton(
+            FIF.FOLDER_ADD, "导入剧目", self.scroll_widget
+        )
         self.import_btn.clicked.connect(self._pick_drama_folder)
         header.addWidget(self.import_btn)
         layout.addLayout(header)
 
         layout.addWidget(
             BodyLabel(
-                "点击「导入剧目」选择包含多集视频的文件夹；再点「开始打码」打开打码窗口。",
+                "导入剧集后，依次执行「听写台词 → AI导演策划 → 动态渲染」三步。",
                 self.scroll_widget,
             )
         )
 
         self.table = TableWidget(self.scroll_widget)
-        self.table.setColumnCount(4)
-        self.table.setHorizontalHeaderLabels(["剧名", "集数", "状态", "操作"])
+        self.table.setColumnCount(6)
+        self.table.setHorizontalHeaderLabels(
+            ["剧名", "集数", "听写", "策划", "渲染", "操作"]
+        )
         self.table.verticalHeader().setVisible(False)
         self.table.setEditTriggers(TableWidget.EditTrigger.NoEditTriggers)
         self.table.setSelectionBehavior(TableWidget.SelectionBehavior.SelectRows)
@@ -75,7 +82,6 @@ class BatchEditPage(ScrollArea):
 
     def _bind_view_model(self):
         self.vm.projectsChanged.connect(self._refresh_table)
-        self.vm.openMaskDialog.connect(self._open_mask_dialog)
         self.vm.loadingChanged.connect(self._handle_loading)
         self.vm.messageReceived.connect(lambda msg: show_dialog(self, msg, "提示"))
         self.vm.errorOccurred.connect(lambda msg: show_dialog(self, msg, "提示"))
@@ -84,39 +90,55 @@ class BatchEditPage(ScrollArea):
     def _refresh_table(self, projects: list[DramaProject]):
         self.table.setRowCount(len(projects))
         for row, project in enumerate(projects):
+            st = self.vm._status.get(project.id, {})
+
             self.table.setItem(row, 0, QTableWidgetItem(project.name))
             self.table.setItem(row, 1, QTableWidgetItem(str(project.episode_count)))
-            status_item = QTableWidgetItem(project.status_label)
-            if project.status == DramaStatus.DONE:
-                status_item.setForeground(Qt.GlobalColor.darkGreen)
-            elif project.status == DramaStatus.IN_PROGRESS:
-                status_item.setForeground(Qt.GlobalColor.darkYellow)
-            self.table.setItem(row, 2, status_item)
+
+            for col, key in [(2, "transcribe"), (3, "plan"), (4, "render")]:
+                s = st.get(key, DramaStatus.PENDING)
+                item = QTableWidgetItem(STATUS_LABELS.get(s, "待处理"))
+                if s == DramaStatus.DONE:
+                    item.setForeground(Qt.GlobalColor.darkGreen)
+                elif s == DramaStatus.IN_PROGRESS:
+                    item.setForeground(Qt.GlobalColor.darkYellow)
+                self.table.setItem(row, col, item)
 
             cell = QWidget()
             cell_layout = QHBoxLayout(cell)
             cell_layout.setContentsMargins(4, 0, 4, 0)
-            btn = PushButton("开始打码", cell)
-            btn.setProperty("project_id", project.id)
-            btn.clicked.connect(lambda _=False, pid=project.id: self.vm.start_mask_for_project(pid))
-            cell_layout.addWidget(btn)
+
+            transcribe_btn = PushButton("听写", cell)
+            transcribe_btn.setProperty("project_id", project.id)
+            transcribe_btn.clicked.connect(
+                lambda _=False, pid=project.id: self.vm.start_transcribe(pid)
+            )
+
+            plan_btn = PushButton("策划", cell)
+            plan_btn.setProperty("project_id", project.id)
+            plan_btn.clicked.connect(
+                lambda _=False, pid=project.id: self.vm.start_planning(pid)
+            )
+
+            render_btn = PushButton("渲染", cell)
+            render_btn.setProperty("project_id", project.id)
+            render_btn.clicked.connect(
+                lambda _=False, pid=project.id: self.vm.start_render(pid)
+            )
+
             del_btn = PushButton("删除", cell)
             del_btn.setProperty("project_id", project.id)
-            del_btn.clicked.connect(lambda _=False, pid=project.id: self._confirm_delete(pid))
+            del_btn.clicked.connect(
+                lambda _=False, pid=project.id: self._confirm_delete(pid)
+            )
+
+            cell_layout.addWidget(transcribe_btn)
+            cell_layout.addWidget(plan_btn)
+            cell_layout.addWidget(render_btn)
             cell_layout.addWidget(del_btn)
-            self.table.setCellWidget(row, 3, cell)
+            self.table.setCellWidget(row, 5, cell)
 
         self.table.resizeColumnsToContents()
-
-    def _pick_drama_folder(self):
-        folder = QFileDialog.getExistingDirectory(
-            self,
-            "选择剧集文件夹",
-            "",
-            QFileDialog.Option.ShowDirsOnly | QFileDialog.Option.DontResolveSymlinks,
-        )
-        if folder:
-            self.vm.import_drama_folder(folder)
 
     def _confirm_delete(self, project_id: str):
         project = next((p for p in self.vm.get_projects() if p.id == project_id), None)
@@ -128,15 +150,19 @@ class BatchEditPage(ScrollArea):
         if w.exec():
             self.vm.remove_project(project_id)
 
-    def _open_mask_dialog(self, project: DramaProject):
-        parent = self._parent_window or self.window()
-        dialog = MaskEditDialog(project, parent)
-        dialog.finished_ok.connect(self.vm.complete_mask_for_project)
-        dialog.exec()
+    def _pick_drama_folder(self):
+        folder = QFileDialog.getExistingDirectory(
+            self,
+            "选择剧集文件夹",
+            "",
+            QFileDialog.Option.ShowDirsOnly | QFileDialog.Option.DontResolveSymlinks,
+        )
+        if folder:
+            self.vm.import_drama_folder(folder)
 
     def _handle_loading(self, is_loading: bool):
         if is_loading:
-            self._show_loading("正在导出打码视频", "请稍候...")
+            self._show_loading("正在处理", "请稍候...")
         else:
             self._close_loading()
 

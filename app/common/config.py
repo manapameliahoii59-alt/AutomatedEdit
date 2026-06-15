@@ -20,6 +20,10 @@ class Config(MyQConfig):
 
     dashscope_api_key = ConfigItem("LLM", "dashscope_api_key", "")
 
+    deepseek_api_keys = ConfigItem("Tools", "deepseek_api_keys", "")
+    ffmpeg_path = ConfigItem("Tools", "ffmpeg_path", "")
+    ffprobe_path = ConfigItem("Tools", "ffprobe_path", "")
+
 
 YEAR = datetime.datetime.now().year
 AUTHOR = "Cheukfung"
