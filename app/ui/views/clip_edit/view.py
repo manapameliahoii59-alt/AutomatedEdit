@@ -53,11 +53,6 @@ class ClipEditPage(ScrollArea):
         header = QHBoxLayout()
         header.addWidget(SubtitleLabel("自动化剪辑", self.scroll_widget))
         header.addStretch(1)
-        self.import_btn = PrimaryPushButton(
-            FIF.FOLDER_ADD, "导入剧目", self.scroll_widget
-        )
-        self.import_btn.clicked.connect(self._pick_drama_folder)
-        header.addWidget(self.import_btn)
         layout.addLayout(header)
 
         layout.addWidget(
@@ -67,10 +62,32 @@ class ClipEditPage(ScrollArea):
             )
         )
 
+        batch_row = QHBoxLayout()
+        batch_row.setSpacing(8)
+        self.batch_all_btn = PrimaryPushButton("一键执行", self.scroll_widget)
+        self.batch_all_btn.clicked.connect(self._batch_all)
+        self.batch_transcribe_btn = PushButton("批量听写", self.scroll_widget)
+        self.batch_transcribe_btn.clicked.connect(self._batch_transcribe)
+        self.batch_plan_btn = PushButton("批量策划", self.scroll_widget)
+        self.batch_plan_btn.clicked.connect(self._batch_plan)
+        self.batch_render_btn = PushButton("批量渲染", self.scroll_widget)
+        self.batch_render_btn.clicked.connect(self._batch_render)
+        batch_row.addWidget(self.batch_all_btn)
+        batch_row.addWidget(self.batch_transcribe_btn)
+        batch_row.addWidget(self.batch_plan_btn)
+        batch_row.addWidget(self.batch_render_btn)
+        self.import_btn = PrimaryPushButton(
+            FIF.FOLDER_ADD, "导入剧目", self.scroll_widget
+        )
+        self.import_btn.clicked.connect(self._pick_drama_folder)
+        batch_row.addWidget(self.import_btn)
+        batch_row.addStretch(1)
+        layout.addLayout(batch_row)
+
         self.table = TableWidget(self.scroll_widget)
-        self.table.setColumnCount(6)
+        self.table.setColumnCount(7)
         self.table.setHorizontalHeaderLabels(
-            ["剧名", "集数", "听写", "策划", "渲染", "操作"]
+            ["", "剧名", "集数", "听写", "策划", "渲染", "操作"]
         )
         self.table.verticalHeader().setVisible(False)
         self.table.setEditTriggers(TableWidget.EditTrigger.NoEditTriggers)
@@ -92,10 +109,19 @@ class ClipEditPage(ScrollArea):
         for row, project in enumerate(projects):
             st = self.vm._status.get(project.id, {})
 
-            self.table.setItem(row, 0, QTableWidgetItem(project.name))
-            self.table.setItem(row, 1, QTableWidgetItem(str(project.episode_count)))
+            check_item = QTableWidgetItem()
+            check_item.setFlags(
+                Qt.ItemFlag.ItemIsUserCheckable
+                | Qt.ItemFlag.ItemIsEnabled
+                | Qt.ItemFlag.ItemIsSelectable
+            )
+            check_item.setCheckState(Qt.CheckState.Unchecked)
+            self.table.setItem(row, 0, check_item)
 
-            for col, key in [(2, "transcribe"), (3, "plan"), (4, "render")]:
+            self.table.setItem(row, 1, QTableWidgetItem(project.name))
+            self.table.setItem(row, 2, QTableWidgetItem(str(project.episode_count)))
+
+            for col, key in [(3, "transcribe"), (4, "plan"), (5, "render")]:
                 s = st.get(key, DramaStatus.PENDING)
                 item = QTableWidgetItem(STATUS_LABELS.get(s, "待处理"))
                 if s == DramaStatus.DONE:
@@ -136,9 +162,69 @@ class ClipEditPage(ScrollArea):
             cell_layout.addWidget(plan_btn)
             cell_layout.addWidget(render_btn)
             cell_layout.addWidget(del_btn)
-            self.table.setCellWidget(row, 5, cell)
+            self.table.setCellWidget(row, 6, cell)
 
         self.table.resizeColumnsToContents()
+        self.table.setColumnWidth(0, 40)
+
+    def _get_checked_ids(self) -> list[str]:
+        projects = self.vm.get_projects()
+        ids = []
+        for row in range(self.table.rowCount()):
+            item = self.table.item(row, 0)
+            if item and item.checkState() == Qt.CheckState.Checked:
+                if row < len(projects):
+                    ids.append(projects[row].id)
+        return ids
+
+    def _batch_transcribe(self):
+        ids = self._get_checked_ids()
+        if not ids:
+            show_dialog(self, "请先勾选要处理的剧目", "提示")
+            return
+        self.vm.batch_transcribe(ids)
+
+    def _batch_plan(self):
+        ids = self._get_checked_ids()
+        if not ids:
+            show_dialog(self, "请先勾选要处理的剧目", "提示")
+            return
+        self.vm.batch_plan(ids)
+
+    def _batch_render(self):
+        ids = self._get_checked_ids()
+        if not ids:
+            show_dialog(self, "请先勾选要处理的剧目", "提示")
+            return
+        self.vm.batch_render(ids)
+
+    def _batch_all(self):
+        ids = [p.id for p in self.vm.get_projects()]
+        if not ids:
+            show_dialog(self, "暂未导入任何剧目", "提示")
+            return
+        w = Dialog(
+            "一键执行",
+            f"确认对全部 {len(ids)} 个剧目执行「听写台词 → AI导演策划 → 动态渲染」完整流程吗？",
+            self.window(),
+        )
+        w.yesButton.setText("确定")
+        w.cancelButton.setText("取消")
+        w.buttonLayout.insertWidget(0, w.cancelButton)
+        w.yesButton.setMinimumWidth(110)
+        w.cancelButton.setMinimumWidth(110)
+
+        close_btn = PushButton("×", w)
+        close_btn.setFixedSize(32, 32)
+        close_btn.clicked.connect(w.close)
+        top_bar = QHBoxLayout()
+        top_bar.setContentsMargins(0, 0, 0, 0)
+        top_bar.addStretch(1)
+        top_bar.addWidget(close_btn)
+        w.vBoxLayout.insertLayout(0, top_bar)
+
+        if w.exec():
+            self.vm.batch_all(ids)
 
     def _confirm_delete(self, project_id: str):
         project = next((p for p in self.vm.get_projects() if p.id == project_id), None)

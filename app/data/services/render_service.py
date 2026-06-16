@@ -28,8 +28,8 @@ class RenderService:
         if not os.path.exists(plan_path):
             raise FileNotFoundError(f"《{project.name}》未找到 production_plan_v3.json，请先 AI 策划")
 
-        with open(plan_path, "r", encoding="utf-8") as f:
-            plans = json.load(f)
+        from app.common.crypto import read_json
+        plans = read_json(plan_path)
 
         if not plans:
             raise RuntimeError(f"《{project.name}》策划方案为空")

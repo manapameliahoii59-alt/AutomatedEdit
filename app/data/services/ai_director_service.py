@@ -50,8 +50,8 @@ class AIDirectorService:
 
         plan_output = os.path.join(project_path, "production_plan_v3.json")
 
-        with open(script_file, "r", encoding="utf-8") as f:
-            steps = json.load(f).get("steps", [])
+        from app.common.crypto import read_json
+        steps = read_json(script_file).get("steps", [])
 
         ordered_files = sorted(
             [f for f in os.listdir(project_path) if f.lower().endswith(".mp4")],
@@ -187,8 +187,8 @@ class AIDirectorService:
             seen.add(cfg_key)
             unique_plans.append(plan)
 
-        with open(plan_output, "w", encoding="utf-8") as f:
-            json.dump(unique_plans, f, ensure_ascii=False, indent=2)
+        from app.common.crypto import write_encrypted_json
+        write_encrypted_json(plan_output, unique_plans)
 
         safe_print(f"📊 《{project.name}》策划完成: {len(unique_plans)} 个方案 -> {plan_output}")
         return plan_output

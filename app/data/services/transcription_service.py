@@ -15,6 +15,39 @@ class TranscriptionService:
     _model = None
 
     @classmethod
+    def check_environment(cls) -> list[str]:
+        try:
+            import torch  # noqa: F401
+        except ImportError:
+            raise ImportError("PyTorch (torch) 未安装，请执行: uv pip install torch")
+
+        try:
+            import funasr  # noqa: F401
+        except ImportError:
+            raise ImportError("FunASR 未安装，请执行: uv pip install funasr")
+
+        warnings = []
+        if not torch.cuda.is_available():
+            warnings.append("未检测到 CUDA GPU，将使用 CPU 进行识别（速度较慢）")
+
+        try:
+            import os
+            from modelscope.utils.file_utils import get_default_cache_dir
+            cache_dir = get_default_cache_dir()
+            for label, model_id in [
+                ("语音识别", MODEL_ID),
+                ("VAD 静音检测", VAD_MODEL),
+                ("标点恢复", PUNC_MODEL),
+            ]:
+                model_path = os.path.join(cache_dir, model_id)
+                if not os.path.isdir(model_path):
+                    warnings.append(f"{label} 模型未缓存（首次使用需联网自动下载，耗时较长）")
+        except Exception:
+            warnings.append("无法检查模型缓存状态，首次使用可能需要联网下载")
+
+        return warnings
+
+    @classmethod
     def init_model(cls):
         if cls._model is not None:
             return
@@ -80,8 +113,8 @@ class TranscriptionService:
             raise RuntimeError(f"项目 {project.name} 未识别到任何台词")
 
         output_path = os.path.join(project_path, "full_script_data.json")
-        with open(output_path, "w", encoding="utf-8") as f:
-            json.dump({"steps": global_script, "project_name": project.name}, f, ensure_ascii=False, indent=2)
+        from app.common.crypto import write_encrypted_json
+        write_encrypted_json(output_path, {"steps": global_script, "project_name": project.name})
 
         cost = time.time() - start_time
         print(f"✅ 《{project.name}》听写完成: {len(global_script)} 句, 耗时 {cost:.1f}s")

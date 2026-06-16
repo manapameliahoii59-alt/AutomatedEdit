@@ -17,6 +17,8 @@ dependencies = [
     "python-levenshtein>=0.27.3",
     "requests>=2.34.2",
     "scenedetect>=0.7",
+    "torch>=2.0.0",
+    "funasr>=1.0.0",
     "urllib3>=2.7.0",
 ]
 
