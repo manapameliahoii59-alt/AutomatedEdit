@@ -18,13 +18,13 @@ class TranscriptionService:
     def check_environment(cls) -> list[str]:
         try:
             import torch  # noqa: F401
-        except ImportError:
-            raise ImportError("PyTorch (torch) 未安装，请执行: uv pip install torch")
+        except (ImportError, OSError) as e:
+            raise ImportError(f"PyTorch (torch) 加载失败：{e}，请检查环境配置")
 
         try:
             import funasr  # noqa: F401
-        except ImportError:
-            raise ImportError("FunASR 未安装，请执行: uv pip install funasr")
+        except (ImportError, OSError) as e:
+            raise ImportError(f"FunASR 加载失败：{e}，请检查环境配置")
 
         warnings = []
         if not torch.cuda.is_available():

@@ -224,7 +224,10 @@ class ClipEditPage(ScrollArea):
         w.vBoxLayout.insertLayout(0, top_bar)
 
         if w.exec():
-            self.vm.batch_all(ids)
+            try:
+                self.vm.batch_all(ids)
+            except Exception as e:
+                show_dialog(self, f"一键执行失败：{e}", "错误")
 
     def _confirm_delete(self, project_id: str):
         project = next((p for p in self.vm.get_projects() if p.id == project_id), None)

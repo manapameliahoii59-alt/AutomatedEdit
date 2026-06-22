@@ -356,7 +356,7 @@ class ClipEditViewModel(ViewModel):
 
         try:
             warnings = TranscriptionService.check_environment()
-        except ImportError as e:
+        except Exception as e:
             self.errorOccurred.emit(f"《{project.name}》听写环境检查未通过：{e}")
             return
 
