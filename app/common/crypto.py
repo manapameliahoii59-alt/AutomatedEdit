@@ -1,9 +1,14 @@
+import builtins
 import json
 
 from app.common.aes import aes_encrypt, aes_decrypt
 from app.common.my_logger import my_logger as logger
 
 ENCRYPTION_MARKER = "ENC:"
+
+
+def _is_bundled() -> bool:
+    return getattr(builtins, '__compiled__', False)
 
 
 def encrypt_file(filepath: str):
@@ -29,4 +34,5 @@ def read_json(filepath: str) -> dict | list:
 def write_encrypted_json(filepath: str, data):
     with open(filepath, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
-    encrypt_file(filepath)
+    if _is_bundled():
+        encrypt_file(filepath)

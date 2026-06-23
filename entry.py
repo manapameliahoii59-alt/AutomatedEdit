@@ -6,6 +6,9 @@ os.environ.setdefault("QT_LOGGING_RULES", "qt.multimedia.*=false")
 
 import sys
 
+# 必须在 PySide6 之前导入 torch，否则会因 DLL 加载顺序冲突导致 WinError 1114
+import torch  # noqa: E402
+
 from PySide6.QtCore import Qt, QTranslator
 from PySide6.QtGui import QFont
 from PySide6.QtWidgets import QApplication

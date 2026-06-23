@@ -1,5 +1,6 @@
 from enum import Enum
 
+from PySide6.QtCore import Qt
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import QLabel
 from qfluentwidgets import Theme, Dialog, StyleSheetBase, qconfig
@@ -20,6 +21,7 @@ class StyleSheet(StyleSheetBase, Enum):
 def show_dialog(parent, content, title='提示', url=None, callback=None):
     w = Dialog(title, content, parent)
     w.contentLabel.setOpenExternalLinks(True)
+    w.contentLabel.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
     if url:
         w.contentLabel.mousePressEvent = lambda e: QDesktopServices.openUrl(url)
     max_height = 400
