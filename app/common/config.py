@@ -23,6 +23,7 @@ class Config(MyQConfig):
     deepseek_api_keys = ConfigItem("Tools", "deepseek_api_keys", "")
     ffmpeg_path = ConfigItem("Tools", "ffmpeg_path", "")
     ffprobe_path = ConfigItem("Tools", "ffprobe_path", "")
+    clip_export_dir = ConfigItem("Tools", "clip_export_dir", "")
 
 
 YEAR = datetime.datetime.now().year

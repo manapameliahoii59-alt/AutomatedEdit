@@ -1,3 +1,5 @@
+import os
+
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QFileDialog,
@@ -15,8 +17,11 @@ from qfluentwidgets import (
     SubtitleLabel,
     TableWidget,
     FluentIcon as FIF,
+    qconfig,
 )
 
+from app.common.config import cfg
+from app.common.export_paths import resolve_clip_export_root
 from app.common.utils import show_dialog
 from app.data.models.drama_project import DramaProject, DramaStatus
 from app.ui.components.bar import ProgressInfoBar
@@ -61,6 +66,22 @@ class ClipEditPage(ScrollArea):
                 self.scroll_widget,
             )
         )
+
+        export_row = QHBoxLayout()
+        export_row.setSpacing(8)
+        export_row.addWidget(BodyLabel("导出目录：", self.scroll_widget))
+        self.export_path_label = BodyLabel(
+            resolve_clip_export_root(), self.scroll_widget
+        )
+        self.export_path_label.setWordWrap(True)
+        export_row.addWidget(self.export_path_label, 1)
+        self.export_browse_btn = PushButton("浏览…", self.scroll_widget)
+        self.export_browse_btn.clicked.connect(self._pick_export_dir)
+        self.export_open_btn = PushButton("打开文件夹", self.scroll_widget)
+        self.export_open_btn.clicked.connect(self._open_export_dir)
+        export_row.addWidget(self.export_browse_btn)
+        export_row.addWidget(self.export_open_btn)
+        layout.addLayout(export_row)
 
         batch_row = QHBoxLayout()
         batch_row.setSpacing(8)
@@ -238,6 +259,22 @@ class ClipEditPage(ScrollArea):
         w.cancelButton.setText("取消")
         if w.exec():
             self.vm.remove_project(project_id)
+
+    def _pick_export_dir(self):
+        folder = QFileDialog.getExistingDirectory(
+            self,
+            "选择导出总目录",
+            resolve_clip_export_root(),
+            QFileDialog.Option.ShowDirsOnly | QFileDialog.Option.DontResolveSymlinks,
+        )
+        if folder:
+            qconfig.set(cfg.clip_export_dir, folder)
+            self.export_path_label.setText(folder)
+
+    def _open_export_dir(self):
+        path = resolve_clip_export_root()
+        os.makedirs(path, exist_ok=True)
+        os.startfile(path)
 
     def _pick_drama_folder(self):
         folder = QFileDialog.getExistingDirectory(

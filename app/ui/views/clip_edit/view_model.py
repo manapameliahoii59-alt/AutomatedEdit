@@ -8,7 +8,8 @@ from app.data.models.drama_project import DramaProject, DramaStatus
 from app.data.services.drama_folder_service import DramaFolderError, scan_drama_folder
 from app.data.services.transcription_service import TranscriptionService
 from app.data.services.ai_director_service import AIDirectorService
-from app.data.services.render_service import RenderService
+from app.common.export_paths import resolve_clip_export_root
+from app.data.services.render_service import RenderService, RenderResult
 
 
 class ClipEditViewModel(ViewModel):
@@ -90,6 +91,15 @@ class ClipEditViewModel(ViewModel):
         self._active_tasks -= 1
         if self._active_tasks == 0:
             self.loadingChanged.emit(False)
+
+    def _format_render_message(self, project_name: str, result: RenderResult) -> str:
+        if result.success_count == result.total:
+            return f"《{project_name}》渲染完成，已保存至：{result.output_dir}"
+        failed = result.total - result.success_count
+        return (
+            f"《{project_name}》渲染完成 {result.success_count}/{result.total} 条，"
+            f"失败 {failed} 条，已保存至：{result.output_dir}"
+        )
 
     def start_transcribe(self, project_id: str):
         project = next((p for p in self._projects if p.id == project_id), None)
@@ -178,13 +188,12 @@ class ClipEditViewModel(ViewModel):
         self._add_task()
 
         def _do():
-            RenderService.render(project)
-            return True
+            return RenderService.render(project)
 
-        def _on_success(_ok):
+        def _on_success(result: RenderResult):
             self._remove_task()
             self._update_status(project_id, "render", DramaStatus.DONE)
-            self.messageReceived.emit(f"《{project.name}》渲染完成，请查看项目 outputs 目录")
+            self.messageReceived.emit(self._format_render_message(project.name, result))
 
         def _on_error(msg):
             self._remove_task()
@@ -316,12 +325,15 @@ class ClipEditViewModel(ViewModel):
             pid = project.id
             pname = project.name
 
-            def _on_success(_ok, pid=pid, pname=pname):
+            def _on_success(_result: RenderResult, pid=pid, pname=pname):
                 self._remove_task()
                 self._update_status(pid, "render", DramaStatus.DONE)
                 results["success"] += 1
                 if self._active_tasks == 0:
-                    self._emit_batch_summary("批量渲染完成", results, skipped)
+                    root = resolve_clip_export_root()
+                    self._emit_batch_summary(
+                        f"批量渲染完成（导出目录：{root}）", results, skipped
+                    )
 
             def _on_error(msg, pid=pid, pname=pname):
                 self._remove_task()
@@ -380,20 +392,21 @@ class ClipEditViewModel(ViewModel):
                 self._update_status(pid, "plan", DramaStatus.DONE)
 
                 def step3():
-                    RenderService.render(project)
-                    return True
+                    return RenderService.render(project)
 
-                def step3_done(_ok):
+                def step3_done(result: RenderResult):
                     self._remove_task()
                     self._update_status(pid, "render", DramaStatus.DONE)
-                    self.messageReceived.emit(f"《{pname}》一键执行完成")
+                    self.messageReceived.emit(
+                        f"《{pname}》一键执行完成。\n"
+                        f"{self._format_render_message(pname, result)}"
+                    )
 
                 def step3_err(msg):
                     self._remove_task()
                     self._update_status(pid, "render", DramaStatus.PENDING)
                     self.errorOccurred.emit(f"《{pname}》渲染失败：{msg}")
 
-                self._add_task()
                 self._update_status(pid, "render", DramaStatus.IN_PROGRESS)
                 task_manager.submit_task(step3, on_success=step3_done, on_error=step3_err)
 
@@ -402,7 +415,6 @@ class ClipEditViewModel(ViewModel):
                 self._update_status(pid, "plan", DramaStatus.PENDING)
                 self.errorOccurred.emit(f"《{pname}》策划失败：{msg}")
 
-            self._add_task()
             self._update_status(pid, "plan", DramaStatus.IN_PROGRESS)
             task_manager.submit_task(step2, on_success=step2_done, on_error=step2_err)
 

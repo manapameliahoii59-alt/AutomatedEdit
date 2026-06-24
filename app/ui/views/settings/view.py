@@ -7,6 +7,7 @@ from qfluentwidgets import (SettingCardGroup, SwitchSettingCard, OptionsSettingC
                             ExpandLayout, InfoBar, setTheme, Dialog)
 
 from app.common.config import cfg, FEEDBACK_URL, VERSION, YEAR, AUTHOR
+from app.common.ffmpeg_paths import effective_ffmpeg_display, effective_ffprobe_display
 from app.common.utils import StyleSheet, show_dialog
 from app.ui.components.icon import MyIcon
 
@@ -61,13 +62,13 @@ class SettingInterface(ScrollArea):
         self.ffmpeg_card = PushSettingCard(
             '浏览', FIcon.VIDEO,
             'FFmpeg 路径',
-            cfg.ffmpeg_path.value or '未设置',
+            effective_ffmpeg_display(),
             self.clipGroup
         )
         self.ffprobe_card = PushSettingCard(
             '浏览', FIcon.VIDEO,
             'FFprobe 路径',
-            cfg.ffprobe_path.value or '未设置',
+            effective_ffprobe_display(),
             self.clipGroup
         )
 

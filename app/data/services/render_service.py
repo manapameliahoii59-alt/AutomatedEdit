@@ -3,25 +3,31 @@ import os
 import shutil
 import subprocess
 import uuid
+from dataclasses import dataclass
 
 from scenedetect import detect, ContentDetector
 
-from app.common.config import cfg
+from app.common.export_paths import resolve_project_export_dir
+from app.common.ffmpeg_paths import resolve_ffmpeg, resolve_ffprobe
+from app.common.outro_paths import outro_filename, resolve_outro_path
 from app.data.models.drama_project import DramaProject
 
 FONT_FILENAME = "msyh.ttc"
 
 
+@dataclass(frozen=True)
+class RenderResult:
+    output_dir: str
+    success_count: int
+    total: int
+
+
 class RenderService:
 
     @staticmethod
-    def render(project: DramaProject) -> str:
-        ffmpeg = cfg.ffmpeg_path.value
-        ffprobe = cfg.ffprobe_path.value
-        if not ffmpeg or not os.path.isfile(ffmpeg):
-            raise FileNotFoundError("FFmpeg 路径未配置或文件不存在，请在设置中配置")
-        if not ffprobe or not os.path.isfile(ffprobe):
-            raise FileNotFoundError("FFprobe 路径未配置或文件不存在，请在设置中配置")
+    def render(project: DramaProject) -> RenderResult:
+        ffmpeg = resolve_ffmpeg()
+        ffprobe = resolve_ffprobe()
 
         project_path = project.folder_path
         plan_path = os.path.join(project_path, "production_plan_v3.json")
@@ -34,8 +40,7 @@ class RenderService:
         if not plans:
             raise RuntimeError(f"《{project.name}》策划方案为空")
 
-        output_dir = os.path.join(project_path, "outputs")
-        os.makedirs(output_dir, exist_ok=True)
+        output_dir = resolve_project_export_dir(project.name)
 
         RenderService._prepare_font()
 
@@ -45,13 +50,13 @@ class RenderService:
         for i, plan in enumerate(plans):
             print(f"   [进度 {i+1}/{total}] 渲染: {plan.get('title', '')}")
             ok = RenderService._render_single(
-                ffmpeg, ffprobe, project_path, output_dir, plan
+                ffmpeg, ffprobe, project_path, output_dir, plan, project.name
             )
             if ok:
                 success_count += 1
 
         print(f"✅ 《{project.name}》渲染完成: {success_count}/{total} 条")
-        return output_dir
+        return RenderResult(output_dir, success_count, total)
 
     @staticmethod
     def _prepare_font():
@@ -108,7 +113,61 @@ class RenderService:
             return False
 
     @staticmethod
-    def _render_single(ffmpeg, ffprobe, project_path, output_dir, plan):
+    def _has_audio_stream(ffprobe, path) -> bool:
+        try:
+            proc = subprocess.run(
+                [
+                    ffprobe, "-v", "error",
+                    "-select_streams", "a",
+                    "-show_entries", "stream=index",
+                    "-of", "csv=p=0",
+                    path,
+                ],
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+            return bool(proc.stdout.strip())
+        except Exception:
+            return False
+
+    @staticmethod
+    def _ensure_audio_track(ffmpeg, ffprobe, path, tag) -> tuple[str, str | None]:
+        if RenderService._has_audio_stream(ffprobe, path):
+            return path, None
+        fixed = f"temp_audiofix_{tag}.mp4"
+        cmd = [
+            ffmpeg, "-y", "-i", path,
+            "-f", "lavfi", "-i", "anullsrc=channel_layout=stereo:sample_rate=44100",
+            "-map", "0:v:0", "-map", "1:a:0",
+            "-c:v", "copy", "-c:a", "aac", "-shortest",
+            fixed,
+        ]
+        if RenderService._run_ffmpeg(cmd, "补音轨"):
+            return fixed, fixed
+        return path, None
+
+    @staticmethod
+    def _cut_cmd(ffmpeg, inputs: list, output: str, enc_v: str) -> list:
+        cmd = [ffmpeg, "-y", *inputs, "-map", "0:v:0", "-map", "0:a:0?"]
+        cmd.extend(["-c:v", enc_v, "-c:a", "aac", "-b:a", "128k", output])
+        return cmd
+
+    @staticmethod
+    def _has_nvenc(ffmpeg: str) -> bool:
+        try:
+            proc = subprocess.run(
+                [ffmpeg, "-hide_banner", "-encoders"],
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+            return "h264_nvenc" in proc.stdout
+        except Exception:
+            return False
+
+    @staticmethod
+    def _render_single(ffmpeg, ffprobe, project_path, output_dir, plan, project_name):
         config = plan["files_config"]
         speed = plan.get("global_speed", 1.0)
         title = plan.get("title", f"task-{uuid.uuid4().hex[:4]}")
@@ -116,62 +175,88 @@ class RenderService:
         uid = uuid.uuid4().hex[:8]
 
         last_file = os.path.join(project_path, config["last_episode"])
-        sample_file = config["full_episodes"][0] if config["full_episodes"] else config["last_episode"]
+        full_eps = config.get("full_episodes") or []
+        sample_file = full_eps[0] if full_eps else config["last_episode"]
         sample_path = os.path.join(project_path, sample_file)
 
         orientation = RenderService._get_orientation(ffprobe, sample_path)
-        if orientation == "horizontal":
+        is_horizontal = orientation == "horizontal"
+        if is_horizontal:
             target_w, target_h = 1280, 720
-            outro_path = "横屏结尾.mp4"
         else:
             target_w, target_h = 720, 1280
-            outro_path = "outro.mp4"
 
-        if not os.path.exists(outro_path):
-            print(f"⚠️ 找不到片尾素材 {outro_path}，跳过")
+        outro_path = resolve_outro_path(is_horizontal)
+        if not outro_path:
+            name = outro_filename(is_horizontal)
+            print(f"⚠️ 找不到片尾素材 {name}，请将文件放入 tools/outro/ 目录")
             return False
 
         temp_cut = f"temp_last_{uid}.mp4"
         cut_point = RenderService._optimize_cut(ffprobe, last_file, config["last_episode_cut_point"])
-        use_gpu = cfg.ffmpeg_path.value and os.path.exists(cfg.ffmpeg_path.value)
-        enc_v = "h264_nvenc" if use_gpu else "libx264"
-
-        cut_cmd = [
-            ffmpeg, "-y",
-            "-i", last_file, "-t", str(cut_point),
-            "-c:v", enc_v, "-c:a", "aac", "-b:a", "128k", temp_cut,
-        ]
-        if use_gpu:
-            cut_cmd.insert(2, "-hwaccel")
-            cut_cmd.insert(3, "cuda")
-        if not RenderService._run_ffmpeg(cut_cmd, "预切割"):
-            return False
+        use_gpu = RenderService._has_nvenc(ffmpeg)
+        enc_v_cut = "libx264"
+        enc_v_final = "h264_nvenc" if use_gpu else "libx264"
+        first_cut_start = config.get("first_episode_cut_start", 0)
+        full_episodes = config.get("full_episodes") or []
 
         input_paths = []
         temp_first = None
-        first_cut_start = config.get("first_episode_cut_start", 0)
-        for i, full_file in enumerate(config["full_episodes"]):
+        temp_audiofix: list[str] = []
+
+        if not full_episodes:
+            span = cut_point - first_cut_start
+            if span <= 0:
+                print(f"⚠️ 无效切点: last_episode_cut_point({cut_point}) <= first_episode_cut_start({first_cut_start})")
+                return False
+            cut_cmd = RenderService._cut_cmd(
+                ffmpeg,
+                ["-ss", str(first_cut_start), "-i", last_file, "-t", str(span)],
+                temp_cut,
+                enc_v_cut,
+            )
+            if not RenderService._run_ffmpeg(cut_cmd, "预切割"):
+                return False
+            input_paths.append(temp_cut)
+        else:
+            cut_cmd = RenderService._cut_cmd(
+                ffmpeg,
+                ["-i", last_file, "-t", str(cut_point)],
+                temp_cut,
+                enc_v_cut,
+            )
+            if not RenderService._run_ffmpeg(cut_cmd, "预切割"):
+                return False
+
+        for i, full_file in enumerate(full_episodes):
             full_path = os.path.join(project_path, full_file)
             if i == 0 and first_cut_start > 0:
                 temp_first = f"temp_first_{uid}.mp4"
-                cut_first_cmd = [
-                    ffmpeg, "-y",
-                    "-ss", str(first_cut_start), "-i", full_path,
-                    "-c:v", enc_v, "-c:a", "aac", "-b:a", "128k", temp_first,
-                ]
-                if use_gpu:
-                    cut_first_cmd.insert(2, "-hwaccel")
-                    cut_first_cmd.insert(3, "cuda")
+                cut_first_cmd = RenderService._cut_cmd(
+                    ffmpeg,
+                    ["-ss", str(first_cut_start), "-i", full_path],
+                    temp_first,
+                    enc_v_cut,
+                )
                 if RenderService._run_ffmpeg(cut_first_cmd, "裁剪开场"):
                     input_paths.append(temp_first)
                 else:
                     input_paths.append(full_path)
             else:
                 input_paths.append(full_path)
-        input_paths.append(temp_cut)
+        if full_episodes:
+            input_paths.append(temp_cut)
+
+        normalized_paths = []
+        for i, p in enumerate(input_paths):
+            fixed, temp = RenderService._ensure_audio_track(ffmpeg, ffprobe, p, f"{uid}_{i}")
+            normalized_paths.append(fixed)
+            if temp:
+                temp_audiofix.append(temp)
+        input_paths = normalized_paths
 
         title_f = (
-            f"drawtext=fontfile={FONT_FILENAME}:text='《{project.name}》':"
+            f"drawtext=fontfile={FONT_FILENAME}:text='《{project_name}》':"
             f"x=30:y=h-70:fontsize=22:fontcolor=white@0.8"
         )
         disclaim_f = (
@@ -183,11 +268,12 @@ class RenderService:
             f"pad={target_w}:{target_h}:(ow-iw)/2:(oh-ih)/2:black,"
             f"setpts=1/{speed}*PTS,{title_f},{disclaim_f}"
         )
-        a_main = f"atempo={speed}"
+        a_main = f"aresample=44100,aformat=channel_layouts=stereo,atempo={speed}"
         v_outro = (
             f"scale={target_w}:{target_h}:force_original_aspect_ratio=decrease,"
             f"pad={target_w}:{target_h}:(ow-iw)/2:(oh-ih)/2:black"
         )
+        a_outro = "aresample=44100,aformat=channel_layouts=stereo"
 
         filter_parts = []
         n_main = len(input_paths)
@@ -195,18 +281,17 @@ class RenderService:
             filter_parts.append(f"[{i}:v]{v_main}[v{i}];[{i}:a]{a_main}[a{i}];")
         outro_idx = n_main
         filter_parts.append(f"[{outro_idx}:v]{v_outro}[v{outro_idx}];")
+        filter_parts.append(f"[{outro_idx}:a]{a_outro}[a{outro_idx}];")
         concat_inputs = "".join(f"[v{i}][a{i}]" for i in range(n_main))
-        concat_inputs += f"[v{outro_idx}][{outro_idx}:a]"
+        concat_inputs += f"[v{outro_idx}][a{outro_idx}]"
         filter_parts.append(f"{concat_inputs}concat=n={n_main+1}:v=1:a=1[v][a]")
 
         render_cmd = [ffmpeg, "-y"]
-        if use_gpu:
-            render_cmd.extend(["-hwaccel", "cuda"])
         for p in input_paths:
             render_cmd.extend(["-i", p])
         render_cmd.extend(["-i", outro_path])
         render_cmd.extend(["-filter_complex", "".join(filter_parts), "-map", "[v]", "-map", "[a]"])
-        render_cmd.extend(["-c:v", enc_v, "-preset", "p4" if use_gpu else "veryfast"])
+        render_cmd.extend(["-c:v", enc_v_final, "-preset", "p4" if use_gpu else "veryfast"])
         if use_gpu:
             render_cmd.extend(["-cq", "24"])
         else:
@@ -219,5 +304,8 @@ class RenderService:
             os.remove(temp_cut)
         if temp_first and os.path.exists(temp_first):
             os.remove(temp_first)
+        for p in temp_audiofix:
+            if os.path.exists(p):
+                os.remove(p)
 
         return success

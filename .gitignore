@@ -72,6 +72,8 @@ fabric.properties
 .idea
 *.pyc
 config.json
+tools/ffmpeg/win/*.exe
+tools/outro/*.mp4
 logs
 resource_rc.py
 ui_view/ui_login_window.py

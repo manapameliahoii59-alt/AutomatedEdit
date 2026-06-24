@@ -8,7 +8,7 @@ from app.data.models.drama_project import DramaProject
 MODEL_ID = "iic/speech_paraformer-large-vad-punc_asr_nat-zh-cn-16k-common-vocab8404-pytorch"
 VAD_MODEL = "iic/speech_fsmn_vad_zh-cn-16k-common-pytorch"
 PUNC_MODEL = "iic/punc_ct-transformer_zh-cn-common-vocab272727-pytorch"
-BEAM_SIZE = 25
+BEAM_SIZE = 15
 
 
 class TranscriptionService:
