@@ -13,6 +13,8 @@ from app.common.outro_paths import outro_filename, resolve_outro_path
 from app.data.models.drama_project import DramaProject
 
 FONT_FILENAME = "msyh.ttc"
+MIN_CUT_POINT = 0.1
+MIN_CUT_DURATION = 0.3
 
 
 @dataclass(frozen=True)
@@ -102,6 +104,57 @@ class RenderService:
             return ai_cut_time
 
     @staticmethod
+    def _resolve_cut_point(ffprobe, video_path, ai_cut_time) -> float:
+        ai_cut_time = float(ai_cut_time)
+        optimized = RenderService._optimize_cut(ffprobe, video_path, ai_cut_time)
+        if optimized < MIN_CUT_POINT:
+            return ai_cut_time
+        return optimized
+
+    @staticmethod
+    def _has_video_stream(ffprobe, path) -> bool:
+        try:
+            proc = subprocess.run(
+                [
+                    ffprobe, "-v", "error",
+                    "-select_streams", "v",
+                    "-show_entries", "stream=index",
+                    "-of", "csv=p=0",
+                    path,
+                ],
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+            return bool(proc.stdout.strip())
+        except Exception:
+            return False
+
+    @staticmethod
+    def _probe_duration(ffprobe, path) -> float:
+        try:
+            proc = subprocess.run(
+                [
+                    ffprobe, "-v", "error",
+                    "-show_entries", "format=duration",
+                    "-of", "csv=p=0",
+                    path,
+                ],
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+            return float(proc.stdout.strip() or 0)
+        except Exception:
+            return 0.0
+
+    @staticmethod
+    def _validate_cut_output(ffprobe, path) -> bool:
+        if not RenderService._has_video_stream(ffprobe, path):
+            return False
+        return RenderService._probe_duration(ffprobe, path) >= MIN_CUT_DURATION
+
+    @staticmethod
     def _run_ffmpeg(cmd, desc):
         try:
             proc = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="ignore", timeout=3600)
@@ -133,6 +186,8 @@ class RenderService:
 
     @staticmethod
     def _ensure_audio_track(ffmpeg, ffprobe, path, tag) -> tuple[str, str | None]:
+        if not RenderService._has_video_stream(ffprobe, path):
+            return path, None
         if RenderService._has_audio_stream(ffprobe, path):
             return path, None
         fixed = f"temp_audiofix_{tag}.mp4"
@@ -193,7 +248,16 @@ class RenderService:
             return False
 
         temp_cut = f"temp_last_{uid}.mp4"
-        cut_point = RenderService._optimize_cut(ffprobe, last_file, config["last_episode_cut_point"])
+        ai_cut_point = config["last_episode_cut_point"]
+        cut_point = RenderService._resolve_cut_point(ffprobe, last_file, ai_cut_point)
+        if cut_point <= 0:
+            print(
+                f"⚠️ 无效切点: last_episode_cut_point({ai_cut_point}) "
+                f"优化后为 {cut_point}，跳过"
+            )
+            return False
+        if cut_point != ai_cut_point:
+            print(f"   切点优化: {ai_cut_point}s -> {cut_point}s")
         use_gpu = RenderService._has_nvenc(ffmpeg)
         enc_v_cut = "libx264"
         enc_v_final = "h264_nvenc" if use_gpu else "libx264"
@@ -217,6 +281,11 @@ class RenderService:
             )
             if not RenderService._run_ffmpeg(cut_cmd, "预切割"):
                 return False
+            if not RenderService._validate_cut_output(ffprobe, temp_cut):
+                print(f"⚠️ 预切割产物无效（时长需 >= {MIN_CUT_DURATION}s），跳过")
+                if os.path.exists(temp_cut):
+                    os.remove(temp_cut)
+                return False
             input_paths.append(temp_cut)
         else:
             cut_cmd = RenderService._cut_cmd(
@@ -226,6 +295,11 @@ class RenderService:
                 enc_v_cut,
             )
             if not RenderService._run_ffmpeg(cut_cmd, "预切割"):
+                return False
+            if not RenderService._validate_cut_output(ffprobe, temp_cut):
+                print(f"⚠️ 预切割产物无效（时长需 >= {MIN_CUT_DURATION}s），跳过")
+                if os.path.exists(temp_cut):
+                    os.remove(temp_cut)
                 return False
 
         for i, full_file in enumerate(full_episodes):
@@ -239,7 +313,13 @@ class RenderService:
                     enc_v_cut,
                 )
                 if RenderService._run_ffmpeg(cut_first_cmd, "裁剪开场"):
-                    input_paths.append(temp_first)
+                    if RenderService._validate_cut_output(ffprobe, temp_first):
+                        input_paths.append(temp_first)
+                    else:
+                        print("⚠️ 裁剪开场产物无效，使用原片")
+                        if os.path.exists(temp_first):
+                            os.remove(temp_first)
+                        input_paths.append(full_path)
                 else:
                     input_paths.append(full_path)
             else:
@@ -249,6 +329,16 @@ class RenderService:
 
         normalized_paths = []
         for i, p in enumerate(input_paths):
+            if not RenderService._has_video_stream(ffprobe, p):
+                print(f"⚠️ 输入片段无视频流: {p}，跳过")
+                if os.path.exists(temp_cut):
+                    os.remove(temp_cut)
+                if temp_first and os.path.exists(temp_first):
+                    os.remove(temp_first)
+                for af in temp_audiofix:
+                    if os.path.exists(af):
+                        os.remove(af)
+                return False
             fixed, temp = RenderService._ensure_audio_track(ffmpeg, ffprobe, p, f"{uid}_{i}")
             normalized_paths.append(fixed)
             if temp:

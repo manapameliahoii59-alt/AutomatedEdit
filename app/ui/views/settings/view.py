@@ -8,6 +8,7 @@ from qfluentwidgets import (SettingCardGroup, SwitchSettingCard, OptionsSettingC
 
 from app.common.config import cfg, FEEDBACK_URL, VERSION, YEAR, AUTHOR
 from app.common.ffmpeg_paths import effective_ffmpeg_display, effective_ffprobe_display
+from app.common.gpu_diagnostics import run_gpu_diagnostics
 from app.common.utils import StyleSheet, show_dialog
 from app.ui.components.icon import MyIcon
 
@@ -71,6 +72,12 @@ class SettingInterface(ScrollArea):
             effective_ffprobe_display(),
             self.clipGroup
         )
+        self.gpu_detect_card = PushSettingCard(
+            '检测', FIcon.SPEED_HIGH,
+            'GPU 硬件加速',
+            '检测 PyTorch CUDA 与 FFmpeg NVENC 是否可用',
+            self.clipGroup
+        )
 
         # application
         self.aboutGroup = SettingCardGroup('关于', self.scrollWidget)
@@ -121,6 +128,7 @@ class SettingInterface(ScrollArea):
         self.clipGroup.addSettingCard(self.api_key_card)
         self.clipGroup.addSettingCard(self.ffmpeg_card)
         self.clipGroup.addSettingCard(self.ffprobe_card)
+        self.clipGroup.addSettingCard(self.gpu_detect_card)
         self.aboutGroup.addSettingCard(self.themeCard)
         self.aboutGroup.addSettingCard(self.themeColorCard)
         self.aboutGroup.addSettingCard(self.aboutCard)
@@ -139,6 +147,10 @@ class SettingInterface(ScrollArea):
         self.api_key_card.clicked.connect(self.__on_set_api_key)
         self.ffmpeg_card.clicked.connect(self.__on_set_ffmpeg)
         self.ffprobe_card.clicked.connect(self.__on_set_ffprobe)
+        self.gpu_detect_card.clicked.connect(self.__on_detect_gpu)
+
+    def __on_detect_gpu(self):
+        show_dialog(self, run_gpu_diagnostics(), "GPU 检测结果")
 
     def __on_save_password_changed(self, is_checked: bool):
         if not is_checked:
