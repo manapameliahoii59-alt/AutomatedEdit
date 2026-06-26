@@ -1,29 +1,39 @@
 import pytest
 from unittest.mock import MagicMock
 from app.data.services.auth_service import AuthService
+from app.data.api.api import LoginResult
+
 
 class TestAuthService:
     @pytest.fixture
-    def mock_api(self, mocker):
-        return mocker.patch('app.data.services.auth_service.demo_api')
+    def mock_get_api(self, mocker):
+        return mocker.patch('app.data.services.auth_service.get_api')
 
-    def test_login(self, mock_api):
-        """Test login delegation"""
-        service = AuthService()
-        mock_api.login.return_value = True
-        
-        result = service.login("user", "pass", "captcha", "123456")
-        
-        assert result is True
-        mock_api.login.assert_called_once_with("user", "pass", "captcha", "123456")
+    def test_login_stores_token(self, mock_get_api, mocker):
+        mock_api = MagicMock()
+        mock_api.login.return_value = LoginResult(access_token='tok', username='u', role='user')
+        mock_api.fetch_secrets.return_value = {'deepseek_keys': 'sk-1', 'dashscope_key': ''}
+        mock_get_api.return_value = mock_api
+        mock_set = mocker.patch('app.data.services.auth_service.qconfig.set')
 
-    def test_get_captcha(self, mock_api):
-        """Test captcha delegation"""
         service = AuthService()
-        expected_data = {'data': 'base64image'}
-        mock_api.get_captcha.return_value = expected_data
-        
-        result = service.get_captcha()
-        
-        assert result == expected_data
-        mock_api.get_captcha.assert_called_once()
+        result = service.login("user", "pass")
+
+        assert result.access_token == 'tok'
+        mock_api.login.assert_called_once_with("user", "pass")
+        from app.common.config import cfg
+        mock_set.assert_any_call(cfg.access_token, 'tok')
+
+    def test_try_auto_login_no_base_url(self, mock_get_api, mocker):
+        mocker.patch('app.data.services.auth_service.cfg')
+        from app.data.services.auth_service import cfg
+        cfg.api_base_url.value = ''
+        cfg.user.value = 'demo'
+
+        service = AuthService()
+        assert service.try_auto_login() is True
+
+    def test_logout_clears_token(self, mocker):
+        mock_set = mocker.patch('app.data.services.auth_service.qconfig.set')
+        AuthService().logout()
+        mock_set.assert_called()

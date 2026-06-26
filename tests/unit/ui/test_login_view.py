@@ -16,8 +16,6 @@ class TestLoginView:
         vm.loginSuccess.connect = MagicMock()
         vm.loginFailed = MagicMock()
         vm.loginFailed.connect = MagicMock()
-        vm.captchaReceived = MagicMock()
-        vm.captchaReceived.connect = MagicMock()
         return vm
 
     @pytest.fixture
@@ -75,14 +73,12 @@ class TestLoginView:
         """Test login button triggers VM"""
         login_window.ui.username.setText("user")
         login_window.ui.password.setText("pass")
-        login_window.ui.graphic.setText("cap")
-        login_window.ui.code.setText("123")
         
         qtbot.mouseClick(login_window.ui.login, Qt.LeftButton)
         
-        mock_vm.login.assert_called_with("user", "pass", "cap", "123", login_window.ui.remember.isChecked(), login_window.ui.session.isChecked())
-
-    def test_captcha_click(self, login_window, mock_vm, qtbot):
-        """Test captcha click triggers VM"""
-        qtbot.mouseClick(login_window.ui.image, Qt.LeftButton)
-        mock_vm.get_captcha.assert_called()
+        mock_vm.login.assert_called_with(
+            "user",
+            "pass",
+            login_window.ui.remember.isChecked(),
+            login_window.ui.session.isChecked(),
+        )

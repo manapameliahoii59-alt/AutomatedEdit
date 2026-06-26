@@ -10,6 +10,7 @@ from app.data.services.transcription_service import TranscriptionService
 from app.data.services.ai_director_service import AIDirectorService
 from app.common.export_paths import resolve_clip_export_root
 from app.data.services.render_service import RenderService, RenderResult
+from app.data.services.usage_service import UsageService
 
 
 class ClipEditViewModel(ViewModel):
@@ -126,6 +127,7 @@ class ClipEditViewModel(ViewModel):
         def _on_success(_ok):
             self._remove_task()
             self._update_status(project_id, "transcribe", DramaStatus.DONE)
+            UsageService.report("transcribe")
             self.messageReceived.emit(f"《{project.name}》听写完成")
 
         def _on_error(msg):
@@ -160,6 +162,7 @@ class ClipEditViewModel(ViewModel):
         def _on_success(_ok):
             self._remove_task()
             self._update_status(project_id, "plan", DramaStatus.DONE)
+            UsageService.report("plan")
             self.messageReceived.emit(f"《{project.name}》策划完成")
 
         def _on_error(msg):
@@ -193,6 +196,7 @@ class ClipEditViewModel(ViewModel):
         def _on_success(result: RenderResult):
             self._remove_task()
             self._update_status(project_id, "render", DramaStatus.DONE)
+            UsageService.report("render", success=result.success_count > 0)
             self.messageReceived.emit(self._format_render_message(project.name, result))
 
         def _on_error(msg):
@@ -365,16 +369,6 @@ class ClipEditViewModel(ViewModel):
 
     def _run_pipeline(self, project: DramaProject):
         pid = project.id
-
-        try:
-            warnings = TranscriptionService.check_environment()
-        except Exception as e:
-            self.errorOccurred.emit(f"《{project.name}》听写环境检查未通过：{e}")
-            return
-
-        if warnings:
-            self.messageReceived.emit(f"《{project.name}》听写环境提示：\n- " + "\n- ".join(warnings))
-
         pname = project.name
 
         def step1():
@@ -383,6 +377,7 @@ class ClipEditViewModel(ViewModel):
 
         def step1_done(_ok):
             self._update_status(pid, "transcribe", DramaStatus.DONE)
+            UsageService.report("batch_all_transcribe")
 
             def step2():
                 AIDirectorService.plan(project)
@@ -390,6 +385,7 @@ class ClipEditViewModel(ViewModel):
 
             def step2_done(_ok):
                 self._update_status(pid, "plan", DramaStatus.DONE)
+                UsageService.report("batch_all_plan")
 
                 def step3():
                     return RenderService.render(project)
@@ -397,6 +393,7 @@ class ClipEditViewModel(ViewModel):
                 def step3_done(result: RenderResult):
                     self._remove_task()
                     self._update_status(pid, "render", DramaStatus.DONE)
+                    UsageService.report("batch_all_render", success=result.success_count > 0)
                     self.messageReceived.emit(
                         f"《{pname}》一键执行完成。\n"
                         f"{self._format_render_message(pname, result)}"

@@ -4,6 +4,7 @@ from PySide6.QtGui import QIcon
 from qfluentwidgets import FluentWindow, NavigationItemPosition, FluentIcon as FIF, qconfig
 
 from app.common.config import cfg
+from app.core.container import Container
 from app.ui.components.icon import MyIcon
 from app.core.navigation import LazyViewProxy
 from app.ui.views.batch_edit.view import BatchEditPage
@@ -53,6 +54,7 @@ class MainWindow(FluentWindow):
 
     def logout(self):
         qconfig.set(cfg.auto_login, False)
+        Container.auth_service().logout()
         self.is_logout = True
         self.close()
 

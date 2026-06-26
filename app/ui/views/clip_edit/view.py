@@ -126,6 +126,7 @@ class ClipEditPage(ScrollArea):
         self._refresh_table(self.vm.get_projects())
 
     def _refresh_table(self, projects: list[DramaProject]):
+        checked_ids = set(self._get_checked_ids())
         self.table.setRowCount(len(projects))
         for row, project in enumerate(projects):
             st = self.vm._status.get(project.id, {})
@@ -136,7 +137,10 @@ class ClipEditPage(ScrollArea):
                 | Qt.ItemFlag.ItemIsEnabled
                 | Qt.ItemFlag.ItemIsSelectable
             )
-            check_item.setCheckState(Qt.CheckState.Unchecked)
+            if project.id in checked_ids:
+                check_item.setCheckState(Qt.CheckState.Checked)
+            else:
+                check_item.setCheckState(Qt.CheckState.Unchecked)
             self.table.setItem(row, 0, check_item)
 
             self.table.setItem(row, 1, QTableWidgetItem(project.name))
@@ -198,6 +202,13 @@ class ClipEditPage(ScrollArea):
                     ids.append(projects[row].id)
         return ids
 
+    def _set_all_rows_checked(self, checked: bool) -> None:
+        state = Qt.CheckState.Checked if checked else Qt.CheckState.Unchecked
+        for row in range(self.table.rowCount()):
+            item = self.table.item(row, 0)
+            if item:
+                item.setCheckState(state)
+
     def _batch_transcribe(self):
         ids = self._get_checked_ids()
         if not ids:
@@ -220,32 +231,27 @@ class ClipEditPage(ScrollArea):
         self.vm.batch_render(ids)
 
     def _batch_all(self):
-        ids = [p.id for p in self.vm.get_projects()]
-        if not ids:
+        if not self.vm.get_projects():
             show_dialog(self, "暂未导入任何剧目", "提示")
             return
+
+        ids = self._get_checked_ids()
+        auto_select_all = not ids
+        if auto_select_all:
+            ids = [p.id for p in self.vm.get_projects()]
+
         w = Dialog(
             "一键执行",
-            f"确认对全部 {len(ids)} 个剧目执行「听写台词 → AI导演策划 → 动态渲染」完整流程吗？",
+            f"确认对{'全部' if auto_select_all else '选中的'} {len(ids)} 个剧目执行「听写台词 → AI导演策划 → 动态渲染」完整流程吗？",
             self.window(),
         )
         w.yesButton.setText("确定")
         w.cancelButton.setText("取消")
         w.buttonLayout.insertWidget(0, w.cancelButton)
-        w.yesButton.setMinimumWidth(110)
-        w.cancelButton.setMinimumWidth(110)
-
-        close_btn = PushButton("×", w)
-        close_btn.setFixedSize(32, 32)
-        close_btn.clicked.connect(w.close)
-        top_bar = QHBoxLayout()
-        top_bar.setContentsMargins(0, 0, 0, 0)
-        top_bar.addStretch(1)
-        top_bar.addWidget(close_btn)
-        w.vBoxLayout.insertLayout(0, top_bar)
-
         if w.exec():
             try:
+                if auto_select_all:
+                    self._set_all_rows_checked(True)
                 self.vm.batch_all(ids)
             except Exception as e:
                 show_dialog(self, f"一键执行失败：{e}", "错误")

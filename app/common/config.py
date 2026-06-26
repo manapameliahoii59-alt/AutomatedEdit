@@ -25,6 +25,9 @@ class Config(MyQConfig):
     ffprobe_path = ConfigItem("Tools", "ffprobe_path", "")
     clip_export_dir = ConfigItem("Tools", "clip_export_dir", "")
 
+    api_base_url = ConfigItem("API", "base_url", "")
+    access_token = ConfigItem("API", "access_token", "")
+
 
 YEAR = datetime.datetime.now().year
 AUTHOR = "Cheukfung"

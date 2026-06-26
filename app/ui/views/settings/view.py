@@ -1,15 +1,13 @@
 # coding:utf-8
 from PySide6.QtCore import Qt, QUrl, Signal
 from PySide6.QtGui import QDesktopServices
-from PySide6.QtWidgets import QWidget, QLabel, QFileDialog, QInputDialog
+from PySide6.QtWidgets import QWidget, QLabel, QInputDialog
 from qfluentwidgets import FluentIcon as FIcon, CustomColorSettingCard, setThemeColor, InfoBarPosition, qconfig
 from qfluentwidgets import (SettingCardGroup, SwitchSettingCard, OptionsSettingCard, PrimaryPushSettingCard, PushSettingCard, ScrollArea,
                             ExpandLayout, InfoBar, setTheme, Dialog)
 
 from app.common.config import cfg, FEEDBACK_URL, VERSION, YEAR, AUTHOR
-from app.common.ffmpeg_paths import effective_ffmpeg_display, effective_ffprobe_display
-from app.common.gpu_diagnostics import run_gpu_diagnostics
-from app.common.utils import StyleSheet, show_dialog
+from app.common.utils import StyleSheet
 from app.ui.components.icon import MyIcon
 
 
@@ -54,28 +52,16 @@ class SettingInterface(ScrollArea):
 
         # clip tools
         self.clipGroup = SettingCardGroup('剪辑工具', self.scrollWidget)
+        self.api_server_card = PushSettingCard(
+            '修改', FIcon.GLOBE,
+            'API 服务器地址',
+            cfg.api_base_url.value or '未设置（使用本地演示登录）',
+            self.clipGroup
+        )
         self.api_key_card = PushSettingCard(
             '修改', FIcon.CERTIFICATE,
             'DeepSeek API Key',
             '当前已设置' if cfg.deepseek_api_keys.value else '未设置',
-            self.clipGroup
-        )
-        self.ffmpeg_card = PushSettingCard(
-            '浏览', FIcon.VIDEO,
-            'FFmpeg 路径',
-            effective_ffmpeg_display(),
-            self.clipGroup
-        )
-        self.ffprobe_card = PushSettingCard(
-            '浏览', FIcon.VIDEO,
-            'FFprobe 路径',
-            effective_ffprobe_display(),
-            self.clipGroup
-        )
-        self.gpu_detect_card = PushSettingCard(
-            '检测', FIcon.SPEED_HIGH,
-            'GPU 硬件加速',
-            '检测 PyTorch CUDA 与 FFmpeg NVENC 是否可用',
             self.clipGroup
         )
 
@@ -125,10 +111,8 @@ class SettingInterface(ScrollArea):
         self.personalGroup.addSettingCard(self.save_password)
         self.personalGroup.addSettingCard(self.auto_login)
         self.personalGroup.addSettingCard(self.logoutCard)
+        self.clipGroup.addSettingCard(self.api_server_card)
         self.clipGroup.addSettingCard(self.api_key_card)
-        self.clipGroup.addSettingCard(self.ffmpeg_card)
-        self.clipGroup.addSettingCard(self.ffprobe_card)
-        self.clipGroup.addSettingCard(self.gpu_detect_card)
         self.aboutGroup.addSettingCard(self.themeCard)
         self.aboutGroup.addSettingCard(self.themeColorCard)
         self.aboutGroup.addSettingCard(self.aboutCard)
@@ -145,12 +129,19 @@ class SettingInterface(ScrollArea):
         self.logoutCard.clicked.connect(self.__on_logout_clicked)
         self.save_password.checkedChanged.connect(self.__on_save_password_changed)
         self.api_key_card.clicked.connect(self.__on_set_api_key)
-        self.ffmpeg_card.clicked.connect(self.__on_set_ffmpeg)
-        self.ffprobe_card.clicked.connect(self.__on_set_ffprobe)
-        self.gpu_detect_card.clicked.connect(self.__on_detect_gpu)
+        self.api_server_card.clicked.connect(self.__on_set_api_server)
 
-    def __on_detect_gpu(self):
-        show_dialog(self, run_gpu_diagnostics(), "GPU 检测结果")
+    def __on_set_api_server(self):
+        url, ok = QInputDialog.getText(
+            self,
+            'API 服务器地址',
+            '例如 https://api.example.com（留空则本地演示登录）:',
+            text=cfg.api_base_url.value,
+        )
+        if ok:
+            qconfig.set(cfg.api_base_url, url.strip().rstrip('/'))
+            display = url.strip() or '未设置（使用本地演示登录）'
+            self.api_server_card.setContent(display)
 
     def __on_save_password_changed(self, is_checked: bool):
         if not is_checked:
@@ -175,17 +166,3 @@ class SettingInterface(ScrollArea):
         if ok:
             qconfig.set(cfg.deepseek_api_keys, keys)
             self.api_key_card.setContent('已设置' if keys else '未设置')
-
-    def __on_set_ffmpeg(self):
-        path, _ = QFileDialog.getOpenFileName(self, '选择 FFmpeg 可执行文件',
-            cfg.ffmpeg_path.value or '', '可执行文件 (*.exe);;所有文件 (*.*)')
-        if path:
-            qconfig.set(cfg.ffmpeg_path, path)
-            self.ffmpeg_card.setContent(path)
-
-    def __on_set_ffprobe(self):
-        path, _ = QFileDialog.getOpenFileName(self, '选择 FFprobe 可执行文件',
-            cfg.ffprobe_path.value or '', '可执行文件 (*.exe);;所有文件 (*.*)')
-        if path:
-            qconfig.set(cfg.ffprobe_path, path)
-            self.ffprobe_card.setContent(path)
