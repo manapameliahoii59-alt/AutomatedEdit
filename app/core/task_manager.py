@@ -1,5 +1,7 @@
 from PySide6.QtCore import QRunnable, QObject, QThreadPool, Qt, Signal
-import traceback
+
+from app.common.my_logger import my_logger as logger
+
 
 class TaskSignals(QObject):
     finished = Signal(object)
@@ -22,8 +24,7 @@ class TaskRunnable(QRunnable):
                 result = self.func(*self.args)
             self.signals.finished.emit(result)
         except Exception as e:
-            error_msg = "".join(traceback.format_exception(None, e, e.__traceback__))
-            print(error_msg) # Consider logging this instead
+            logger.debug("后台任务异常: {}", e, exc_info=True)
             self.signals.error.emit(str(e))
 
 class TaskManager(QObject):

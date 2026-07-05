@@ -5,11 +5,10 @@ from qfluentwidgets import FluentWindow, NavigationItemPosition, FluentIcon as F
 
 from app.common.config import cfg
 from app.core.container import Container
-from app.ui.components.icon import MyIcon
 from app.core.navigation import LazyViewProxy
-from app.ui.views.batch_edit.view import BatchEditPage
 from app.ui.views.clip_edit.view import ClipEditPage
 from app.ui.views.settings.view import SettingInterface
+from app.ui.views.video_download.view import VideoDownloadPage
 
 class MainWindow(FluentWindow):
     """ 主界面 (Refactored) """
@@ -39,18 +38,36 @@ class MainWindow(FluentWindow):
 
     def init_navigation(self):
         # Use LazyViewProxy for lazy loading
-        self.batchEditPage = LazyViewProxy(lambda: BatchEditPage(self), "batchEditPage")
+        # self.batchEditPage = LazyViewProxy(lambda: BatchEditPage(self), "batchEditPage")
         self.clipEditPage = LazyViewProxy(lambda: ClipEditPage(self), "clipEditPage")
+        self.videoDownloadPage = LazyViewProxy(lambda: VideoDownloadPage(self), "videoDownloadPage")
         # self.settingInterface = LazyViewProxy(lambda: SettingInterface(self), "settingInterface")
         self.settingInterface = SettingInterface(self)
         self.settingInterface.logout.connect(self.logout)
 
-        self.addSubInterface(self.batchEditPage, MyIcon.TOOL, '批量打码')
+        # self.addSubInterface(self.batchEditPage, MyIcon.TOOL, '批量打码')
+        self.addSubInterface(self.videoDownloadPage, FIF.DOWNLOAD, '视频下载')
         self.addSubInterface(self.clipEditPage, FIF.VIDEO, '自动化剪辑')
         
         self.addSubInterface(self.settingInterface, FIF.SETTING, '设置', NavigationItemPosition.BOTTOM)
 
         QTimer.singleShot(0, lambda: self.navigationInterface.expand(useAni=False))
+
+    def handoff_to_clip_edit(self, folder_paths: list[str]) -> None:
+        """下载识别完成后，导入剪辑页并执行策划与渲染。"""
+        if not folder_paths:
+            return
+        page = self.clipEditPage.ensure_loaded()
+        self.switchTo(self.clipEditPage)
+        page.vm.import_and_run_clip_pipeline(folder_paths)
+
+    def import_to_clip_edit(self, folder_paths: list[str]) -> None:
+        """将下载目录中的剧目导入自动化剪辑页（不执行后续流程）。"""
+        if not folder_paths:
+            return
+        page = self.clipEditPage.ensure_loaded()
+        self.switchTo(self.clipEditPage)
+        page.vm.import_drama_folders(folder_paths)
 
     def logout(self):
         qconfig.set(cfg.auto_login, False)

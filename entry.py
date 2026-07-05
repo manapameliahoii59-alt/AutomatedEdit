@@ -17,6 +17,7 @@ from app.common.config import cfg
 from app.common.my_logger import my_logger as logger
 from app.common.utils import show_dialog
 from app.core.container import Container
+from app.core.playwright_worker import shutdown_playwright_worker
 # from view.login_window.window import LoginWindow
 from app.ui.views.login.view import LoginWindow
 # from view.main_window import MainWindow
@@ -32,6 +33,7 @@ app.setAttribute(Qt.ApplicationAttribute.AA_DontCreateNativeWidgetSiblings) # �
 translator = QTranslator()
 translator.load(":/resource/i18n/zh.qm")
 app.installTranslator(translator)
+app.aboutToQuit.connect(shutdown_playwright_worker)
 
 
 def main():
@@ -61,3 +63,5 @@ try:
 except Exception as e:
     logger.exception(e)
     show_dialog(parent=None, content='程序出现异常，请尝试重新运行！')
+finally:
+    shutdown_playwright_worker()

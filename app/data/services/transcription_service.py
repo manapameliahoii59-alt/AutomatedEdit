@@ -35,7 +35,7 @@ class TranscriptionService:
             from modelscope.utils.file_utils import get_default_cache_dir
             cache_dir = get_default_cache_dir()
             for label, model_id in [
-                ("语音识别", MODEL_ID),
+                ("视频识别", MODEL_ID),
                 ("VAD 静音检测", VAD_MODEL),
                 ("标点恢复", PUNC_MODEL),
             ]:
@@ -110,12 +110,12 @@ class TranscriptionService:
                 print(f"   ❌ 识别报错 {file}: {e}")
 
         if not global_script:
-            raise RuntimeError(f"项目 {project.name} 未识别到任何台词")
+            raise RuntimeError(f"项目 {project.name} 未识别到任何内容")
 
         output_path = os.path.join(project_path, "full_script_data.json")
         from app.common.crypto import write_encrypted_json
         write_encrypted_json(output_path, {"steps": global_script, "project_name": project.name})
 
         cost = time.time() - start_time
-        print(f"✅ 《{project.name}》听写完成: {len(global_script)} 句, 耗时 {cost:.1f}s")
+        print(f"✅ 《{project.name}》识别完成, 耗时 {cost:.1f}s")
         return output_path

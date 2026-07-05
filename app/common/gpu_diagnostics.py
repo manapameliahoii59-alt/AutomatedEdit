@@ -52,7 +52,7 @@ def _query_nvidia_smi() -> str:
 def run_gpu_diagnostics() -> str:
     lines = ["【系统显卡】", _query_nvidia_smi(), ""]
 
-    lines.append("【PyTorch / 听写】")
+    lines.append("【PyTorch / 识别】")
     try:
         import torch
         lines.append(f"PyTorch 版本：{torch.__version__}")
@@ -61,7 +61,7 @@ def run_gpu_diagnostics() -> str:
             lines.append(f"设备：{torch.cuda.get_device_name(0)}")
             lines.append(f"CUDA 版本：{torch.version.cuda}")
         else:
-            lines.append("CUDA 可用：否（听写将使用 CPU）")
+            lines.append("CUDA 可用：否（识别将使用 CPU）")
     except Exception as e:
         lines.append(f"PyTorch 加载失败：{e}")
 

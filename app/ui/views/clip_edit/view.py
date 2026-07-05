@@ -4,6 +4,7 @@ from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QFileDialog,
     QHBoxLayout,
+    QHeaderView,
     QTableWidgetItem,
     QVBoxLayout,
     QWidget,
@@ -11,6 +12,7 @@ from PySide6.QtWidgets import (
 from qfluentwidgets import (
     BodyLabel,
     Dialog,
+    LineEdit,
     PrimaryPushButton,
     PushButton,
     ScrollArea,
@@ -21,8 +23,8 @@ from qfluentwidgets import (
 )
 
 from app.common.config import cfg
-from app.common.export_paths import resolve_clip_export_root
-from app.common.utils import show_dialog
+from app.common.export_paths import build_clip_export_filename, resolve_clip_export_root
+from app.common.utils import setup_confirm_dialog, show_dialog
 from app.data.models.drama_project import DramaProject, DramaStatus
 from app.ui.components.bar import ProgressInfoBar
 
@@ -62,7 +64,7 @@ class ClipEditPage(ScrollArea):
 
         layout.addWidget(
             BodyLabel(
-                "导入剧集后，依次执行「听写台词 → AI导演策划 → 动态渲染」三步。",
+                "导入剧集后，依次执行「识别视频 → 策划 → 动态渲染」三步。",
                 self.scroll_widget,
             )
         )
@@ -83,11 +85,28 @@ class ClipEditPage(ScrollArea):
         export_row.addWidget(self.export_open_btn)
         layout.addLayout(export_row)
 
+        name_tag_row = QHBoxLayout()
+        name_tag_row.setSpacing(8)
+        name_tag_row.addWidget(BodyLabel("文件名标识：", self.scroll_widget))
+        self.export_name_tag_input = LineEdit(self.scroll_widget)
+        self.export_name_tag_input.setPlaceholderText("如：李鹏")
+        self.export_name_tag_input.setText(cfg.clip_export_name_tag.value)
+        self.export_name_tag_input.setClearButtonEnabled(True)
+        self.export_name_tag_input.setFixedWidth(140)
+        self.export_name_tag_input.editingFinished.connect(self._save_export_name_tag)
+        self.export_name_tag_input.textChanged.connect(self._update_export_name_preview)
+        name_tag_row.addWidget(self.export_name_tag_input)
+        self.export_name_preview_label = BodyLabel("", self.scroll_widget)
+        self.export_name_preview_label.setWordWrap(True)
+        name_tag_row.addWidget(self.export_name_preview_label, 1)
+        layout.addLayout(name_tag_row)
+        self._update_export_name_preview()
+
         batch_row = QHBoxLayout()
         batch_row.setSpacing(8)
         self.batch_all_btn = PrimaryPushButton("一键执行", self.scroll_widget)
         self.batch_all_btn.clicked.connect(self._batch_all)
-        self.batch_transcribe_btn = PushButton("批量听写", self.scroll_widget)
+        self.batch_transcribe_btn = PushButton("批量识别", self.scroll_widget)
         self.batch_transcribe_btn.clicked.connect(self._batch_transcribe)
         self.batch_plan_btn = PushButton("批量策划", self.scroll_widget)
         self.batch_plan_btn.clicked.connect(self._batch_plan)
@@ -108,12 +127,28 @@ class ClipEditPage(ScrollArea):
         self.table = TableWidget(self.scroll_widget)
         self.table.setColumnCount(7)
         self.table.setHorizontalHeaderLabels(
-            ["", "剧名", "集数", "听写", "策划", "渲染", "操作"]
+            ["", "剧名", "集数", "识别", "策划", "渲染", "操作"]
         )
         self.table.verticalHeader().setVisible(False)
+        self.table.verticalHeader().setDefaultSectionSize(44)
         self.table.setEditTriggers(TableWidget.EditTrigger.NoEditTriggers)
         self.table.setSelectionBehavior(TableWidget.SelectionBehavior.SelectRows)
         self.table.setSelectionMode(TableWidget.SelectionMode.SingleSelection)
+        table_header = self.table.horizontalHeader()
+        table_header.setSectionResizeMode(0, QHeaderView.ResizeMode.Fixed)
+        table_header.setSectionResizeMode(1, QHeaderView.ResizeMode.Fixed)
+        table_header.setSectionResizeMode(2, QHeaderView.ResizeMode.Fixed)
+        table_header.setSectionResizeMode(3, QHeaderView.ResizeMode.Fixed)
+        table_header.setSectionResizeMode(4, QHeaderView.ResizeMode.Fixed)
+        table_header.setSectionResizeMode(5, QHeaderView.ResizeMode.Fixed)
+        table_header.setSectionResizeMode(6, QHeaderView.ResizeMode.Fixed)
+        self.table.setColumnWidth(0, 40)
+        self.table.setColumnWidth(1, 180)
+        self.table.setColumnWidth(2, 72)
+        self.table.setColumnWidth(3, 96)
+        self.table.setColumnWidth(4, 96)
+        self.table.setColumnWidth(5, 96)
+        self.table.setColumnWidth(6, 280)
         layout.addWidget(self.table, 1)
 
         self.setViewportMargins(0, 0, 0, 0)
@@ -143,12 +178,17 @@ class ClipEditPage(ScrollArea):
                 check_item.setCheckState(Qt.CheckState.Unchecked)
             self.table.setItem(row, 0, check_item)
 
-            self.table.setItem(row, 1, QTableWidgetItem(project.name))
-            self.table.setItem(row, 2, QTableWidgetItem(str(project.episode_count)))
+            name_item = QTableWidgetItem(project.name)
+            name_item.setToolTip(project.name)
+            self.table.setItem(row, 1, name_item)
+            count_item = QTableWidgetItem(str(project.episode_count))
+            count_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+            self.table.setItem(row, 2, count_item)
 
             for col, key in [(3, "transcribe"), (4, "plan"), (5, "render")]:
                 s = st.get(key, DramaStatus.PENDING)
                 item = QTableWidgetItem(STATUS_LABELS.get(s, "待处理"))
+                item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
                 if s == DramaStatus.DONE:
                     item.setForeground(Qt.GlobalColor.darkGreen)
                 elif s == DramaStatus.IN_PROGRESS:
@@ -158,26 +198,31 @@ class ClipEditPage(ScrollArea):
             cell = QWidget()
             cell_layout = QHBoxLayout(cell)
             cell_layout.setContentsMargins(4, 0, 4, 0)
+            cell_layout.setSpacing(4)
 
-            transcribe_btn = PushButton("听写", cell)
+            transcribe_btn = PushButton("识别", cell)
+            transcribe_btn.setFixedWidth(56)
             transcribe_btn.setProperty("project_id", project.id)
             transcribe_btn.clicked.connect(
                 lambda _=False, pid=project.id: self.vm.start_transcribe(pid)
             )
 
             plan_btn = PushButton("策划", cell)
+            plan_btn.setFixedWidth(56)
             plan_btn.setProperty("project_id", project.id)
             plan_btn.clicked.connect(
                 lambda _=False, pid=project.id: self.vm.start_planning(pid)
             )
 
             render_btn = PushButton("渲染", cell)
+            render_btn.setFixedWidth(56)
             render_btn.setProperty("project_id", project.id)
             render_btn.clicked.connect(
                 lambda _=False, pid=project.id: self.vm.start_render(pid)
             )
 
             del_btn = PushButton("删除", cell)
+            del_btn.setFixedWidth(56)
             del_btn.setProperty("project_id", project.id)
             del_btn.clicked.connect(
                 lambda _=False, pid=project.id: self._confirm_delete(pid)
@@ -189,8 +234,20 @@ class ClipEditPage(ScrollArea):
             cell_layout.addWidget(del_btn)
             self.table.setCellWidget(row, 6, cell)
 
-        self.table.resizeColumnsToContents()
-        self.table.setColumnWidth(0, 40)
+        self._update_export_name_preview()
+
+    def _preview_project_name(self) -> str:
+        projects = self.vm.get_projects()
+        return projects[0].name if projects else "剧名示例"
+
+    def _update_export_name_preview(self, _text: str = "") -> None:
+        tag = self.export_name_tag_input.text().strip()
+        filename = build_clip_export_filename(
+            self._preview_project_name(),
+            1,
+            tag=tag,
+        )
+        self.export_name_preview_label.setText(f"效果：{filename}.mp4")
 
     def _get_checked_ids(self) -> list[str]:
         projects = self.vm.get_projects()
@@ -242,12 +299,11 @@ class ClipEditPage(ScrollArea):
 
         w = Dialog(
             "一键执行",
-            f"确认对{'全部' if auto_select_all else '选中的'} {len(ids)} 个剧目执行「听写台词 → AI导演策划 → 动态渲染」完整流程吗？",
+            f"确认对{'全部' if auto_select_all else '选中的'} {len(ids)} 个剧目执行「识别视频 → AI导演策划 → 动态渲染」完整流程吗？",
             self.window(),
         )
-        w.yesButton.setText("确定")
-        w.cancelButton.setText("取消")
-        w.buttonLayout.insertWidget(0, w.cancelButton)
+        setup_confirm_dialog(w, window_title="一键执行")
+        w.setFixedWidth(440)
         if w.exec():
             try:
                 if auto_select_all:
@@ -261,10 +317,13 @@ class ClipEditPage(ScrollArea):
         if not project:
             return
         w = Dialog("删除剧目", f"确定要删除《{project.name}》吗？", self.window())
-        w.yesButton.setText("确定")
-        w.cancelButton.setText("取消")
+        setup_confirm_dialog(w, window_title="删除剧目")
         if w.exec():
             self.vm.remove_project(project_id)
+
+    def _save_export_name_tag(self):
+        qconfig.set(cfg.clip_export_name_tag, self.export_name_tag_input.text().strip())
+        self._update_export_name_preview()
 
     def _pick_export_dir(self):
         folder = QFileDialog.getExistingDirectory(

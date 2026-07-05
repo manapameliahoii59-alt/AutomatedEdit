@@ -50,11 +50,15 @@ class LazyViewProxy(QWidget):
         self._layout = QVBoxLayout(self)
         self._layout.setContentsMargins(0,0,0,0)
 
-    def showEvent(self, event):
+    def ensure_loaded(self) -> QWidget:
         if not self._loaded:
             self._real_view = self._factory()
             self._layout.addWidget(self._real_view)
             self._loaded = True
+        return self._real_view
+        
+    def showEvent(self, event):
+        self.ensure_loaded()
         super().showEvent(event)
         
     def __getattr__(self, name):

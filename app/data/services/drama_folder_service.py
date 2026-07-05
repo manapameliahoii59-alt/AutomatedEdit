@@ -37,3 +37,32 @@ def scan_drama_folder(folder_path: str) -> DramaFolderScanResult:
         episode_count=len(videos),
         video_files=tuple(str(p) for p in videos),
     )
+
+
+def list_drama_folders_under(root_path: str) -> list[str]:
+    """扫描目录下各子文件夹，返回包含视频的剧集目录路径列表。"""
+    root = Path(root_path).expanduser().resolve()
+    if not root.is_dir():
+        return []
+
+    folders: list[str] = []
+    for child in sorted(root.iterdir(), key=lambda p: p.name.lower()):
+        if not child.is_dir():
+            continue
+        try:
+            scan = scan_drama_folder(str(child))
+            folders.append(scan.folder_path)
+            continue
+        except DramaFolderError:
+            pass
+        subdirs = sorted(
+            (p for p in child.iterdir() if p.is_dir()),
+            key=lambda p: p.name.lower(),
+        )
+        if len(subdirs) == 1:
+            try:
+                scan = scan_drama_folder(str(subdirs[0]))
+                folders.append(scan.folder_path)
+            except DramaFolderError:
+                continue
+    return folders

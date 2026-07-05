@@ -7,7 +7,7 @@ from dataclasses import dataclass
 
 from scenedetect import detect, ContentDetector
 
-from app.common.export_paths import resolve_project_export_dir
+from app.common.export_paths import build_clip_export_filename, resolve_project_export_dir
 from app.common.ffmpeg_paths import resolve_ffmpeg, resolve_ffprobe
 from app.common.outro_paths import outro_filename, resolve_outro_path
 from app.data.models.drama_project import DramaProject
@@ -50,9 +50,16 @@ class RenderService:
         success_count = 0
 
         for i, plan in enumerate(plans):
-            print(f"   [进度 {i+1}/{total}] 渲染: {plan.get('title', '')}")
+            output_title = build_clip_export_filename(project.name, i + 1)
+            print(f"   [进度 {i+1}/{total}] 渲染: {output_title}")
             ok = RenderService._render_single(
-                ffmpeg, ffprobe, project_path, output_dir, plan, project.name
+                ffmpeg,
+                ffprobe,
+                project_path,
+                output_dir,
+                plan,
+                project.name,
+                output_title,
             )
             if ok:
                 success_count += 1
@@ -222,11 +229,12 @@ class RenderService:
             return False
 
     @staticmethod
-    def _render_single(ffmpeg, ffprobe, project_path, output_dir, plan, project_name):
+    def _render_single(
+        ffmpeg, ffprobe, project_path, output_dir, plan, project_name, output_title
+    ):
         config = plan["files_config"]
         speed = plan.get("global_speed", 1.0)
-        title = plan.get("title", f"task-{uuid.uuid4().hex[:4]}")
-        output_path = os.path.join(output_dir, f"{title}.mp4")
+        output_path = os.path.join(output_dir, f"{output_title}.mp4")
         uid = uuid.uuid4().hex[:8]
 
         last_file = os.path.join(project_path, config["last_episode"])

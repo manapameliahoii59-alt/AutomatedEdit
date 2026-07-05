@@ -24,6 +24,23 @@ class Config(MyQConfig):
     ffmpeg_path = ConfigItem("Tools", "ffmpeg_path", "")
     ffprobe_path = ConfigItem("Tools", "ffprobe_path", "")
     clip_export_dir = ConfigItem("Tools", "clip_export_dir", "")
+    clip_export_name_tag = ConfigItem("Tools", "clip_export_name_tag", "")
+    video_download_dir = ConfigItem("Tools", "video_download_dir", "")
+    video_download_auto_unzip = ConfigItem(
+        "Tools", "video_download_auto_unzip", True, BoolValidator()
+    )
+    video_download_auto_transcribe = ConfigItem(
+        "Tools", "video_download_auto_transcribe", True, BoolValidator()
+    )
+    video_download_auto_import_clip = ConfigItem(
+        "Tools", "video_download_auto_import_clip", True, BoolValidator()
+    )
+    video_download_auto_start_after_add = ConfigItem(
+        "Tools", "video_download_auto_start_after_add", True, BoolValidator()
+    )
+
+    changdu_email = ConfigItem("Tools", "changdu_email", "")
+    changdu_password = ConfigItem("Tools", "changdu_password", "")
 
     api_base_url = ConfigItem("API", "base_url", "")
     access_token = ConfigItem("API", "access_token", "")

@@ -16,6 +16,7 @@ dependencies = [
     "pyside6-fluent-widgets>=1.10.5",
     "python-levenshtein>=0.27.3",
     "requests>=2.34.2",
+    "playwright>=1.49.0",
     "scenedetect>=0.7",
     "torch>=2.0.0",
     "torchaudio>=2.0.0",

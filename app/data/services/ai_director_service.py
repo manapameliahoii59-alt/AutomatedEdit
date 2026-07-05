@@ -52,7 +52,7 @@ class AIDirectorService:
         project_path = project.folder_path
         script_file = os.path.join(project_path, "full_script_data.json")
         if not os.path.exists(script_file):
-            raise FileNotFoundError(f"《{project.name}》未找到 full_script_data.json，请先听写")
+            raise FileNotFoundError(f"《{project.name}》未找到 full_script_data.json，请先识别")
 
         plan_output = os.path.join(project_path, "production_plan_v3.json")
 

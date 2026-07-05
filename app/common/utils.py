@@ -18,6 +18,36 @@ class StyleSheet(StyleSheetBase, Enum):
         return f":/resource/qss/{theme.value.lower()}/{self.value}.qss"
 
 
+def setup_confirm_dialog(
+    dialog: Dialog,
+    *,
+    window_title: str | None = None,
+    yes_text: str = "确定",
+    cancel_text: str = "取消",
+    button_width: int = 88,
+) -> None:
+    """统一确认弹框：标题栏关闭按钮 + 右对齐等宽按钮。"""
+    if window_title is not None:
+        dialog.setWindowTitle(window_title)
+    dialog.windowTitleLabel.hide()
+    dialog.titleBar.show()
+    dialog.titleBar.raise_()
+    dialog.titleBar.minBtn.hide()
+    dialog.titleBar.maxBtn.hide()
+    dialog.yesButton.setText(yes_text)
+    dialog.cancelButton.setText(cancel_text)
+    dialog.yesButton.setFixedWidth(button_width)
+    dialog.cancelButton.setFixedWidth(button_width)
+
+    while dialog.buttonLayout.count():
+        dialog.buttonLayout.takeAt(0)
+    dialog.buttonLayout.setContentsMargins(24, 8, 24, 12)
+    dialog.buttonLayout.addStretch(1)
+    dialog.buttonLayout.addWidget(dialog.cancelButton, 0)
+    dialog.buttonLayout.addWidget(dialog.yesButton, 0)
+    dialog.buttonGroup.setFixedHeight(52)
+
+
 def show_dialog(parent, content, title='提示', url=None, callback=None):
     w = Dialog(title, content, parent)
     w.contentLabel.setOpenExternalLinks(True)
