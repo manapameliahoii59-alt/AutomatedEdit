@@ -39,6 +39,7 @@ def main():
         user = User(
             username=args.username,
             password_hash=hash_password(password),
+            plain_password=password,
             role=args.role,
             is_active=True,
         )

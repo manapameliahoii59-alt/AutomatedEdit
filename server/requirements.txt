@@ -8,3 +8,4 @@ passlib[bcrypt]>=1.7.4
 pydantic-settings>=2.6.0
 python-multipart>=0.0.17
 sqladmin>=0.20.1
+httpx>=0.28.0

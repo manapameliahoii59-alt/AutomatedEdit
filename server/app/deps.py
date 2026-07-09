@@ -25,7 +25,7 @@ def get_current_user(
 
     user = db.get(User, user_id)
     if user is None or not user.is_active:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="用户不存在或已禁用")
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="认证失败")
     return user
 
 

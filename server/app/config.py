@@ -9,6 +9,7 @@ class Settings(BaseSettings):
     jwt_expire_minutes: int = 60 * 24 * 7
     admin_username: str = "admin"
     admin_password: str = "admin123"
+    iocpx_base_url: str = "https://api.iocpx.com"
 
 
 settings = Settings()
