@@ -15,7 +15,7 @@ from app.data.models.drama_project import DramaProject
 
 API_URL = "https://api.deepseek.com/chat/completions"
 MODEL_NAME = "deepseek-v4-flash"
-DEEPSEEK_API_KEYS = ""
+DEEPSEEK_API_KEYS = "sk-289bf0c795584338a3674a38c4c6086e"
 MIN_DURATION_SECONDS = 150
 MAX_DURATION_SECONDS = 720
 SEARCH_EPISODES = 15

@@ -1,8 +1,11 @@
+import threading
 from collections import deque
 from collections.abc import Callable
 from typing import Any
 
 from app.core.task_manager import task_manager
+
+CANCEL_MESSAGE = "渲染已取消"
 
 
 class RenderQueue:
@@ -20,12 +23,33 @@ class RenderQueue:
             ]
         ] = deque()
         self._running = False
+        self._cancel_event = threading.Event()
+        self._active_proc = None
+        self._proc_lock = threading.Lock()
 
     @classmethod
     def instance(cls) -> "RenderQueue":
         if cls._instance is None:
             cls._instance = RenderQueue()
         return cls._instance
+
+    def is_cancelled(self) -> bool:
+        return self._cancel_event.is_set()
+
+    def register_proc(self, proc) -> None:
+        with self._proc_lock:
+            self._active_proc = proc
+
+    def request_cancel(self) -> None:
+        self._cancel_event.set()
+        with self._proc_lock:
+            proc = self._active_proc
+        if proc is not None and proc.poll() is None:
+            proc.kill()
+        while self._pending:
+            _, _, on_error, _ = self._pending.popleft()
+            if on_error:
+                on_error(CANCEL_MESSAGE)
 
     def submit(
         self,
@@ -37,10 +61,11 @@ class RenderQueue:
     ) -> None:
         self._pending.append((func, on_success, on_error, on_start))
         if not self._running:
+            self._cancel_event.clear()
             self._run_next()
 
     def _run_next(self) -> None:
-        if not self._pending:
+        if not self._pending or self._cancel_event.is_set():
             self._running = False
             return
 

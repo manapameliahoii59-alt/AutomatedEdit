@@ -1,4 +1,4 @@
-from PySide6.QtCore import Qt, QPoint
+from PySide6.QtCore import Qt, QPoint, Signal
 from qfluentwidgets import InfoBar, FluentIcon, IndeterminateProgressRing, InfoBarIcon, FluentStyleSheet, InfoBarManager
 
 
@@ -17,6 +17,8 @@ class CustomInfoBarManager(InfoBarManager):
 
 
 class ProgressInfoBar(InfoBar):
+    cancelled = Signal()
+
     def __init__(self, title, content, parent):
         super().__init__(icon=FluentIcon.SYNC,
                          title=title,
@@ -36,3 +38,4 @@ class ProgressInfoBar(InfoBar):
         self.hBoxLayout.insertWidget(0, self.spinner)
         self.setProperty('type', InfoBarIcon.SUCCESS.value)
         FluentStyleSheet.INFO_BAR.apply(self)
+        self.closeButton.clicked.connect(self.cancelled.emit)

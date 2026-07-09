@@ -1,8 +1,10 @@
-import json
 import os
 import shutil
 import subprocess
+import tempfile
+import time
 import uuid
+from collections.abc import Callable
 from dataclasses import dataclass
 
 from scenedetect import detect, ContentDetector
@@ -17,6 +19,10 @@ MIN_CUT_POINT = 0.1
 MIN_CUT_DURATION = 0.3
 
 
+class RenderCancelled(RuntimeError):
+    """用户取消渲染。"""
+
+
 @dataclass(frozen=True)
 class RenderResult:
     output_dir: str
@@ -27,7 +33,12 @@ class RenderResult:
 class RenderService:
 
     @staticmethod
-    def render(project: DramaProject) -> RenderResult:
+    def render(
+        project: DramaProject,
+        *,
+        should_cancel: Callable[[], bool] | None = None,
+        register_proc: Callable | None = None,
+    ) -> RenderResult:
         ffmpeg = resolve_ffmpeg()
         ffprobe = resolve_ffprobe()
 
@@ -48,10 +59,16 @@ class RenderService:
 
         total = len(plans)
         success_count = 0
+        print(
+            f"\n🎬 开始渲染 《{project.name}》：共 {total} 条 -> {output_dir}",
+            flush=True,
+        )
 
         for i, plan in enumerate(plans):
+            if should_cancel and should_cancel():
+                raise RenderCancelled("渲染已取消")
             output_title = build_clip_export_filename(project.name, i + 1)
-            print(f"   [进度 {i+1}/{total}] 渲染: {output_title}")
+            print(f"   [进度 {i+1}/{total}] 渲染: {output_title}", flush=True)
             ok = RenderService._render_single(
                 ffmpeg,
                 ffprobe,
@@ -60,9 +77,14 @@ class RenderService:
                 plan,
                 project.name,
                 output_title,
+                should_cancel=should_cancel,
+                register_proc=register_proc,
             )
-            if ok:
-                success_count += 1
+            if not ok:
+                if should_cancel and should_cancel():
+                    raise RenderCancelled("渲染已取消")
+                continue
+            success_count += 1
 
         print(f"✅ 《{project.name}》渲染完成: {success_count}/{total} 条")
         return RenderResult(output_dir, success_count, total)
@@ -162,15 +184,52 @@ class RenderService:
         return RenderService._probe_duration(ffprobe, path) >= MIN_CUT_DURATION
 
     @staticmethod
-    def _run_ffmpeg(cmd, desc):
+    def _quiet_ffmpeg_cmd(cmd: list) -> list:
+        if not cmd:
+            return cmd
+        return [cmd[0], "-hide_banner", "-nostats", "-loglevel", "error", *cmd[1:]]
+
+    @staticmethod
+    def _run_ffmpeg(
+        cmd,
+        desc,
+        *,
+        should_cancel: Callable[[], bool] | None = None,
+        register_proc: Callable | None = None,
+    ):
+        proc = None
+        cmd = RenderService._quiet_ffmpeg_cmd(cmd)
         try:
-            proc = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="ignore", timeout=3600)
-            if proc.returncode != 0:
-                print(f"❌ {desc} 失败: {proc.stderr}")
-            return proc.returncode == 0
+            print(f"   ▶ {desc}…", flush=True)
+            with tempfile.TemporaryFile(mode="w+b") as stderr_sink:
+                proc = subprocess.Popen(
+                    cmd,
+                    stdout=subprocess.DEVNULL,
+                    stderr=stderr_sink,
+                )
+                if register_proc:
+                    register_proc(proc)
+                while proc.poll() is None:
+                    if should_cancel and should_cancel():
+                        proc.kill()
+                        proc.wait()
+                        print(f"⏹ {desc} 已取消", flush=True)
+                        return False
+                    time.sleep(0.25)
+                stderr_sink.seek(0)
+                stderr = stderr_sink.read().decode("utf-8", errors="ignore").strip()
+                if proc.returncode != 0:
+                    if stderr:
+                        print(f"❌ {desc} 失败: {stderr}", flush=True)
+                    else:
+                        print(f"❌ {desc} 失败，退出码: {proc.returncode}", flush=True)
+                return proc.returncode == 0
         except Exception as e:
-            print(f"❌ {desc} 异常: {e}")
+            print(f"❌ {desc} 异常: {e}", flush=True)
             return False
+        finally:
+            if register_proc:
+                register_proc(None)
 
     @staticmethod
     def _has_audio_stream(ffprobe, path) -> bool:
@@ -192,7 +251,15 @@ class RenderService:
             return False
 
     @staticmethod
-    def _ensure_audio_track(ffmpeg, ffprobe, path, tag) -> tuple[str, str | None]:
+    def _ensure_audio_track(
+        ffmpeg,
+        ffprobe,
+        path,
+        tag,
+        *,
+        should_cancel: Callable[[], bool] | None = None,
+        register_proc: Callable | None = None,
+    ) -> tuple[str, str | None]:
         if not RenderService._has_video_stream(ffprobe, path):
             return path, None
         if RenderService._has_audio_stream(ffprobe, path):
@@ -205,7 +272,12 @@ class RenderService:
             "-c:v", "copy", "-c:a", "aac", "-shortest",
             fixed,
         ]
-        if RenderService._run_ffmpeg(cmd, "补音轨"):
+        if RenderService._run_ffmpeg(
+            cmd,
+            "补音轨",
+            should_cancel=should_cancel,
+            register_proc=register_proc,
+        ):
             return fixed, fixed
         return path, None
 
@@ -230,8 +302,23 @@ class RenderService:
 
     @staticmethod
     def _render_single(
-        ffmpeg, ffprobe, project_path, output_dir, plan, project_name, output_title
+        ffmpeg,
+        ffprobe,
+        project_path,
+        output_dir,
+        plan,
+        project_name,
+        output_title,
+        *,
+        should_cancel: Callable[[], bool] | None = None,
+        register_proc: Callable | None = None,
     ):
+        if should_cancel and should_cancel():
+            return False
+        ffmpeg_kwargs = {
+            "should_cancel": should_cancel,
+            "register_proc": register_proc,
+        }
         config = plan["files_config"]
         speed = plan.get("global_speed", 1.0)
         output_path = os.path.join(output_dir, f"{output_title}.mp4")
@@ -257,6 +344,7 @@ class RenderService:
 
         temp_cut = f"temp_last_{uid}.mp4"
         ai_cut_point = config["last_episode_cut_point"]
+        print(f"   分析切点: {output_title}", flush=True)
         cut_point = RenderService._resolve_cut_point(ffprobe, last_file, ai_cut_point)
         if cut_point <= 0:
             print(
@@ -287,7 +375,7 @@ class RenderService:
                 temp_cut,
                 enc_v_cut,
             )
-            if not RenderService._run_ffmpeg(cut_cmd, "预切割"):
+            if not RenderService._run_ffmpeg(cut_cmd, "预切割", **ffmpeg_kwargs):
                 return False
             if not RenderService._validate_cut_output(ffprobe, temp_cut):
                 print(f"⚠️ 预切割产物无效（时长需 >= {MIN_CUT_DURATION}s），跳过")
@@ -302,7 +390,7 @@ class RenderService:
                 temp_cut,
                 enc_v_cut,
             )
-            if not RenderService._run_ffmpeg(cut_cmd, "预切割"):
+            if not RenderService._run_ffmpeg(cut_cmd, "预切割", **ffmpeg_kwargs):
                 return False
             if not RenderService._validate_cut_output(ffprobe, temp_cut):
                 print(f"⚠️ 预切割产物无效（时长需 >= {MIN_CUT_DURATION}s），跳过")
@@ -320,7 +408,7 @@ class RenderService:
                     temp_first,
                     enc_v_cut,
                 )
-                if RenderService._run_ffmpeg(cut_first_cmd, "裁剪开场"):
+                if RenderService._run_ffmpeg(cut_first_cmd, "裁剪开场", **ffmpeg_kwargs):
                     if RenderService._validate_cut_output(ffprobe, temp_first):
                         input_paths.append(temp_first)
                     else:
@@ -347,7 +435,9 @@ class RenderService:
                     if os.path.exists(af):
                         os.remove(af)
                 return False
-            fixed, temp = RenderService._ensure_audio_track(ffmpeg, ffprobe, p, f"{uid}_{i}")
+            fixed, temp = RenderService._ensure_audio_track(
+                ffmpeg, ffprobe, p, f"{uid}_{i}", **ffmpeg_kwargs
+            )
             normalized_paths.append(fixed)
             if temp:
                 temp_audiofix.append(temp)
@@ -364,12 +454,13 @@ class RenderService:
         v_main = (
             f"scale={target_w}:{target_h}:force_original_aspect_ratio=decrease,"
             f"pad={target_w}:{target_h}:(ow-iw)/2:(oh-ih)/2:black,"
-            f"setpts=1/{speed}*PTS,{title_f},{disclaim_f}"
+            f"setsar=1,setpts=1/{speed}*PTS,{title_f},{disclaim_f}"
         )
         a_main = f"aresample=44100,aformat=channel_layouts=stereo,atempo={speed}"
         v_outro = (
             f"scale={target_w}:{target_h}:force_original_aspect_ratio=decrease,"
-            f"pad={target_w}:{target_h}:(ow-iw)/2:(oh-ih)/2:black"
+            f"pad={target_w}:{target_h}:(ow-iw)/2:(oh-ih)/2:black,"
+            f"setsar=1"
         )
         a_outro = "aresample=44100,aformat=channel_layouts=stereo"
 
@@ -396,7 +487,7 @@ class RenderService:
             render_cmd.extend(["-crf", "22"])
         render_cmd.extend(["-c:a", "aac", "-b:a", "192k", output_path])
 
-        success = RenderService._run_ffmpeg(render_cmd, "最终渲染")
+        success = RenderService._run_ffmpeg(render_cmd, "最终渲染", **ffmpeg_kwargs)
 
         if os.path.exists(temp_cut):
             os.remove(temp_cut)

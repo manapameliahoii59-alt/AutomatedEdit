@@ -3,7 +3,7 @@ import uuid
 
 from PySide6.QtCore import Signal
 
-from app.core.render_queue import render_queue
+from app.core.render_queue import CANCEL_MESSAGE, render_queue
 from app.core.task_manager import task_manager
 from app.core.view_model import ViewModel
 from app.data.models.drama_project import DramaProject, DramaStatus
@@ -41,6 +41,30 @@ class ClipEditViewModel(ViewModel):
             }
         return self._status[project_id]
 
+    @staticmethod
+    def _detect_disk_status(folder_path: str, *, transcribe_done: bool = False) -> dict:
+        """根据剧目目录内产物文件推断识别/策划进度。"""
+        transcribed = transcribe_done or os.path.isfile(
+            os.path.join(folder_path, "full_script_data.json")
+        )
+        planned = transcribed and os.path.isfile(
+            os.path.join(folder_path, "production_plan_v3.json")
+        )
+        return {
+            "transcribe": DramaStatus.DONE if transcribed else DramaStatus.PENDING,
+            "plan": DramaStatus.DONE if planned else DramaStatus.PENDING,
+            "render": DramaStatus.PENDING,
+        }
+
+    @staticmethod
+    def _format_import_status_hint(status: dict) -> str:
+        hints = []
+        if status.get("transcribe") == DramaStatus.DONE:
+            hints.append("已识别")
+        if status.get("plan") == DramaStatus.DONE:
+            hints.append("已策划")
+        return f"（{'、'.join(hints)}）" if hints else ""
+
     def _update_status(self, project_id: str, step: str, status: DramaStatus):
         st = self._ensure_status(project_id)
         st[step] = status
@@ -65,6 +89,11 @@ class ClipEditViewModel(ViewModel):
                 self.errorOccurred.emit(str(exc))
             return None
 
+        disk_status = self._detect_disk_status(
+            scan.folder_path, transcribe_done=transcribe_done
+        )
+        status_hint = self._format_import_status_hint(disk_status)
+
         existing = next(
             (p for p in self._projects if p.folder_path == scan.folder_path), None
         )
@@ -73,17 +102,12 @@ class ClipEditViewModel(ViewModel):
             existing.episode_count = scan.episode_count
             existing.video_files = scan.video_files
             st = self._ensure_status(existing.id)
-            if transcribe_done:
-                st["transcribe"] = DramaStatus.DONE
-                st["plan"] = DramaStatus.PENDING
-                st["render"] = DramaStatus.PENDING
-            else:
-                st["transcribe"] = DramaStatus.PENDING
-                st["plan"] = DramaStatus.PENDING
-                st["render"] = DramaStatus.PENDING
+            st.update(disk_status)
             self.projectsChanged.emit(self._projects)
             if emit_message:
-                self.messageReceived.emit(f"已更新《{scan.name}》，共 {scan.episode_count} 集。")
+                self.messageReceived.emit(
+                    f"已更新《{scan.name}》，共 {scan.episode_count} 集{status_hint}。"
+                )
             return existing
 
         project = DramaProject(
@@ -95,11 +119,12 @@ class ClipEditViewModel(ViewModel):
         )
         self._projects.append(project)
         st = self._ensure_status(project.id)
-        if transcribe_done:
-            st["transcribe"] = DramaStatus.DONE
+        st.update(disk_status)
         self.projectsChanged.emit(self._projects)
         if emit_message:
-            self.messageReceived.emit(f"已导入《{scan.name}》，共 {scan.episode_count} 集。")
+            self.messageReceived.emit(
+                f"已导入《{scan.name}》，共 {scan.episode_count} 集{status_hint}。"
+            )
         return project
 
     def _add_task(self):
@@ -160,6 +185,18 @@ class ClipEditViewModel(ViewModel):
             return False
         return True
 
+    def request_cancel(self) -> None:
+        render_queue.request_cancel()
+
+    def _is_render_cancelled(self, msg: str) -> bool:
+        return msg == CANCEL_MESSAGE or "渲染已取消" in msg
+
+    def _emit_render_error(self, msg: str, *, prefix: str = "渲染失败") -> None:
+        if self._is_render_cancelled(msg):
+            self.messageReceived.emit("渲染已取消")
+        else:
+            self.errorOccurred.emit(f"{prefix}：{msg}" if prefix else msg)
+
     def _submit_render(
         self,
         project: DramaProject,
@@ -177,7 +214,11 @@ class ClipEditViewModel(ViewModel):
             self._show_progress("正在渲染", pname, index=index, total=total)
 
         render_queue.submit(
-            lambda: RenderService.render(project),
+            lambda: RenderService.render(
+                project,
+                should_cancel=render_queue.is_cancelled,
+                register_proc=render_queue.register_proc,
+            ),
             on_success=on_success,
             on_error=on_error,
             on_start=_on_start,
@@ -288,7 +329,7 @@ class ClipEditViewModel(ViewModel):
         def _on_error(msg):
             self._remove_task()
             self._update_status(project_id, "render", DramaStatus.PENDING)
-            self.errorOccurred.emit(f"渲染失败：{msg}")
+            self._emit_render_error(msg)
 
         self._submit_render(project, on_success=_on_success, on_error=_on_error)
 
@@ -441,6 +482,8 @@ class ClipEditViewModel(ViewModel):
                 self._update_status(pid, "render", DramaStatus.PENDING)
                 results["fail"] += 1
                 if self._active_tasks == 0:
+                    if self._is_render_cancelled(msg):
+                        self.messageReceived.emit("渲染已取消")
                     self._emit_batch_summary("批量渲染完成", results, skipped)
 
             self._submit_render(
@@ -473,14 +516,7 @@ class ClipEditViewModel(ViewModel):
         """批量导入剧目文件夹（不自动执行剪辑流程）。"""
         imported = 0
         for folder in folder_paths:
-            transcribe_done = os.path.isfile(
-                os.path.join(folder, "full_script_data.json")
-            )
-            project = self.import_drama_folder(
-                folder,
-                transcribe_done=transcribe_done,
-                emit_message=False,
-            )
+            project = self.import_drama_folder(folder, emit_message=False)
             if project:
                 imported += 1
 
@@ -553,7 +589,10 @@ class ClipEditViewModel(ViewModel):
             def step3_err(msg):
                 self._remove_task()
                 self._update_status(pid, "render", DramaStatus.PENDING)
-                self.errorOccurred.emit(f"《{pname}》渲染失败：{msg}")
+                if self._is_render_cancelled(msg):
+                    self.messageReceived.emit(f"《{pname}》渲染已取消")
+                else:
+                    self.errorOccurred.emit(f"《{pname}》渲染失败：{msg}")
 
             self._submit_render(
                 project,
@@ -616,7 +655,10 @@ class ClipEditViewModel(ViewModel):
                 def step3_err(msg):
                     self._remove_task()
                     self._update_status(pid, "render", DramaStatus.PENDING)
-                    self.errorOccurred.emit(f"《{pname}》渲染失败：{msg}")
+                    if self._is_render_cancelled(msg):
+                        self.messageReceived.emit(f"《{pname}》渲染已取消")
+                    else:
+                        self.errorOccurred.emit(f"《{pname}》渲染失败：{msg}")
 
                 self._submit_render(
                     project,

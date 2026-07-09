@@ -355,12 +355,16 @@ class ClipEditPage(ScrollArea):
         if loading:
             if self.loading_bar is None:
                 self.loading_bar = ProgressInfoBar(title, content, self)
+                self.loading_bar.cancelled.connect(self._on_progress_cancelled)
                 self.loading_bar.show()
             else:
                 self.loading_bar.titleLabel.setText(title)
                 self.loading_bar.contentLabel.setText(content)
         else:
             self._close_loading()
+
+    def _on_progress_cancelled(self):
+        self.vm.request_cancel()
 
     def _close_loading(self):
         if self.loading_bar:
