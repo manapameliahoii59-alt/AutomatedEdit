@@ -112,10 +112,13 @@ class ClipEditPage(ScrollArea):
         self.batch_plan_btn.clicked.connect(self._batch_plan)
         self.batch_render_btn = PushButton("批量渲染", self.scroll_widget)
         self.batch_render_btn.clicked.connect(self._batch_render)
+        self.batch_render_timed_btn = PushButton("渲染计时", self.scroll_widget)
+        self.batch_render_timed_btn.clicked.connect(self._batch_render_timed)
         batch_row.addWidget(self.batch_all_btn)
         batch_row.addWidget(self.batch_transcribe_btn)
         batch_row.addWidget(self.batch_plan_btn)
         batch_row.addWidget(self.batch_render_btn)
+        batch_row.addWidget(self.batch_render_timed_btn)
         self.import_btn = PrimaryPushButton(
             FIF.FOLDER_ADD, "导入剧目", self.scroll_widget
         )
@@ -148,7 +151,7 @@ class ClipEditPage(ScrollArea):
         self.table.setColumnWidth(3, 96)
         self.table.setColumnWidth(4, 96)
         self.table.setColumnWidth(5, 96)
-        self.table.setColumnWidth(6, 280)
+        self.table.setColumnWidth(6, 336)
         layout.addWidget(self.table, 1)
 
         self.setViewportMargins(0, 0, 0, 0)
@@ -221,6 +224,14 @@ class ClipEditPage(ScrollArea):
                 lambda _=False, pid=project.id: self.vm.start_render(pid)
             )
 
+            render_timed_btn = PushButton("计时", cell)
+            render_timed_btn.setFixedWidth(48)
+            render_timed_btn.setToolTip("渲染并统计耗时")
+            render_timed_btn.setProperty("project_id", project.id)
+            render_timed_btn.clicked.connect(
+                lambda _=False, pid=project.id: self.vm.start_render(pid, timed=True)
+            )
+
             del_btn = PushButton("删除", cell)
             del_btn.setFixedWidth(56)
             del_btn.setProperty("project_id", project.id)
@@ -231,6 +242,7 @@ class ClipEditPage(ScrollArea):
             cell_layout.addWidget(transcribe_btn)
             cell_layout.addWidget(plan_btn)
             cell_layout.addWidget(render_btn)
+            cell_layout.addWidget(render_timed_btn)
             cell_layout.addWidget(del_btn)
             self.table.setCellWidget(row, 6, cell)
 
@@ -286,6 +298,13 @@ class ClipEditPage(ScrollArea):
             show_dialog(self, "请先勾选要处理的剧目", "提示")
             return
         self.vm.batch_render(ids)
+
+    def _batch_render_timed(self):
+        ids = self._get_checked_ids()
+        if not ids:
+            show_dialog(self, "请先勾选要处理的剧目", "提示")
+            return
+        self.vm.batch_render(ids, timed=True)
 
     def _batch_all(self):
         if not self.vm.get_projects():

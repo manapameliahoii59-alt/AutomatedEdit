@@ -1,4 +1,5 @@
 import os
+import time
 import uuid
 
 from PySide6.QtCore import Signal
@@ -197,6 +198,29 @@ class ClipEditViewModel(ViewModel):
         else:
             self.errorOccurred.emit(f"{prefix}：{msg}" if prefix else msg)
 
+    @staticmethod
+    def _format_elapsed(seconds: float) -> str:
+        if seconds < 60:
+            return f"{seconds:.1f} 秒"
+        minutes, secs = divmod(int(seconds), 60)
+        if minutes < 60:
+            return f"{minutes} 分 {secs} 秒"
+        hours, minutes = divmod(minutes, 60)
+        return f"{hours} 小时 {minutes} 分 {secs} 秒"
+
+    def _append_render_timing(
+        self,
+        message: str,
+        *,
+        project_name: str,
+        started_at: float | None,
+    ) -> str:
+        if started_at is None:
+            return message
+        elapsed = self._format_elapsed(time.perf_counter() - started_at)
+        print(f"⏱ 《{project_name}》渲染耗时：{elapsed}", flush=True)
+        return f"{message}\n耗时：{elapsed}"
+
     def _submit_render(
         self,
         project: DramaProject,
@@ -303,7 +327,7 @@ class ClipEditViewModel(ViewModel):
             on_error=_on_error,
         )
 
-    def start_render(self, project_id: str):
+    def start_render(self, project_id: str, *, timed: bool = False):
         project = next((p for p in self._projects if p.id == project_id), None)
         if not project:
             self.errorOccurred.emit("未找到该剧目")
@@ -316,6 +340,10 @@ class ClipEditViewModel(ViewModel):
         if not self._ensure_can_clip(project.name):
             return
 
+        started_at = time.perf_counter() if timed else None
+        if timed:
+            print(f"⏱ 开始计时渲染《{project.name}》", flush=True)
+
         self._show_progress("正在渲染", project.name)
         self._add_task()
 
@@ -324,11 +352,20 @@ class ClipEditViewModel(ViewModel):
             self._update_status(project_id, "render", DramaStatus.DONE)
             UsageService.report("render", success=result.success_count > 0)
             self._report_clip_done(project.name)
-            self.messageReceived.emit(self._format_render_message(project.name, result))
+            message = self._format_render_message(project.name, result)
+            message = self._append_render_timing(
+                message,
+                project_name=project.name,
+                started_at=started_at,
+            )
+            self.messageReceived.emit(message)
 
         def _on_error(msg):
             self._remove_task()
             self._update_status(project_id, "render", DramaStatus.PENDING)
+            if timed and started_at is not None and not self._is_render_cancelled(msg):
+                elapsed = self._format_elapsed(time.perf_counter() - started_at)
+                print(f"⏱ 《{project.name}》渲染失败，耗时：{elapsed}", flush=True)
             self._emit_render_error(msg)
 
         self._submit_render(project, on_success=_on_success, on_error=_on_error)
@@ -435,7 +472,7 @@ class ClipEditViewModel(ViewModel):
                 on_error=_on_error,
             )
 
-    def batch_render(self, project_ids: list[str]):
+    def batch_render(self, project_ids: list[str], *, timed: bool = False):
         valid = []
         skipped = 0
         for pid in project_ids:
@@ -453,6 +490,11 @@ class ClipEditViewModel(ViewModel):
             self.messageReceived.emit("没有符合条件的项目可执行渲染")
             return
 
+        batch_started = time.perf_counter() if timed else None
+        item_started: dict[str, float] = {}
+        if timed:
+            print(f"⏱ 开始批量渲染计时（{len(valid)} 个剧目）", flush=True)
+
         results = {"success": 0, "fail": 0}
         total = len(valid)
         for index, project in enumerate(valid, 1):
@@ -465,26 +507,48 @@ class ClipEditViewModel(ViewModel):
 
             pid = project.id
             pname = project.name
+            if timed:
+                item_started[pid] = time.perf_counter()
+
+            def _finish_batch_summary(prefix: str) -> None:
+                if timed and batch_started is not None:
+                    total_elapsed = self._format_elapsed(
+                        time.perf_counter() - batch_started
+                    )
+                    print(f"⏱ 批量渲染总耗时：{total_elapsed}", flush=True)
+                    parts = [f"{prefix}：成功 {results['success']} 个"]
+                    if results["fail"]:
+                        parts.append(f"失败 {results['fail']} 个")
+                    if skipped:
+                        parts.append(f"跳过 {skipped} 个")
+                    parts.append(f"总耗时 {total_elapsed}")
+                    self.messageReceived.emit("，".join(parts))
+                else:
+                    self._emit_batch_summary(prefix, results, skipped)
 
             def _on_success(_result: RenderResult, pid=pid, pname=pname):
                 self._remove_task()
                 self._update_status(pid, "render", DramaStatus.DONE)
                 results["success"] += 1
                 self._report_clip_done(pname)
+                if timed and pid in item_started:
+                    elapsed = self._format_elapsed(time.perf_counter() - item_started[pid])
+                    print(f"⏱ 《{pname}》渲染耗时：{elapsed}", flush=True)
                 if self._active_tasks == 0:
                     root = resolve_clip_export_root()
-                    self._emit_batch_summary(
-                        f"批量渲染完成（导出目录：{root}）", results, skipped
-                    )
+                    _finish_batch_summary(f"批量渲染完成（导出目录：{root}）")
 
             def _on_error(msg, pid=pid, pname=pname):
                 self._remove_task()
                 self._update_status(pid, "render", DramaStatus.PENDING)
                 results["fail"] += 1
+                if timed and pid in item_started and not self._is_render_cancelled(msg):
+                    elapsed = self._format_elapsed(time.perf_counter() - item_started[pid])
+                    print(f"⏱ 《{pname}》渲染失败，耗时：{elapsed}", flush=True)
                 if self._active_tasks == 0:
                     if self._is_render_cancelled(msg):
                         self.messageReceived.emit("渲染已取消")
-                    self._emit_batch_summary("批量渲染完成", results, skipped)
+                    _finish_batch_summary("批量渲染完成")
 
             self._submit_render(
                 project,
