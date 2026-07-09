@@ -93,3 +93,12 @@ def run_changdu_login(auth_file: Path | None = None) -> Path:
 
 def is_auth_file_present(auth_file: Path | None = None) -> bool:
     return (auth_file or AUTH_FILE).is_file()
+
+
+def clear_auth_file(auth_file: Path | None = None) -> bool:
+    """删除 auth.json，文件存在且删除成功返回 True。"""
+    target = auth_file or AUTH_FILE
+    if not target.is_file():
+        return False
+    target.unlink()
+    return True

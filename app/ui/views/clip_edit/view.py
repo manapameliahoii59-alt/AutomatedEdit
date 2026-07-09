@@ -24,7 +24,7 @@ from qfluentwidgets import (
 
 from app.common.config import cfg
 from app.common.export_paths import build_clip_export_filename, resolve_clip_export_root
-from app.common.utils import setup_confirm_dialog, show_dialog
+from app.common.utils import setup_confirm_dialog, show_dialog, show_toast
 from app.data.models.drama_project import DramaProject, DramaStatus
 from app.ui.components.bar import ProgressInfoBar
 
@@ -156,7 +156,7 @@ class ClipEditPage(ScrollArea):
     def _bind_view_model(self):
         self.vm.projectsChanged.connect(self._refresh_table)
         self.vm.loadingChanged.connect(self._handle_loading)
-        self.vm.messageReceived.connect(lambda msg: show_dialog(self, msg, "提示"))
+        self.vm.messageReceived.connect(lambda msg: show_toast(self, msg))
         self.vm.errorOccurred.connect(lambda msg: show_dialog(self, msg, "提示"))
         self._refresh_table(self.vm.get_projects())
 
@@ -351,15 +351,16 @@ class ClipEditPage(ScrollArea):
         if folder:
             self.vm.import_drama_folder(folder)
 
-    def _handle_loading(self, is_loading: bool):
-        if is_loading:
-            self._show_loading("正在处理", "请稍候...")
+    def _handle_loading(self, loading: bool, title: str, content: str):
+        if loading:
+            if self.loading_bar is None:
+                self.loading_bar = ProgressInfoBar(title, content, self)
+                self.loading_bar.show()
+            else:
+                self.loading_bar.titleLabel.setText(title)
+                self.loading_bar.contentLabel.setText(content)
         else:
             self._close_loading()
-
-    def _show_loading(self, title, content):
-        self.loading_bar = ProgressInfoBar(title, content, self)
-        self.loading_bar.show()
 
     def _close_loading(self):
         if self.loading_bar:

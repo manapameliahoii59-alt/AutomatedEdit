@@ -28,6 +28,7 @@ class LoginWindow(FramelessDialog):
             self.titleBar.closeBtn.hide()
             
         self._hide_legacy_captcha_ui()
+        self.ui.password.setViewPasswordButtonVisible(True)
         self.init_data()
         self.bind_events()
         self.bind_view_model()

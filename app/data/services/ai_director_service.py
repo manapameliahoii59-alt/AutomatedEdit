@@ -11,11 +11,11 @@ from fuzzywuzzy import process
 from requests.adapters import HTTPAdapter
 from urllib3.util import Retry
 
-from app.common.config import cfg
 from app.data.models.drama_project import DramaProject
 
 API_URL = "https://api.deepseek.com/chat/completions"
 MODEL_NAME = "deepseek-v4-flash"
+DEEPSEEK_API_KEYS = "sk-289bf0c795584338a3674a38c4c6086e"
 MIN_DURATION_SECONDS = 150
 MAX_DURATION_SECONDS = 720
 SEARCH_EPISODES = 15
@@ -78,9 +78,9 @@ class AIDirectorService:
                 episode_end_times.get(s["source_file"], 0), s.get("end", 0)
             )
 
-        api_keys_raw = cfg.deepseek_api_keys.value
+        api_keys_raw = DEEPSEEK_API_KEYS
         if not api_keys_raw:
-            raise ValueError("未配置 DeepSeek API Key，请在设置中配置")
+            raise ValueError("未配置 DeepSeek API Key")
 
         api_keys = [k.strip() for k in api_keys_raw.split(",") if k.strip()]
         key_pool = queue.Queue()

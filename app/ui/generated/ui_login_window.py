@@ -16,11 +16,12 @@ from PySide6.QtGui import (QBrush, QColor, QConicalGradient, QCursor,
     QImage, QKeySequence, QLinearGradient, QPainter,
     QPalette, QPixmap, QRadialGradient, QTransform)
 from PySide6.QtWidgets import (QApplication, QDialog, QFrame, QHBoxLayout,
-    QLabel, QLayout, QLineEdit, QSizePolicy,
-    QVBoxLayout, QWidget)
+    QLabel, QLayout, QSizePolicy, QVBoxLayout,
+    QWidget)
 
 from app.ui.components.label_widget import ClickableLabel
-from qfluentwidgets import (CheckBox, LineEdit, PrimaryPushButton, PushButton)
+from qfluentwidgets import (CheckBox, LineEdit, PasswordLineEdit, PrimaryPushButton,
+    PushButton)
 import resource_rc
 
 class Ui_Dialog(object):
@@ -43,14 +44,14 @@ class Ui_Dialog(object):
         self.frame.setFrameShadow(QFrame.Shadow.Raised)
         self.form = QFrame(self.frame)
         self.form.setObjectName(u"form")
-        self.form.setGeometry(QRect(230, 70, 290, 361))
+        self.form.setGeometry(QRect(230, 70, 290, 385))
         self.form.setFrameShape(QFrame.Shape.NoFrame)
         self.form.setFrameShadow(QFrame.Shadow.Raised)
         self.horizontalLayout_8 = QHBoxLayout(self.form)
         self.horizontalLayout_8.setObjectName(u"horizontalLayout_8")
         self.horizontalLayout_8.setContentsMargins(20, 10, 20, 20)
         self.verticalLayout_2 = QVBoxLayout()
-        self.verticalLayout_2.setSpacing(0)
+        self.verticalLayout_2.setSpacing(6)
         self.verticalLayout_2.setObjectName(u"verticalLayout_2")
         self.login_title = QLabel(self.form)
         self.login_title.setObjectName(u"login_title")
@@ -64,15 +65,24 @@ class Ui_Dialog(object):
 
         self.verticalLayout_2.addWidget(self.login_title)
 
+        self.username_label = QLabel(self.form)
+        self.username_label.setObjectName(u"username_label")
+        font1 = QFont()
+        font1.setFamilies([u"Microsoft YaHei"])
+        font1.setPointSize(9)
+        self.username_label.setFont(font1)
+
+        self.verticalLayout_2.addWidget(self.username_label)
+
         self.horizontalLayout_9 = QHBoxLayout()
         self.horizontalLayout_9.setSpacing(0)
         self.horizontalLayout_9.setObjectName(u"horizontalLayout_9")
         self.username = LineEdit(self.form)
         self.username.setObjectName(u"username")
         self.username.setMinimumSize(QSize(90, 40))
-        font1 = QFont()
-        font1.setFamilies([u"Microsoft YaHei"])
-        self.username.setFont(font1)
+        font2 = QFont()
+        font2.setFamilies([u"Microsoft YaHei"])
+        self.username.setFont(font2)
         self.username.setTabletTracking(False)
         self.username.setFrame(False)
         self.username.setClearButtonEnabled(True)
@@ -82,10 +92,16 @@ class Ui_Dialog(object):
 
         self.verticalLayout_2.addLayout(self.horizontalLayout_9)
 
+        self.password_label = QLabel(self.form)
+        self.password_label.setObjectName(u"password_label")
+        self.password_label.setFont(font1)
+
+        self.verticalLayout_2.addWidget(self.password_label)
+
         self.horizontalLayout_10 = QHBoxLayout()
         self.horizontalLayout_10.setSpacing(0)
         self.horizontalLayout_10.setObjectName(u"horizontalLayout_10")
-        self.password = LineEdit(self.form)
+        self.password = PasswordLineEdit(self.form)
         self.password.setObjectName(u"password")
         sizePolicy = QSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         sizePolicy.setHorizontalStretch(0)
@@ -94,9 +110,8 @@ class Ui_Dialog(object):
         self.password.setSizePolicy(sizePolicy)
         self.password.setMinimumSize(QSize(90, 40))
         self.password.setBaseSize(QSize(0, 0))
-        self.password.setFont(font1)
+        self.password.setFont(font2)
         self.password.setFrame(False)
-        self.password.setEchoMode(QLineEdit.EchoMode.Password)
         self.password.setClearButtonEnabled(True)
 
         self.horizontalLayout_10.addWidget(self.password)
@@ -114,7 +129,7 @@ class Ui_Dialog(object):
         sizePolicy.setHeightForWidth(self.graphic.sizePolicy().hasHeightForWidth())
         self.graphic.setSizePolicy(sizePolicy)
         self.graphic.setMinimumSize(QSize(90, 40))
-        self.graphic.setFont(font1)
+        self.graphic.setFont(font2)
         self.graphic.setFrame(False)
         self.graphic.setClearButtonEnabled(True)
 
@@ -129,7 +144,7 @@ class Ui_Dialog(object):
         self.image.setSizePolicy(sizePolicy1)
         self.image.setMinimumSize(QSize(120, 40))
         self.image.setMaximumSize(QSize(80, 40))
-        self.image.setFont(font1)
+        self.image.setFont(font2)
         self.image.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
         self.horizontalLayout_11.addWidget(self.image)
@@ -145,7 +160,7 @@ class Ui_Dialog(object):
         self.code.setObjectName(u"code")
         self.code.setMinimumSize(QSize(50, 40))
         self.code.setMaximumSize(QSize(200, 16777215))
-        self.code.setFont(font1)
+        self.code.setFont(font2)
         self.code.setFrame(False)
         self.code.setClearButtonEnabled(True)
 
@@ -159,7 +174,7 @@ class Ui_Dialog(object):
         sizePolicy2.setHeightForWidth(self.getCode.sizePolicy().hasHeightForWidth())
         self.getCode.setSizePolicy(sizePolicy2)
         self.getCode.setMinimumSize(QSize(80, 30))
-        self.getCode.setFont(font1)
+        self.getCode.setFont(font2)
         self.getCode.setFocusPolicy(Qt.FocusPolicy.TabFocus)
         self.getCode.setAutoDefault(False)
 
@@ -173,16 +188,13 @@ class Ui_Dialog(object):
         self.horizontalLayout_13.setContentsMargins(-1, 0, 0, 0)
         self.session = CheckBox(self.form)
         self.session.setObjectName(u"session")
-        font2 = QFont()
-        font2.setFamilies([u"Microsoft YaHei"])
-        font2.setPointSize(9)
-        self.session.setFont(font2)
+        self.session.setFont(font1)
 
         self.horizontalLayout_13.addWidget(self.session)
 
         self.remember = CheckBox(self.form)
         self.remember.setObjectName(u"remember")
-        self.remember.setFont(font2)
+        self.remember.setFont(font1)
 
         self.horizontalLayout_13.addWidget(self.remember)
 
@@ -194,7 +206,7 @@ class Ui_Dialog(object):
         sizePolicy2.setHeightForWidth(self.login.sizePolicy().hasHeightForWidth())
         self.login.setSizePolicy(sizePolicy2)
         self.login.setMinimumSize(QSize(0, 35))
-        self.login.setFont(font1)
+        self.login.setFont(font2)
 
         self.verticalLayout_2.addWidget(self.login)
 
@@ -229,17 +241,19 @@ class Ui_Dialog(object):
     # setupUi
 
     def retranslateUi(self, Dialog):
-        Dialog.setWindowTitle(QCoreApplication.translate("Dialog", u"\u767b\u5f55\u7cfb\u7edf", None))
-        self.login_title.setText(QCoreApplication.translate("Dialog", u"\u767b\u5f55\u7cfb\u7edf", None))
-        self.username.setPlaceholderText(QCoreApplication.translate("Dialog", u"\u7528\u6237\u540d", None))
-        self.password.setPlaceholderText(QCoreApplication.translate("Dialog", u"\u5bc6\u7801", None))
+        Dialog.setWindowTitle(QCoreApplication.translate("Dialog", u"\u767b\u5f55", None))
+        self.login_title.setText(QCoreApplication.translate("Dialog", u"\u767b\u5f55", None))
+        self.username_label.setText(QCoreApplication.translate("Dialog", u"\u6613\u6295\u8d26\u53f7", None))
+        self.username.setPlaceholderText(QCoreApplication.translate("Dialog", u"\u8bf7\u8f93\u5165\u8d26\u53f7", None))
+        self.password_label.setText(QCoreApplication.translate("Dialog", u"\u6613\u6295\u5bc6\u7801", None))
+        self.password.setPlaceholderText(QCoreApplication.translate("Dialog", u"\u8bf7\u8f93\u5165\u5bc6\u7801", None))
         self.graphic.setPlaceholderText(QCoreApplication.translate("Dialog", u"\u9a8c\u8bc1\u7801", None))
         self.image.setText(QCoreApplication.translate("Dialog", u"\u56fe\u7247\u9a8c\u8bc1\u7801\u533a", None))
         self.code.setPlaceholderText(QCoreApplication.translate("Dialog", u"\u77ed\u4fe1\u9a8c\u8bc1\u7801", None))
         self.getCode.setText(QCoreApplication.translate("Dialog", u"\u83b7\u53d6", None))
         self.session.setText(QCoreApplication.translate("Dialog", u"\u81ea\u52a8\u767b\u5f55", None))
         self.remember.setText(QCoreApplication.translate("Dialog", u"\u8bb0\u4f4f\u5bc6\u7801", None))
-        self.login.setText(QCoreApplication.translate("Dialog", u"\u767b\u9646", None))
+        self.login.setText(QCoreApplication.translate("Dialog", u"\u767b\u5f55", None))
         self.copyright.setText(QCoreApplication.translate("Dialog", u"\u00a9Copyright \u5728\u914d\u7f6e\u6587\u4ef6\u4fee\u6539", None))
     # retranslateUi
 

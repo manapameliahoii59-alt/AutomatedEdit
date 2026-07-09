@@ -46,6 +46,10 @@ class Config(MyQConfig):
     access_token = ConfigItem("API", "access_token", "")
 
 
+# 客户端 config.json 未配置 base_url 时使用的默认服务端地址
+DEFAULT_API_BASE_URL = "http://129.204.86.63:7172"
+
+
 YEAR = datetime.datetime.now().year
 AUTHOR = "Cheukfung"
 VERSION = '0.0.1'

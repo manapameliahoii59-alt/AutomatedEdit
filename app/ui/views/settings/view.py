@@ -1,14 +1,13 @@
 # coding:utf-8
 from PySide6.QtCore import Qt, QUrl, Signal
 from PySide6.QtGui import QDesktopServices
-from PySide6.QtWidgets import QWidget, QLabel, QInputDialog, QLineEdit
-from qfluentwidgets import FluentIcon as FIcon, CustomColorSettingCard, setThemeColor, InfoBarPosition, qconfig
+from PySide6.QtWidgets import QWidget, QLabel
+from qfluentwidgets import FluentIcon as FIcon, CustomColorSettingCard, setThemeColor, qconfig
 from qfluentwidgets import (SettingCardGroup, SwitchSettingCard, OptionsSettingCard, PrimaryPushSettingCard, PushSettingCard, ScrollArea,
-                            ExpandLayout, InfoBar, setTheme, Dialog, BodyLabel, LineEdit)
+                            ExpandLayout, setTheme, Dialog)
 
-from app.common.aes import aes_encrypt
 from app.common.config import cfg, FEEDBACK_URL, VERSION, YEAR, AUTHOR
-from app.common.utils import StyleSheet, setup_confirm_dialog
+from app.common.utils import StyleSheet, changdu_account_summary, open_changdu_account_dialog
 from app.ui.components.icon import MyIcon
 
 
@@ -51,26 +50,11 @@ class SettingInterface(ScrollArea):
             self.personalGroup
         )
 
-        # clip tools
-        self.clipGroup = SettingCardGroup('剪辑工具', self.scrollWidget)
-        self.api_server_card = PushSettingCard(
-            '修改', FIcon.GLOBE,
-            'API 服务器地址',
-            cfg.api_base_url.value or '未设置（使用本地演示登录）',
-            self.clipGroup
-        )
-        self.api_key_card = PushSettingCard(
-            '修改', FIcon.CERTIFICATE,
-            'DeepSeek API Key',
-            '当前已设置' if cfg.deepseek_api_keys.value else '未设置',
-            self.clipGroup
-        )
-
         self.changduGroup = SettingCardGroup('常读平台', self.scrollWidget)
         self.changdu_account_card = PushSettingCard(
             '修改', FIcon.PEOPLE,
             '常读登录账号',
-            self._changdu_account_summary(),
+            changdu_account_summary(),
             self.changduGroup,
         )
 
@@ -120,8 +104,6 @@ class SettingInterface(ScrollArea):
         self.personalGroup.addSettingCard(self.save_password)
         self.personalGroup.addSettingCard(self.auto_login)
         self.personalGroup.addSettingCard(self.logoutCard)
-        self.clipGroup.addSettingCard(self.api_server_card)
-        self.clipGroup.addSettingCard(self.api_key_card)
         self.changduGroup.addSettingCard(self.changdu_account_card)
         self.aboutGroup.addSettingCard(self.themeCard)
         self.aboutGroup.addSettingCard(self.themeColorCard)
@@ -129,7 +111,6 @@ class SettingInterface(ScrollArea):
         self.expandLayout.setSpacing(28)
         self.expandLayout.setContentsMargins(60, 0, 60, 0)
         self.expandLayout.addWidget(self.personalGroup)
-        self.expandLayout.addWidget(self.clipGroup)
         self.expandLayout.addWidget(self.changduGroup)
         self.expandLayout.addWidget(self.aboutGroup)
 
@@ -139,29 +120,7 @@ class SettingInterface(ScrollArea):
         self.aboutCard.clicked.connect(lambda: QDesktopServices.openUrl(QUrl(FEEDBACK_URL)))
         self.logoutCard.clicked.connect(self.__on_logout_clicked)
         self.save_password.checkedChanged.connect(self.__on_save_password_changed)
-        self.api_key_card.clicked.connect(self.__on_set_api_key)
-        self.api_server_card.clicked.connect(self.__on_set_api_server)
         self.changdu_account_card.clicked.connect(self.__on_set_changdu_account)
-
-    def _changdu_account_summary(self) -> str:
-        email = cfg.changdu_email.value.strip()
-        if not email:
-            return '未设置'
-        if cfg.changdu_password.value:
-            return f'{email}（密码已配置）'
-        return email
-
-    def __on_set_api_server(self):
-        url, ok = QInputDialog.getText(
-            self,
-            'API 服务器地址',
-            '例如 https://api.example.com（留空则本地演示登录）:',
-            text=cfg.api_base_url.value,
-        )
-        if ok:
-            qconfig.set(cfg.api_base_url, url.strip().rstrip('/'))
-            display = url.strip() or '未设置（使用本地演示登录）'
-            self.api_server_card.setContent(display)
 
     def __on_save_password_changed(self, is_checked: bool):
         if not is_checked:
@@ -180,44 +139,6 @@ class SettingInterface(ScrollArea):
             self.logout.emit()
 
     def __on_set_changdu_account(self):
-        dialog = Dialog("常读登录账号", "", self.window())
-        dialog.titleLabel.hide()
-        dialog.contentLabel.hide()
-        setup_confirm_dialog(dialog, window_title="常读登录账号", yes_text="保存")
-
-        email_input = LineEdit(dialog)
-        email_input.setPlaceholderText("请输入邮箱")
-        email_input.setText(cfg.changdu_email.value)
-        email_input.setClearButtonEnabled(True)
-
-        password_input = LineEdit(dialog)
-        password_input.setEchoMode(QLineEdit.EchoMode.Password)
-        password_input.setPlaceholderText(
-            "请输入密码" if not cfg.changdu_password.value else "留空则不修改密码"
-        )
-        password_input.setClearButtonEnabled(True)
-
-        dialog.textLayout.setContentsMargins(24, 16, 24, 8)
-        dialog.textLayout.addWidget(BodyLabel("邮箱", dialog))
-        dialog.textLayout.addWidget(email_input)
-        dialog.textLayout.addWidget(BodyLabel("密码", dialog))
-        dialog.textLayout.addWidget(password_input)
-
-        dialog.setFixedSize(420, 248)
-        if dialog.exec():
-            email = email_input.text().strip()
-            password = password_input.text().strip()
-            qconfig.set(cfg.changdu_email, email)
-            if password:
-                qconfig.set(cfg.changdu_password, aes_encrypt(password))
-            elif not email:
-                qconfig.set(cfg.changdu_password, '')
-            self.changdu_account_card.setContent(self._changdu_account_summary())
-
-    def __on_set_api_key(self):
-        keys, ok = QInputDialog.getMultiLineText(self, 'DeepSeek API Key',
-            '输入 DeepSeek API Key（多个用逗号分隔）：',
-            cfg.deepseek_api_keys.value)
+        ok, email, password = open_changdu_account_dialog(self)
         if ok:
-            qconfig.set(cfg.deepseek_api_keys, keys)
-            self.api_key_card.setContent('已设置' if keys else '未设置')
+            self.changdu_account_card.setContent(changdu_account_summary())

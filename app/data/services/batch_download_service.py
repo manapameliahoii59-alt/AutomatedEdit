@@ -1,4 +1,4 @@
-"""畅读平台两阶段批量下载（创建任务 → 轮询转码 → 并行下载 zip）。"""
+"""常读平台两阶段批量下载（创建任务 → 轮询转码 → 并行下载 zip）。"""
 
 from __future__ import annotations
 
@@ -36,9 +36,17 @@ DEFAULT_MIN_SPEED_KBPS = 300
 DEFAULT_WARMUP_SEC = 20
 DEFAULT_STALL_SEC = 45
 DEFAULT_SLOW_WINDOW_SEC = 30
-DEFAULT_POLL_SEC = 35
+TRANSCODE_POLL_START_SEC = 60
+TRANSCODE_POLL_MIN_SEC = 35
+TRANSCODE_POLL_STEP_SEC = 5
 
 LogFn = Callable[[str], None]
+
+
+def _transcode_poll_interval_sec(poll_round: int) -> int:
+    """转码轮询间隔：首次 60s，每次减 5s，最低 35s。"""
+    interval = TRANSCODE_POLL_START_SEC - poll_round * TRANSCODE_POLL_STEP_SEC
+    return max(TRANSCODE_POLL_MIN_SEC, interval)
 
 
 class BatchLogger:
@@ -109,7 +117,6 @@ class BatchDownloadOptions:
     create_only: bool = False
     download_only: bool = False
     delay_sec: float = 3
-    poll_sec: int = DEFAULT_POLL_SEC
     timeout_min: int = 30
     concurrency: int = DEFAULT_CONCURRENT_DOWNLOADS
     download_timeout_min: int = DEFAULT_DOWNLOAD_TIMEOUT_MIN
@@ -245,7 +252,7 @@ def _transcribe_drama_folder(folder_path: Path, logger: BatchLogger) -> str | No
         folder_path=scan.folder_path,
         video_files=scan.video_files,
     )
-    logger.both(f"   🎧 开始识别: {scan.name}（{scan.episode_count} 集）")
+    logger.both(f"   ▶️ 开始识别: {scan.name}（{scan.episode_count} 集）")
     try:
         TranscriptionService.check_environment()
         output_path = TranscriptionService.transcribe(project)
@@ -323,12 +330,7 @@ def _resolve_episode_range(
     book_id = item.get("bookId")
     name = item["name"]
 
-    search = client.search_by_name(name)
-    dramas = (search.get("data") or {}).get("data") or []
-    if not dramas:
-        raise RuntimeError(f"未搜到剧: {name}")
-
-    drama = dramas[0]
+    drama = client.find_drama_by_name(name)
     book_id = book_id or drama.get("book_id")
     name = drama.get("series_name") or name
     episode_amount = drama.get("episode_amount") or to_ep
@@ -513,7 +515,8 @@ def phase2_download_files(
         f"最多尝试 {opts.download_retries} 次",
     )
     logger.dev_only(
-        f"转码轮询 {opts.poll_sec}s，转码超时 {opts.timeout_min} 分钟，"
+        f"转码轮询 {TRANSCODE_POLL_START_SEC}s 起每次 -{TRANSCODE_POLL_STEP_SEC}s，"
+        f"最低 {TRANSCODE_POLL_MIN_SEC}s；转码超时 {opts.timeout_min} 分钟，"
         f"下载总超时兜底 {opts.download_timeout_min} 分钟"
     )
 
@@ -523,7 +526,7 @@ def phase2_download_files(
     }
     queued: set[str] = set()
     download_queue: list[dict[str, Any]] = []
-    poll_sec = opts.poll_sec
+    transcode_poll_round = 0
     transcribe_pipeline = _TranscribePipeline(logger) if opts.auto_transcribe else None
 
     def process_download(prepared: dict[str, Any]) -> tuple[str, dict[str, Any]]:
@@ -696,8 +699,10 @@ def phase2_download_files(
 
                 if transcoding:
                     waiting = "、".join(j.get("bookName") or j.get("name") for j in transcoding.values())
-                    logger.both(f"\n⏳ 转码中 {len(transcoding)} 个: {waiting}")
+                    poll_sec = _transcode_poll_interval_sec(transcode_poll_round)
+                    logger.both(f"\n⏳ 转码中 {len(transcoding)} 个: {waiting}（{poll_sec}s 后再次查询）")
                     time.sleep(poll_sec)
+                    transcode_poll_round += 1
                 elif futures or download_queue:
                     time.sleep(0.5)
                 elif transcribe_pipeline is not None and transcribe_pipeline.has_pending():

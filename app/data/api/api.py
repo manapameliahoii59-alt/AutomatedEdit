@@ -3,11 +3,13 @@ from dataclasses import dataclass
 
 import requests
 
-from app.common.config import VERSION, cfg
+from app.common.config import VERSION, cfg, DEFAULT_API_BASE_URL
 
 
 class ApiError(Exception):
-    pass
+    def __init__(self, message: str, status_code: int | None = None):
+        super().__init__(message)
+        self.status_code = status_code
 
 
 @dataclass
@@ -25,9 +27,7 @@ class DemoApi:
         return {'data': b64_data}
 
     def login(self, username, password, captcha='', sms_code=''):
-        print('本地演示登录:', username)
-        time.sleep(0.3)
-        return LoginResult(access_token='', username=username, role='user')
+        raise ApiError("未配置服务端地址，无法登录")
 
 
 class RemoteApi:
@@ -56,7 +56,7 @@ class RemoteApi:
                 detail = resp.json().get('detail', detail)
             except Exception:
                 pass
-            raise ApiError(str(detail))
+            raise ApiError(str(detail), status_code=resp.status_code)
         if resp.content:
             return resp.json()
         return None
@@ -80,8 +80,8 @@ class RemoteApi:
         if not self._token:
             return False
         try:
-            self._request('GET', '/api/auth/me')
-            return True
+            data = self._request('GET', '/api/auth/me') or {}
+            return bool(data.get('is_active', True))
         except ApiError:
             return False
 
@@ -97,35 +97,46 @@ class RemoteApi:
     ):
         if not self._token:
             return
-        try:
-            self._request(
-                'POST',
-                '/api/client/usage',
-                json={
-                    'event': event,
-                    'success': success,
-                    'duration_ms': duration_ms,
-                    'meta': meta,
-                    'client_version': VERSION,
-                },
-            )
-        except ApiError:
-            pass
+        self._request(
+            'POST',
+            '/api/client/usage',
+            json={
+                'event': event,
+                'success': success,
+                'duration_ms': duration_ms,
+                'meta': meta,
+                'client_version': VERSION,
+            },
+        )
+
+    def fetch_daily_quota(self) -> dict:
+        return self._request('GET', '/api/client/quota/today') or {}
+
+    def check_daily_quota(self, action: str, drama_name: str) -> dict:
+        return self._request(
+            'POST',
+            '/api/client/quota/check',
+            json={'action': action, 'drama_name': drama_name},
+        ) or {}
+
+    def get_settings(self) -> dict:
+        return self._request('GET', '/api/client/settings') or {}
+
+    def update_settings(self, patch: dict) -> dict:
+        return self._request('PATCH', '/api/client/settings', json=patch) or {}
 
 
 def _resolve_base_url() -> str:
-    return (cfg.api_base_url.value or '').strip().rstrip('/')
+    custom = (cfg.api_base_url.value or '').strip().rstrip('/')
+    return custom or DEFAULT_API_BASE_URL
 
 
-def get_api() -> DemoApi | RemoteApi:
-    base = _resolve_base_url()
-    if base:
-        api = RemoteApi(base)
-        token = (cfg.access_token.value or '').strip()
-        if token:
-            api.set_token(token)
-        return api
-    return DemoApi()
+def get_api() -> RemoteApi:
+    api = RemoteApi(_resolve_base_url())
+    token = (cfg.access_token.value or '').strip()
+    if token:
+        api.set_token(token)
+    return api
 
 
 demo_api = DemoApi()

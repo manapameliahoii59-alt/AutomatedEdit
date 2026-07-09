@@ -1,6 +1,7 @@
 from PySide6.QtCore import QRunnable, QObject, QThreadPool, Qt, Signal
 
 from app.common.my_logger import my_logger as logger
+from app.data.services.access_control_service import access_control
 
 
 class TaskSignals(QObject):
@@ -18,6 +19,7 @@ class TaskRunnable(QRunnable):
 
     def run(self):
         try:
+            access_control.ensure_allowed()
             if self.kwargs:
                 result = self.func(*self.args, **self.kwargs)
             else:
@@ -54,6 +56,12 @@ class TaskManager(QObject):
             on_success: Callback function for successful completion.
             on_error: Callback function for error handling.
         """
+        if access_control.is_blocked():
+            message = access_control.random_error()
+            if on_error:
+                on_error(message)
+            return
+
         task = TaskRunnable(func, args, kwargs)
         
         if on_success:

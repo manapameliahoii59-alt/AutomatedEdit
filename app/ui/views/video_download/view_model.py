@@ -6,20 +6,24 @@ from pathlib import Path
 from PySide6.QtCore import Signal
 from qfluentwidgets import qconfig
 
+from app.common.aes import aes_encrypt
 from app.common.config import cfg
 from app.core.playwright_worker import playwright_worker
 from app.core.task_manager import task_manager
 from app.core.view_model import ViewModel
+from app.data.api.api import ApiError, get_api
 from app.data.services.batch_download_service import BatchDownloadOptions, run_batch_download
 from app.data.services.changdu_login_service import (
+    clear_auth_file,
     get_changdu_credentials,
     is_auth_file_present,
     run_changdu_login,
 )
 from app.data.services.changdu_paths import resolve_video_download_root
 from app.data.services.series_list_client import SeriesListClient
+from app.data.services.usage_service import UsageService
 
-MAX_DOWNLOAD_EPISODE = 15
+MAX_DOWNLOAD_EPISODE = 10
 
 
 @dataclass
@@ -40,6 +44,7 @@ class VideoDownloadViewModel(ViewModel):
     messageReceived = Signal(str)
     errorOccurred = Signal(str)
     clipHandoffRequested = Signal(list)
+    settingsLoaded = Signal(dict)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -49,6 +54,7 @@ class VideoDownloadViewModel(ViewModel):
         self._default_from = 1
         self._default_to = 10
         self.targetsChanged.emit(self._targets)
+        self._load_settings_from_server()
 
     def refresh_auth_status(self) -> None:
         self._refresh_auth_status()
@@ -68,9 +74,47 @@ class VideoDownloadViewModel(ViewModel):
             self._default_from, min(to_ep, MAX_DOWNLOAD_EPISODE)
         )
 
+    def _load_settings_from_server(self) -> None:
+        api = get_api()
+        if not api._token:
+            return
+        try:
+            data = api.get_settings()
+        except ApiError:
+            return
+        vd = data.get("video_download") or {}
+        if vd.get("episode_from") is not None:
+            self._default_from = max(1, min(int(vd["episode_from"]), MAX_DOWNLOAD_EPISODE))
+        if vd.get("episode_to") is not None:
+            self._default_to = max(self._default_from, min(int(vd["episode_to"]), MAX_DOWNLOAD_EPISODE))
+        if vd.get("download_dir"):
+            qconfig.set(cfg.video_download_dir, vd["download_dir"])
+        if vd.get("auto_unzip") is not None:
+            qconfig.set(cfg.video_download_auto_unzip, bool(vd["auto_unzip"]))
+        if vd.get("auto_transcribe") is not None:
+            qconfig.set(cfg.video_download_auto_transcribe, bool(vd["auto_transcribe"]))
+        if vd.get("auto_import_clip") is not None:
+            qconfig.set(cfg.video_download_auto_import_clip, bool(vd["auto_import_clip"]))
+        if vd.get("auto_start_after_add") is not None:
+            qconfig.set(cfg.video_download_auto_start_after_add, bool(vd["auto_start_after_add"]))
+        if vd.get("changdu_email"):
+            qconfig.set(cfg.changdu_email, vd["changdu_email"])
+        if vd.get("changdu_password"):
+            qconfig.set(cfg.changdu_password, aes_encrypt(vd["changdu_password"]))
+        self.settingsLoaded.emit(vd)
+
+    def save_to_server(self, patch: dict) -> None:
+        api = get_api()
+        if not api._token:
+            return
+        try:
+            api.update_settings(patch)
+        except ApiError:
+            pass
+
     def _refresh_auth_status(self) -> None:
         if is_auth_file_present():
-            self.authStatusChanged.emit(True, "已保存登录态（auth.json）")
+            self.authStatusChanged.emit(True, "已登录")
         else:
             self.authStatusChanged.emit(False, "未登录常读平台")
 
@@ -109,7 +153,7 @@ class VideoDownloadViewModel(ViewModel):
         def _on_success(path: str):
             self._remove_task()
             self.refresh_auth_status()
-            self.messageReceived.emit(f"登录成功，状态已保存至：{path}")
+            self.messageReceived.emit("登录成功")
 
         def _on_error(msg: str):
             self._remove_task()
@@ -152,6 +196,16 @@ class VideoDownloadViewModel(ViewModel):
 
         task_manager.submit_task(_do_check, on_success=_on_success, on_error=_on_error)
 
+    def clear_auth(self) -> None:
+        if self._active_tasks > 0:
+            self.messageReceived.emit("当前有任务进行中，请稍候")
+            return
+        if not clear_auth_file():
+            self.messageReceived.emit("当前没有可删除的登录态")
+            return
+        self.refresh_auth_status()
+        self.messageReceived.emit("登录态已删除")
+
     def add_target(self, name: str, from_ep: int | None = None, to_ep: int | None = None) -> None:
         name = name.strip()
         if not name:
@@ -182,6 +236,77 @@ class VideoDownloadViewModel(ViewModel):
             )
         self.targetsChanged.emit(self._targets)
         return len(names)
+
+    def add_targets_from_text_with_lookup(self, text: str, *, auto_start: bool = False) -> None:
+        names = [line.strip() for line in text.splitlines() if line.strip()]
+        if not names:
+            self.errorOccurred.emit("请至少输入一个剧名（每行一个）")
+            return
+        if self._active_tasks > 0:
+            self.messageReceived.emit("当前有任务进行中，请稍候")
+            return
+
+        self._add_task("正在验证剧名", "正在常读平台搜索剧目，请稍候…")
+
+        def _do_lookup():
+            def _run():
+                with SeriesListClient(headless=True) as client:
+                    results = []
+                    for name in names:
+                        try:
+                            drama = client.find_drama_by_name(name)
+                            results.append(
+                                {
+                                    "input_name": name,
+                                    "ok": True,
+                                    "matched_name": drama.get("series_name") or name,
+                                }
+                            )
+                        except RuntimeError as exc:
+                            results.append(
+                                {"input_name": name, "ok": False, "error": str(exc)}
+                            )
+                    return results
+
+            return playwright_worker.run(_run)
+
+        def _on_success(results: list[dict]):
+            self._remove_task()
+            ok = [r for r in results if r["ok"]]
+            failed = [r for r in results if not r["ok"]]
+
+            if failed and not ok:
+                lines = "\n".join(f"· {r['input_name']}：{r['error']}" for r in failed)
+                self.errorOccurred.emit(f"以下剧目无法添加：\n{lines}")
+                return
+
+            for row in ok:
+                self._targets.append(
+                    VideoDownloadTarget(
+                        id=uuid.uuid4().hex,
+                        name=row["matched_name"],
+                        from_ep=self._default_from,
+                        to_ep=self._default_to,
+                    )
+                )
+            self.targetsChanged.emit(self._targets)
+
+            if failed:
+                lines = "\n".join(f"· {r['input_name']}：{r['error']}" for r in failed)
+                self.messageReceived.emit(
+                    f"已添加 {len(ok)} 个剧目。以下未能匹配：\n{lines}"
+                )
+            else:
+                self.messageReceived.emit(f"已添加 {len(ok)} 个剧目")
+
+            if auto_start and ok:
+                self.start_download()
+
+        def _on_error(msg: str):
+            self._remove_task()
+            self.errorOccurred.emit(f"剧名验证失败：{msg}")
+
+        task_manager.submit_task(_do_lookup, on_success=_on_success, on_error=_on_error)
 
     def remove_target(self, target_id: str) -> None:
         self._targets = [t for t in self._targets if t.id != target_id]
@@ -291,6 +416,8 @@ class VideoDownloadViewModel(ViewModel):
                 self.messageReceived.emit("下载任务已创建，可稍后点击「继续下载」")
             else:
                 self.messageReceived.emit("批量下载流程已结束，详见下方日志")
+                downloaded = [t.name for t in self._targets if t.status == "已完成"]
+                UsageService.report_download_dramas(downloaded)
                 folders = _result.get("transcribed_folders") or []
                 if cfg.video_download_auto_import_clip.value and folders:
                     self.clipHandoffRequested.emit(folders)

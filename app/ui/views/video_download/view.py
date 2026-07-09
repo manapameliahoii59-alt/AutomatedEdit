@@ -24,7 +24,8 @@ from qfluentwidgets import (
 
 from app.common.config import cfg
 
-from app.common.utils import show_dialog
+from app.common.utils import open_changdu_account_dialog, show_dialog, show_toast
+from app.data.services.changdu_login_service import is_auth_file_present
 from app.data.services.changdu_paths import resolve_video_download_root
 from app.data.services.drama_folder_service import list_drama_folders_under
 from app.ui.components.bar import ProgressInfoBar
@@ -63,8 +64,16 @@ class VideoDownloadPage(ScrollArea):
         self.login_btn.clicked.connect(self.vm.login_changdu)
         self.check_auth_btn = PushButton("验证登录态", self.scroll_widget)
         self.check_auth_btn.clicked.connect(self.vm.check_auth)
+        self.delete_auth_btn = PushButton("删除登录态", self.scroll_widget)
+        self.delete_auth_btn.clicked.connect(self._on_delete_auth)
+        self.auth_more_btn = PushButton("⁝", self.scroll_widget)
+        self.auth_more_btn.setFixedSize(36, 36)
+        self.auth_more_btn.setToolTip("常读账号设置")
+        self.auth_more_btn.clicked.connect(self._open_changdu_account_dialog)
         auth_row.addWidget(self.login_btn)
         auth_row.addWidget(self.check_auth_btn)
+        auth_row.addWidget(self.delete_auth_btn)
+        auth_row.addWidget(self.auth_more_btn)
         layout.addLayout(auth_row)
 
         download_row = QHBoxLayout()
@@ -155,14 +164,42 @@ class VideoDownloadPage(ScrollArea):
         self.vm.loadingChanged.connect(self._handle_loading)
         self.vm.logAppended.connect(self._append_log)
         self.vm.authStatusChanged.connect(self._update_auth_status)
-        self.vm.messageReceived.connect(lambda msg: show_dialog(self, msg, "提示"))
+        self.vm.messageReceived.connect(lambda msg: show_toast(self, msg))
         self.vm.errorOccurred.connect(lambda msg: show_dialog(self, msg, "提示"))
         self.vm.clipHandoffRequested.connect(self._on_clip_handoff)
+        self.vm.settingsLoaded.connect(self._on_settings_loaded)
         self.vm.refresh_auth_status()
+
+    def _on_settings_loaded(self, vd: dict) -> None:
+        if vd.get("episode_from") is not None:
+            self.from_input.setText(str(vd["episode_from"]))
+        if vd.get("episode_to") is not None:
+            self.to_input.setText(str(vd["episode_to"]))
+        if vd.get("download_dir"):
+            self.download_path_label.setText(vd["download_dir"])
 
     def _on_clip_handoff(self, folders: list):
         if self._parent_window and hasattr(self._parent_window, "handoff_to_clip_edit"):
             self._parent_window.handoff_to_clip_edit(folders)
+
+    def _on_delete_auth(self):
+        dialog = Dialog(
+            "删除登录态",
+            "确定删除已保存的常读平台登录态？删除后需重新登录。",
+            self.window(),
+        )
+        dialog.yesButton.setText("确定")
+        dialog.cancelButton.setText("取消")
+        if dialog.exec():
+            self.vm.clear_auth()
+
+    def _open_changdu_account_dialog(self):
+        ok, email, password = open_changdu_account_dialog(self)
+        if ok:
+            patch = {"video_download": {"changdu_email": email}}
+            if password:
+                patch["video_download"]["changdu_password"] = password
+            self.vm.save_to_server(patch)
 
     def _update_auth_status(self, ok: bool, text: str):
         self.auth_status_label.setText(text)
@@ -177,6 +214,8 @@ class VideoDownloadPage(ScrollArea):
         busy = loading
         self.login_btn.setEnabled(not busy)
         self.check_auth_btn.setEnabled(not busy)
+        self.delete_auth_btn.setEnabled(not busy)
+        self.auth_more_btn.setEnabled(not busy)
         self.start_btn.setEnabled(not busy)
         self.import_all_btn.setEnabled(not busy)
         if loading:
@@ -245,10 +284,24 @@ class VideoDownloadPage(ScrollArea):
         self.from_input.setText(str(from_ep))
         self.to_input.setText(str(to_ep))
         self.vm.set_default_range(from_ep, to_ep)
+        self.vm.save_to_server({
+            "video_download": {
+                "episode_from": from_ep,
+                "episode_to": to_ep,
+            }
+        })
         return True
 
     def _open_add_drama_dialog(self):
         if not self._apply_episode_range():
+            return
+
+        if not is_auth_file_present():
+            dlg = Dialog("未登录", "添加剧目前需要先登录常读平台，是否现在登录？", self.window())
+            dlg.yesButton.setText("去登录")
+            dlg.cancelButton.setText("取消")
+            if dlg.exec():
+                self.vm.login_changdu()
             return
 
         dialog = Dialog("添加剧目", "每行输入一个剧名", self.window())
@@ -290,9 +343,10 @@ class VideoDownloadPage(ScrollArea):
 
         dialog.setFixedSize(420, 268)
         if dialog.exec():
-            added = self.vm.add_targets_from_text(name_input.toPlainText())
-            if added > 0 and cfg.video_download_auto_start_after_add.value:
-                self._start()
+            self.vm.add_targets_from_text_with_lookup(
+                name_input.toPlainText(),
+                auto_start=cfg.video_download_auto_start_after_add.value,
+            )
 
     def _import_all_to_clip(self):
         folders = list_drama_folders_under(resolve_video_download_root())
@@ -358,10 +412,19 @@ class VideoDownloadPage(ScrollArea):
             clip = auto_clip_cb.isChecked()
             transcribe = auto_transcribe_cb.isChecked() or clip
             unzip = auto_unzip_cb.isChecked() or transcribe
+            start = auto_start_cb.isChecked()
             qconfig.set(cfg.video_download_auto_unzip, unzip)
             qconfig.set(cfg.video_download_auto_transcribe, transcribe)
             qconfig.set(cfg.video_download_auto_import_clip, clip)
-            qconfig.set(cfg.video_download_auto_start_after_add, auto_start_cb.isChecked())
+            qconfig.set(cfg.video_download_auto_start_after_add, start)
+            self.vm.save_to_server({
+                "video_download": {
+                    "auto_unzip": unzip,
+                    "auto_transcribe": transcribe,
+                    "auto_import_clip": clip,
+                    "auto_start_after_add": start,
+                }
+            })
 
     def _start(self):
         if not self._apply_episode_range():
@@ -378,6 +441,9 @@ class VideoDownloadPage(ScrollArea):
         if folder:
             self.vm.set_download_dir(folder)
             self.download_path_label.setText(folder)
+            self.vm.save_to_server({
+                "video_download": {"download_dir": folder}
+            })
 
     def _open_download_dir(self):
         path = resolve_video_download_root()

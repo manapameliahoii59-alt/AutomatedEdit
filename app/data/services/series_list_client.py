@@ -160,8 +160,18 @@ class SeriesListClient:
         """进入短剧列表页，确保 content/series 等 API 的 secsdk 签名上下文就绪。"""
         self._assert_playwright_thread()
         assert self.page
+        list_params = {
+            "sort_type": "1",
+            **self._default_series_date_range(),
+            "sort_field": "8",
+            "aweme_user_new_version": "true",
+            "page_index": "1",
+            "page_size": "10",
+        }
+        from urllib.parse import urlencode
+
         self.page.goto(
-            SHORT_PLAY_LIST_URL,
+            f"{SHORT_PLAY_LIST_URL}?{urlencode(list_params)}",
             timeout=GOTO_TIMEOUT_MS,
             wait_until="load",
         )
@@ -252,7 +262,13 @@ class SeriesListClient:
         return {"start_time": str(start), "end_time": str(end)}
 
     def _api_fetch(
-        self, api_path: str, params: dict[str, Any], *, platform: bool = False, referer: str | None = None
+        self,
+        api_path: str,
+        params: dict[str, Any],
+        *,
+        platform: bool = False,
+        referer: str | None = None,
+        content_api: bool = False,
     ) -> dict[str, Any]:
         self._assert_playwright_thread()
         ctx = self._request_context()
@@ -260,7 +276,7 @@ class SeriesListClient:
         assert self.page
 
         result = self.page.evaluate(
-            """async ({ apiPath, params, app, adUserId, rootAdUserId, platform, referer }) => {
+            """async ({ apiPath, params, app, adUserId, rootAdUserId, platform, referer, contentApi }) => {
                 const qs = new URLSearchParams(params).toString();
                 const headers = {
                     accept: 'application/json, text/plain, */*',
@@ -269,12 +285,14 @@ class SeriesListClient:
                     distributorid: String(app.distributor_id),
                     aduserid: adUserId,
                     'agw-js-conv': 'str',
-                    'x-secsdk-csrf-token': 'DOWNGRADE',
                 };
+                if (!contentApi) {
+                    headers['x-secsdk-csrf-token'] = 'DOWNGRADE';
+                }
                 if (platform) {
                     headers.rootaduserid = rootAdUserId;
                 }
-                if (referer) {
+                if (referer && !contentApi) {
                     headers.referer = referer;
                 }
                 const res = await fetch(`${apiPath}?${qs}`, {
@@ -298,6 +316,7 @@ class SeriesListClient:
                 **ctx,
                 "platform": platform,
                 "referer": referer,
+                "contentApi": content_api,
             },
         )
         return self._parse_api_result(api_path, result)
@@ -382,6 +401,7 @@ class SeriesListClient:
             SERIES_LIST_PATH,
             {**defaults, **(query or {})},
             referer=SHORT_PLAY_LIST_REFERER,
+            content_api=True,
         )
 
     def fetch_episode_info(self, book_id: str, options: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -701,12 +721,185 @@ class SeriesListClient:
         }
 
     def search_by_name(self, keyword: str, options: dict[str, Any] | None = None) -> dict[str, Any]:
-        return self.fetch_list(
+        """按剧名搜索。参数对齐常读短剧列表页（含日期范围，不含 content_genre）。"""
+        date_range = self._default_series_date_range()
+        params = {
+            "search_type": "2",
+            "query": keyword,
+            "sort_type": "1",
+            **date_range,
+            "sort_field": "8",
+            "aweme_user_new_version": "true",
+            "page_index": "0",
+            "page_size": "10",
+            **(options or {}),
+        }
+        # 与网站一致：先拉一页列表再按剧名搜（否则部分剧名会返回 total=0）
+        self._api_fetch(
+            SERIES_LIST_PATH,
             {
-                "query": keyword,
-                "search_type": "2",
+                "sort_type": "1",
+                **date_range,
+                "sort_field": "8",
+                "aweme_user_new_version": "true",
                 "page_index": "0",
                 "page_size": "10",
-                **(options or {}),
-            }
+            },
+            referer=SHORT_PLAY_LIST_REFERER,
+            content_api=True,
         )
+        return self._api_fetch(
+            SERIES_LIST_PATH, params, referer=SHORT_PLAY_LIST_REFERER, content_api=True
+        )
+
+    def _search_by_name_via_ui_trigger(self, keyword: str) -> dict[str, Any]:
+        """通过页面筛选框触发搜索，拦截网站原生请求（与手动搜索一致）。"""
+        from urllib.parse import parse_qs, unquote, urlparse
+
+        self._assert_playwright_thread()
+        assert self.page
+        captured: dict[str, Any] = {}
+
+        def on_response(response):
+            if SERIES_LIST_PATH not in response.url:
+                return
+            qs = parse_qs(urlparse(response.url).query)
+            q = unquote((qs.get("query") or [""])[0])
+            if q != keyword:
+                return
+            try:
+                body = response.json()
+            except Exception:
+                return
+            inner = body.get("data") or {}
+            if inner.get("data") or int(inner.get("total") or 0) > 0:
+                captured["body"] = body
+
+        self.page.on("response", on_response)
+        try:
+            self._goto_short_play_list()
+            self.page.wait_for_timeout(2000)
+            triggered = self.page.evaluate(
+                """(keyword) => {
+                    const inputs = [...document.querySelectorAll('input')];
+                    for (const el of inputs) {
+                        const style = window.getComputedStyle(el);
+                        if (style.display === 'none' || style.visibility === 'hidden') continue;
+                        const meta = (el.placeholder || '') + (el.getAttribute('aria-label') || '');
+                        if (/剧|搜|名称|短剧/.test(meta) || el.closest('[class*=search]')) {
+                            el.focus();
+                            el.value = keyword;
+                            el.dispatchEvent(new InputEvent('input', { bubbles: true, data: keyword }));
+                            el.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+                            return true;
+                        }
+                    }
+                    return false;
+                }""",
+                keyword,
+            )
+            if not triggered:
+                self.page.keyboard.type(keyword, delay=30)
+                self.page.keyboard.press("Enter")
+            self.page.wait_for_timeout(5000)
+        finally:
+            self.page.remove_listener("response", on_response)
+
+        body = captured.get("body")
+        if body:
+            return body
+        raise RuntimeError(f"页面搜索未返回结果: {keyword}")
+
+    def find_drama_by_name(self, name: str) -> dict[str, Any]:
+        """按剧名搜索并返回最佳匹配；失败时抛出带原因的 RuntimeError。"""
+        keywords = drama_search_keywords(name)
+        if not keywords:
+            raise RuntimeError("剧名不能为空")
+
+        seen_ids: set[str] = set()
+        candidates: list[dict[str, Any]] = []
+        restricted = False
+
+        for keyword in keywords:
+            search = self.search_by_name(keyword)
+            inner = search.get("data") or {}
+            rows = inner.get("data") or []
+            total = int(inner.get("total") or 0)
+            if not rows:
+                try:
+                    search = self._search_by_name_via_ui_trigger(keyword)
+                    inner = search.get("data") or {}
+                    rows = inner.get("data") or []
+                    total = int(inner.get("total") or 0)
+                except RuntimeError:
+                    pass
+            if total > 0 and not rows:
+                restricted = True
+            for row in rows:
+                book_id = str(row.get("book_id") or "")
+                if book_id and book_id not in seen_ids:
+                    seen_ids.add(book_id)
+                    candidates.append(row)
+
+        if not candidates:
+            try:
+                search = self._search_by_name_via_ui_trigger(name)
+                inner = search.get("data") or {}
+                rows = inner.get("data") or []
+                for row in rows:
+                    book_id = str(row.get("book_id") or "")
+                    if book_id and book_id not in seen_ids:
+                        seen_ids.add(book_id)
+                        candidates.append(row)
+            except RuntimeError:
+                pass
+        if not candidates:
+            if restricted:
+                raise RuntimeError(
+                    f"剧「{name}」在常读平台有记录，但当前账号无法获取详情。"
+                    "请在常读短剧列表确认是否有下载权限，或重新登录后再试。"
+                )
+            raise RuntimeError(
+                f"未搜到剧「{name}」。请核对剧名是否与常读平台完全一致（含标点）。"
+            )
+
+        drama = pick_drama_match(candidates, name)
+        if drama is None:
+            raise RuntimeError(f"未搜到剧「{name}」")
+        return drama
+
+
+def drama_search_keywords(name: str) -> list[str]:
+    name = name.strip()
+    if not name:
+        return []
+    keywords = [name]
+    for sep in ("，", ",", ":", "：", "|", "/"):
+        if sep not in name:
+            continue
+        for part in name.split(sep):
+            part = part.strip()
+            if part and part not in keywords:
+                keywords.append(part)
+    return keywords
+
+
+def normalize_drama_name(name: str) -> str:
+    return re.sub(r"\s+", "", name)
+
+
+def pick_drama_match(
+    candidates: list[dict[str, Any]], query: str
+) -> dict[str, Any] | None:
+    if not candidates:
+        return None
+    query_norm = normalize_drama_name(query)
+    for row in candidates:
+        series_name = row.get("series_name") or ""
+        if normalize_drama_name(series_name) == query_norm:
+            return row
+    for row in candidates:
+        series_name = normalize_drama_name(row.get("series_name") or "")
+        if query_norm in series_name or series_name in query_norm:
+            return row
+    return candidates[0]

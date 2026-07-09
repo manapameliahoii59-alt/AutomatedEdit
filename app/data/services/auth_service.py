@@ -1,32 +1,36 @@
 from qfluentwidgets import qconfig
 
 from app.common.config import cfg
-from app.data.api.api import LoginResult, get_api
+from app.data.services.access_control_service import access_control
+from app.data.api.api import ApiError, LoginResult, get_api
 
 
 class AuthService:
     def login(self, username: str, password: str) -> LoginResult:
         api = get_api()
-        result = api.login(username, password)
+        try:
+            result = api.login(username, password)
+        except ApiError as exc:
+            raise RuntimeError(
+                access_control.mask_login_error(str(exc), exc.status_code)
+            ) from exc
         if isinstance(result, LoginResult) and result.access_token:
+            access_control.unblock()
             qconfig.set(cfg.access_token, result.access_token)
             self._apply_secrets(api)
-        return result
+            return result
+        raise RuntimeError("登录失败，请检查账号密码")
 
     def try_auto_login(self) -> bool:
-        base = (cfg.api_base_url.value or '').strip()
-        if not base:
-            return bool(cfg.user.value)
-
         token = (cfg.access_token.value or '').strip()
         if not token:
             return False
 
         api = get_api()
-        if not hasattr(api, 'validate_session'):
-            return False
         if not api.validate_session():
+            access_control.block()
             return False
+        access_control.unblock()
         self._apply_secrets(api)
         return True
 

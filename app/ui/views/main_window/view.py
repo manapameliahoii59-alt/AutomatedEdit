@@ -6,6 +6,8 @@ from qfluentwidgets import FluentWindow, NavigationItemPosition, FluentIcon as F
 from app.common.config import cfg
 from app.core.container import Container
 from app.core.navigation import LazyViewProxy
+from app.data.services.access_control_service import access_control
+from app.data.services.usage_service import UsageService
 from app.ui.views.clip_edit.view import ClipEditPage
 from app.ui.views.settings.view import SettingInterface
 from app.ui.views.video_download.view import VideoDownloadPage
@@ -18,6 +20,7 @@ class MainWindow(FluentWindow):
         self.is_logout = False
         self.init_window()
         self.init_navigation()
+        access_control.refresh()
 
     def init_window(self):
         if sys.platform != "darwin":
@@ -45,6 +48,11 @@ class MainWindow(FluentWindow):
         self.settingInterface = SettingInterface(self)
         self.settingInterface.logout.connect(self.logout)
 
+        self._access_timer = QTimer(self)
+        self._access_timer.setInterval(60_000)
+        self._access_timer.timeout.connect(self._check_access)
+        self._access_timer.start()
+
         # self.addSubInterface(self.batchEditPage, MyIcon.TOOL, '批量打码')
         self.addSubInterface(self.videoDownloadPage, FIF.DOWNLOAD, '视频下载')
         self.addSubInterface(self.clipEditPage, FIF.VIDEO, '自动化剪辑')
@@ -52,6 +60,9 @@ class MainWindow(FluentWindow):
         self.addSubInterface(self.settingInterface, FIF.SETTING, '设置', NavigationItemPosition.BOTTOM)
 
         QTimer.singleShot(0, lambda: self.navigationInterface.expand(useAni=False))
+
+    def _check_access(self) -> None:
+        access_control.refresh()
 
     def handoff_to_clip_edit(self, folder_paths: list[str]) -> None:
         """下载识别完成后，导入剪辑页并执行策划与渲染。"""
@@ -74,6 +85,10 @@ class MainWindow(FluentWindow):
         Container.auth_service().logout()
         self.is_logout = True
         self.close()
+
+    def closeEvent(self, event):
+        UsageService.report_app_close()
+        super().closeEvent(event)
 
     def systemTitleBarRect(self, size):
         return QRect(0, 0, 75, size.height())

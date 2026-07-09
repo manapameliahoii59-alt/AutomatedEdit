@@ -3,6 +3,7 @@ import uuid
 
 from PySide6.QtCore import Signal
 
+from app.core.render_queue import render_queue
 from app.core.task_manager import task_manager
 from app.core.view_model import ViewModel
 from app.data.models.drama_project import DramaProject, DramaStatus
@@ -12,11 +13,12 @@ from app.data.services.ai_director_service import AIDirectorService
 from app.common.export_paths import resolve_clip_export_root
 from app.data.services.render_service import RenderService, RenderResult
 from app.data.services.usage_service import UsageService
+from app.data.services.quota_service import QuotaService
 
 
 class ClipEditViewModel(ViewModel):
     projectsChanged = Signal(list)
-    loadingChanged = Signal(bool)
+    loadingChanged = Signal(bool, str, str)  # loading, title, content
     messageReceived = Signal(str)
     errorOccurred = Signal(str)
 
@@ -102,13 +104,30 @@ class ClipEditViewModel(ViewModel):
 
     def _add_task(self):
         self._active_tasks += 1
-        if self._active_tasks == 1:
-            self.loadingChanged.emit(True)
 
     def _remove_task(self):
         self._active_tasks -= 1
         if self._active_tasks == 0:
-            self.loadingChanged.emit(False)
+            self.loadingChanged.emit(False, "", "")
+
+    def _progress_content(self, index: int, total: int, name: str) -> str:
+        if total <= 1:
+            return f"《{name}》"
+        return f"第 {index}/{total} 部：《{name}》"
+
+    def _show_progress(
+        self,
+        title: str,
+        project_name: str,
+        *,
+        index: int = 1,
+        total: int = 1,
+    ) -> None:
+        self.loadingChanged.emit(
+            True,
+            title,
+            self._progress_content(index, total, project_name),
+        )
 
     def _format_render_message(self, project_name: str, result: RenderResult) -> str:
         if result.success_count == result.total:
@@ -117,6 +136,51 @@ class ClipEditViewModel(ViewModel):
         return (
             f"《{project_name}》渲染完成 {result.success_count}/{result.total} 条，"
             f"失败 {failed} 条，已保存至：{result.output_dir}"
+        )
+
+    def _report_clip_done(self, project_name: str) -> None:
+        if project_name:
+            UsageService.report_clip_drama(project_name)
+
+    def _report_plan_done(self, project_name: str) -> None:
+        if project_name:
+            UsageService.report_plan_drama(project_name)
+
+    def _ensure_can_plan(self, project_name: str) -> bool:
+        allowed, message = QuotaService.instance().check_remote("plan", project_name)
+        if not allowed:
+            self.errorOccurred.emit(message)
+            return False
+        return True
+
+    def _ensure_can_clip(self, project_name: str) -> bool:
+        allowed, message = QuotaService.instance().check_remote("clip", project_name)
+        if not allowed:
+            self.errorOccurred.emit(message)
+            return False
+        return True
+
+    def _submit_render(
+        self,
+        project: DramaProject,
+        *,
+        on_success,
+        on_error,
+        index: int = 1,
+        total: int = 1,
+    ) -> None:
+        pid = project.id
+        pname = project.name
+
+        def _on_start():
+            self._update_status(pid, "render", DramaStatus.IN_PROGRESS)
+            self._show_progress("正在渲染", pname, index=index, total=total)
+
+        render_queue.submit(
+            lambda: RenderService.render(project),
+            on_success=on_success,
+            on_error=on_error,
+            on_start=_on_start,
         )
 
     def start_transcribe(self, project_id: str):
@@ -135,6 +199,7 @@ class ClipEditViewModel(ViewModel):
             self.messageReceived.emit("环境提示：\n- " + "\n- ".join(warnings))
 
         self._update_status(project_id, "transcribe", DramaStatus.IN_PROGRESS)
+        self._show_progress("正在识别", project.name)
         self._add_task()
 
         def _do():
@@ -168,8 +233,11 @@ class ClipEditViewModel(ViewModel):
         if st.get("transcribe") != DramaStatus.DONE:
             self.messageReceived.emit("请先完成识别视频")
             return
+        if not self._ensure_can_plan(project.name):
+            return
 
         self._update_status(project_id, "plan", DramaStatus.IN_PROGRESS)
+        self._show_progress("正在策划", project.name)
         self._add_task()
 
         def _do():
@@ -180,6 +248,7 @@ class ClipEditViewModel(ViewModel):
             self._remove_task()
             self._update_status(project_id, "plan", DramaStatus.DONE)
             UsageService.report("plan")
+            self._report_plan_done(project.name)
             self.messageReceived.emit(f"《{project.name}》策划完成")
 
         def _on_error(msg):
@@ -203,17 +272,17 @@ class ClipEditViewModel(ViewModel):
         if st.get("plan") != DramaStatus.DONE:
             self.messageReceived.emit("请先完成 AI 策划")
             return
+        if not self._ensure_can_clip(project.name):
+            return
 
-        self._update_status(project_id, "render", DramaStatus.IN_PROGRESS)
+        self._show_progress("正在渲染", project.name)
         self._add_task()
-
-        def _do():
-            return RenderService.render(project)
 
         def _on_success(result: RenderResult):
             self._remove_task()
             self._update_status(project_id, "render", DramaStatus.DONE)
             UsageService.report("render", success=result.success_count > 0)
+            self._report_clip_done(project.name)
             self.messageReceived.emit(self._format_render_message(project.name, result))
 
         def _on_error(msg):
@@ -221,11 +290,7 @@ class ClipEditViewModel(ViewModel):
             self._update_status(project_id, "render", DramaStatus.PENDING)
             self.errorOccurred.emit(f"渲染失败：{msg}")
 
-        task_manager.submit_task(
-            _do,
-            on_success=_on_success,
-            on_error=_on_error,
-        )
+        self._submit_render(project, on_success=_on_success, on_error=_on_error)
 
     def batch_transcribe(self, project_ids: list[str]):
         valid = []
@@ -247,8 +312,10 @@ class ClipEditViewModel(ViewModel):
             return
 
         results = {"success": 0, "fail": 0}
-        for project in valid:
+        total = len(valid)
+        for index, project in enumerate(valid, 1):
             self._update_status(project.id, "transcribe", DramaStatus.IN_PROGRESS)
+            self._show_progress("正在识别", project.name, index=index, total=total)
             self._add_task()
 
             pid = project.id
@@ -293,8 +360,13 @@ class ClipEditViewModel(ViewModel):
             return
 
         results = {"success": 0, "fail": 0}
-        for project in valid:
+        total = len(valid)
+        for index, project in enumerate(valid, 1):
+            if not self._ensure_can_plan(project.name):
+                skipped += 1
+                continue
             self._update_status(project.id, "plan", DramaStatus.IN_PROGRESS)
+            self._show_progress("正在策划", project.name, index=index, total=total)
             self._add_task()
 
             pid = project.id
@@ -303,6 +375,8 @@ class ClipEditViewModel(ViewModel):
             def _on_success(_ok, pid=pid, pname=pname):
                 self._remove_task()
                 self._update_status(pid, "plan", DramaStatus.DONE)
+                UsageService.report("plan")
+                self._report_plan_done(pname)
                 results["success"] += 1
                 if self._active_tasks == 0:
                     self._emit_batch_summary("批量策划完成", results, skipped)
@@ -339,9 +413,14 @@ class ClipEditViewModel(ViewModel):
             return
 
         results = {"success": 0, "fail": 0}
-        for project in valid:
-            self._update_status(project.id, "render", DramaStatus.IN_PROGRESS)
+        total = len(valid)
+        for index, project in enumerate(valid, 1):
+            if not self._ensure_can_clip(project.name):
+                skipped += 1
+                continue
             self._add_task()
+            if index == 1:
+                self._show_progress("正在渲染", project.name, index=index, total=total)
 
             pid = project.id
             pname = project.name
@@ -350,6 +429,7 @@ class ClipEditViewModel(ViewModel):
                 self._remove_task()
                 self._update_status(pid, "render", DramaStatus.DONE)
                 results["success"] += 1
+                self._report_clip_done(pname)
                 if self._active_tasks == 0:
                     root = resolve_clip_export_root()
                     self._emit_batch_summary(
@@ -363,10 +443,12 @@ class ClipEditViewModel(ViewModel):
                 if self._active_tasks == 0:
                     self._emit_batch_summary("批量渲染完成", results, skipped)
 
-            task_manager.submit_task(
-                lambda p=project: RenderService.render(p),
+            self._submit_render(
+                project,
                 on_success=_on_success,
                 on_error=_on_error,
+                index=index,
+                total=total,
             )
 
     def _emit_batch_summary(self, prefix: str, results: dict, skipped: int):
@@ -378,11 +460,14 @@ class ClipEditViewModel(ViewModel):
         self.messageReceived.emit("，".join(parts))
 
     def batch_all(self, project_ids: list[str]):
+        projects = []
         for pid in project_ids:
             project = next((p for p in self._projects if p.id == pid), None)
-            if not project:
-                continue
-            self._run_pipeline(project)
+            if project:
+                projects.append(project)
+        total = len(projects)
+        for index, project in enumerate(projects, 1):
+            self._run_pipeline(project, index=index, total=total)
 
     def import_drama_folders(self, folder_paths: list[str]) -> int:
         """批量导入剧目文件夹（不自动执行剪辑流程）。"""
@@ -419,20 +504,29 @@ class ClipEditViewModel(ViewModel):
             self.messageReceived.emit("没有可导入剪辑的剧目（识别可能未成功）")
             return 0
 
-        for pid in imported_ids:
+        total = len(imported_ids)
+        for index, pid in enumerate(imported_ids, 1):
             project = next((p for p in self._projects if p.id == pid), None)
             if project:
-                self._run_pipeline_after_transcribe(project)
+                self._run_pipeline_after_transcribe(project, index=index, total=total)
 
         self.messageReceived.emit(
             f"已从下载页自动导入 {len(imported_ids)} 个剧目，正在执行 AI 策划与渲染…"
         )
         return len(imported_ids)
 
-    def _run_pipeline_after_transcribe(self, project: DramaProject):
+    def _run_pipeline_after_transcribe(
+        self,
+        project: DramaProject,
+        *,
+        index: int = 1,
+        total: int = 1,
+    ):
         pid = project.id
         pname = project.name
         self._update_status(pid, "transcribe", DramaStatus.DONE)
+        if not self._ensure_can_plan(pname):
+            return
 
         def step2():
             AIDirectorService.plan(project)
@@ -441,14 +535,16 @@ class ClipEditViewModel(ViewModel):
         def step2_done(_ok):
             self._update_status(pid, "plan", DramaStatus.DONE)
             UsageService.report("batch_all_plan")
-
-            def step3():
-                return RenderService.render(project)
+            self._report_plan_done(pname)
+            if not self._ensure_can_clip(pname):
+                self._remove_task()
+                return
 
             def step3_done(result: RenderResult):
                 self._remove_task()
                 self._update_status(pid, "render", DramaStatus.DONE)
                 UsageService.report("batch_all_render", success=result.success_count > 0)
+                self._report_clip_done(pname)
                 self.messageReceived.emit(
                     f"《{pname}》自动剪辑完成。\n"
                     f"{self._format_render_message(pname, result)}"
@@ -459,8 +555,13 @@ class ClipEditViewModel(ViewModel):
                 self._update_status(pid, "render", DramaStatus.PENDING)
                 self.errorOccurred.emit(f"《{pname}》渲染失败：{msg}")
 
-            self._update_status(pid, "render", DramaStatus.IN_PROGRESS)
-            task_manager.submit_task(step3, on_success=step3_done, on_error=step3_err)
+            self._submit_render(
+                project,
+                on_success=step3_done,
+                on_error=step3_err,
+                index=index,
+                total=total,
+            )
 
         def step2_err(msg):
             self._remove_task()
@@ -468,10 +569,17 @@ class ClipEditViewModel(ViewModel):
             self.errorOccurred.emit(f"《{pname}》策划失败：{msg}")
 
         self._add_task()
+        self._show_progress("正在策划", pname, index=index, total=total)
         self._update_status(pid, "plan", DramaStatus.IN_PROGRESS)
         task_manager.submit_task(step2, on_success=step2_done, on_error=step2_err)
 
-    def _run_pipeline(self, project: DramaProject):
+    def _run_pipeline(
+        self,
+        project: DramaProject,
+        *,
+        index: int = 1,
+        total: int = 1,
+    ):
         pid = project.id
         pname = project.name
 
@@ -490,14 +598,16 @@ class ClipEditViewModel(ViewModel):
             def step2_done(_ok):
                 self._update_status(pid, "plan", DramaStatus.DONE)
                 UsageService.report("batch_all_plan")
-
-                def step3():
-                    return RenderService.render(project)
+                self._report_plan_done(pname)
+                if not self._ensure_can_clip(pname):
+                    self._remove_task()
+                    return
 
                 def step3_done(result: RenderResult):
                     self._remove_task()
                     self._update_status(pid, "render", DramaStatus.DONE)
                     UsageService.report("batch_all_render", success=result.success_count > 0)
+                    self._report_clip_done(pname)
                     self.messageReceived.emit(
                         f"《{pname}》一键执行完成。\n"
                         f"{self._format_render_message(pname, result)}"
@@ -508,14 +618,20 @@ class ClipEditViewModel(ViewModel):
                     self._update_status(pid, "render", DramaStatus.PENDING)
                     self.errorOccurred.emit(f"《{pname}》渲染失败：{msg}")
 
-                self._update_status(pid, "render", DramaStatus.IN_PROGRESS)
-                task_manager.submit_task(step3, on_success=step3_done, on_error=step3_err)
+                self._submit_render(
+                    project,
+                    on_success=step3_done,
+                    on_error=step3_err,
+                    index=index,
+                    total=total,
+                )
 
             def step2_err(msg):
                 self._remove_task()
                 self._update_status(pid, "plan", DramaStatus.PENDING)
                 self.errorOccurred.emit(f"《{pname}》策划失败：{msg}")
 
+            self._show_progress("正在策划", pname, index=index, total=total)
             self._update_status(pid, "plan", DramaStatus.IN_PROGRESS)
             task_manager.submit_task(step2, on_success=step2_done, on_error=step2_err)
 
@@ -525,5 +641,6 @@ class ClipEditViewModel(ViewModel):
             self.errorOccurred.emit(f"《{pname}》识别失败：{msg}")
 
         self._add_task()
+        self._show_progress("正在识别", pname, index=index, total=total)
         self._update_status(pid, "transcribe", DramaStatus.IN_PROGRESS)
         task_manager.submit_task(step1, on_success=step1_done, on_error=step1_err)
