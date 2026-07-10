@@ -24,14 +24,13 @@ class TestAuthService:
         from app.common.config import cfg
         mock_set.assert_any_call(cfg.access_token, 'tok')
 
-    def test_try_auto_login_no_base_url(self, mock_get_api, mocker):
+    def test_try_auto_login_without_token(self, mock_get_api, mocker):
         mocker.patch('app.data.services.auth_service.cfg')
         from app.data.services.auth_service import cfg
-        cfg.api_base_url.value = ''
-        cfg.user.value = 'demo'
+        cfg.access_token.value = ''
 
         service = AuthService()
-        assert service.try_auto_login() is True
+        assert service.try_auto_login() is False
 
     def test_logout_clears_token(self, mocker):
         mock_set = mocker.patch('app.data.services.auth_service.qconfig.set')

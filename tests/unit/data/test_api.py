@@ -3,11 +3,10 @@ from app.data.api.api import DemoApi, RemoteApi, ApiError
 
 
 class TestDemoApi:
-    def test_login(self, mocker):
-        mocker.patch('time.sleep')
+    def test_login_rejected(self):
         api = DemoApi()
-        result = api.login("u", "p")
-        assert result.username == "u"
+        with pytest.raises(ApiError, match="未配置服务端"):
+            api.login("u", "p")
 
 
 class TestRemoteApi:
