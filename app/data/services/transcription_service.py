@@ -112,9 +112,12 @@ class TranscriptionService:
         if not global_script:
             raise RuntimeError(f"项目 {project.name} 未识别到任何内容")
 
-        output_path = os.path.join(project_path, "full_script_data.json")
         from app.common.crypto import write_encrypted_json
+        from app.common.drama_artifact_paths import finalize_written_artifact, prepare_write_path
+
+        output_path = prepare_write_path(project_path, script=True)
         write_encrypted_json(output_path, {"steps": global_script, "project_name": project.name})
+        finalize_written_artifact(output_path)
 
         cost = time.time() - start_time
         print(f"✅ 《{project.name}》识别完成, 耗时 {cost:.1f}s")

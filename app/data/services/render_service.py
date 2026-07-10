@@ -67,8 +67,10 @@ class RenderService:
         ffprobe = resolve_ffprobe()
 
         project_path = project.folder_path
-        plan_path = os.path.join(project_path, "production_plan_v3.json")
-        if not os.path.exists(plan_path):
+        from app.common.drama_artifact_paths import locate_production_plan
+
+        plan_path = locate_production_plan(project_path)
+        if not plan_path:
             raise FileNotFoundError(f"《{project.name}》未找到 production_plan_v3.json，请先 AI 策划")
 
         from app.common.crypto import read_json

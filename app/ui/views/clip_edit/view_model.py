@@ -45,12 +45,10 @@ class ClipEditViewModel(ViewModel):
     @staticmethod
     def _detect_disk_status(folder_path: str, *, transcribe_done: bool = False) -> dict:
         """根据剧目目录内产物文件推断识别/策划进度。"""
-        transcribed = transcribe_done or os.path.isfile(
-            os.path.join(folder_path, "full_script_data.json")
-        )
-        planned = transcribed and os.path.isfile(
-            os.path.join(folder_path, "production_plan_v3.json")
-        )
+        from app.common.drama_artifact_paths import locate_production_plan, locate_script_data
+
+        transcribed = transcribe_done or locate_script_data(folder_path) is not None
+        planned = transcribed and locate_production_plan(folder_path) is not None
         return {
             "transcribe": DramaStatus.DONE if transcribed else DramaStatus.PENDING,
             "plan": DramaStatus.DONE if planned else DramaStatus.PENDING,

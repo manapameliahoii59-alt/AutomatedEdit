@@ -50,11 +50,17 @@ class AIDirectorService:
     def plan(project: DramaProject) -> str:
         plan_start = time.perf_counter()
         project_path = project.folder_path
-        script_file = os.path.join(project_path, "full_script_data.json")
-        if not os.path.exists(script_file):
+        from app.common.drama_artifact_paths import (
+            finalize_written_artifact,
+            locate_script_data,
+            prepare_write_path,
+        )
+
+        script_file = locate_script_data(project_path)
+        if not script_file:
             raise FileNotFoundError(f"《{project.name}》未找到 full_script_data.json，请先识别")
 
-        plan_output = os.path.join(project_path, "production_plan_v3.json")
+        plan_output = prepare_write_path(project_path, script=False)
 
         from app.common.crypto import read_json
         steps = read_json(script_file).get("steps", [])
@@ -214,7 +220,9 @@ class AIDirectorService:
             unique_plans.append(plan)
 
         from app.common.crypto import write_encrypted_json
+
         write_encrypted_json(plan_output, unique_plans)
+        finalize_written_artifact(plan_output)
 
         total_elapsed = time.perf_counter() - plan_start
         safe_print(
