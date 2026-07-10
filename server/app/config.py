@@ -15,5 +15,11 @@ class Settings(BaseSettings):
     deepseek_model: str = "deepseek-v4-flash"
     deepseek_api_keys: str = ""
 
+    # 桌面端更新（GET /api/client/version）
+    client_latest_version: str = "0.0.1"
+    client_min_supported_version: str = "0.0.1"
+    client_download_url: str = ""
+    client_changelog: str = ""
+
 
 settings = Settings()

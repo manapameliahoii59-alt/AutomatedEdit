@@ -7,6 +7,7 @@ from app.database import get_db
 from app.deps import get_current_user
 from app.models import UsageEvent, User, UserDailyActivity
 from app.schemas import (
+    ClientVersionOut,
     DailyActivityOut,
     DailyQuotaOut,
     PlanJobCreateRequest,
@@ -20,6 +21,7 @@ from app.schemas import (
     UserSettingsOut,
     UserSettingsPatch,
 )
+from app.services.client_version import build_client_version_out
 from app.services.daily_activity import record_daily_activity
 from app.services.daily_quota import assert_can_record, build_daily_quota, can_clip_drama, can_plan_drama
 from app.services.plan_jobs import create_plan_job, get_plan_job
@@ -27,6 +29,12 @@ from app.services.plan_secrets import ensure_user_secret
 from app.services.user_settings import get_user_settings, patch_user_settings
 
 router = APIRouter(prefix="/api/client", tags=["client"])
+
+
+@router.get("/version", response_model=ClientVersionOut)
+def get_client_version():
+    """桌面端检查更新（无需登录）。"""
+    return build_client_version_out()
 
 
 def _quota_to_schema(quota) -> DailyQuotaOut:

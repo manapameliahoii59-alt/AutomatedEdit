@@ -168,3 +168,10 @@ class UserSettingsOut(BaseModel):
     updated_at: datetime | None = None
 
     model_config = {"extra": "allow"}
+
+
+class ClientVersionOut(BaseModel):
+    latest: str = ""
+    min_supported: str = ""
+    download_url: str = ""
+    changelog: str = ""

@@ -145,3 +145,25 @@ PATCH 示例（仅更新部分字段，其余保持不变）：
 ```
 
 可在顶层增加新的命名空间（如 `clip_edit`），服务端会原样保存并在 GET 时返回。
+
+## 桌面端更新
+
+客户端登录后会自动检查更新；也可在「设置 → 检查更新」手动检查。接口**无需登录**：
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| GET | `/api/client/version` | 返回最新版本、最低支持版本、安装包下载链接、更新说明 |
+
+`.env` 配置（发布新版本时修改并重启 API）：
+
+```env
+CLIENT_LATEST_VERSION=0.0.2
+CLIENT_MIN_SUPPORTED_VERSION=0.0.1
+CLIENT_DOWNLOAD_URL=https://你的域名/release/MyApp-v0.0.2-installer.exe
+CLIENT_CHANGELOG=修复若干问题；优化下载体验
+```
+
+- `CLIENT_LATEST_VERSION`：最新版本号，高于客户端内置版本时会提示更新
+- `CLIENT_MIN_SUPPORTED_VERSION`：低于此版本的客户端会**强制**提示升级（仅「立即下载」，无「稍后」）
+- `CLIENT_DOWNLOAD_URL`：Inno Setup 安装包直链；用户点击后在浏览器下载，安装程序会自动识别原安装路径
+- 客户端 `app/common/config.py` 的 `VERSION` 与 `scripts/pack_installer.iss` 的 `MyAppVersion` 需与发布版本一致
