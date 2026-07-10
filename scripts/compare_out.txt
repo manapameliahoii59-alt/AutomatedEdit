@@ -1,0 +1,66 @@
+﻿
+[1;33m Tips:[0m QFluentWidgets Pro is now released. Click [1;96mhttps://qfluentwidgets.com/pages/pro[0m to learn more about it.
+
+=== 1) 直接 search_by_name (当前实现) ===
+{"code": 0, "total": 0, "count": 0, "first": null}
+
+=== 2) 不带 content_genre ===
+{"code": 0, "total": 0, "count": 0, "first": null}
+
+=== 3) 页面搜索框输入后再 search_by_name ===
+[32m2026-07-09 15:28:19[0m | MainProcess | PlaywrightWorker | [36mplaywright_worker[0m.[36m_loop[0m:[36m42[0m | [33m[1mWARNING[0m: [33m[1mPlaywright 任务失败: Locator.click: Timeout 30000ms exceeded.
+Call log:
+  - waiting for locator("input[type='text']").first
+[0m
+uv : Traceback (most recent call last):
+所在位置 C:\Users\Administrator\AppData\Local\Temp\ps-script-4629667f-b639-4f33-815d-c006023de245.ps1:81 字符: 22
++ ... ONPATH="."; uv run python scripts/compare_search_flow.py 2>&1 | Out-F ...
++                 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (Traceback (most recent call last)::String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+  File "C:\Users\Administrator\Desktop\新建文件夹\AutomatedEdit\scripts\compare_search_flow.py", line 101, in <module>
+    playwright_worker.run(compare)
+  File "C:\Users\Administrator\Desktop\新建文件夹\AutomatedEdit\app\core\playwright_worker.py", line 67, in run
+    return PlaywrightWorker.instance().run(func, *args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Administrator\Desktop\新建文件夹\AutomatedEdit\app\core\playwright_worker.py", line 52, in run
+    return future.result()
+           ^^^^^^^^^^^^^^^
+  File "C:\Users\Administrator\AppData\Roaming\uv\python\cpython-3.12-windows-x86_64-none\Lib\concurrent\futures\_base.
+py", line 456, in result
+    return self.__get_result()
+           ^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Administrator\AppData\Roaming\uv\python\cpython-3.12-windows-x86_64-none\Lib\concurrent\futures\_base.
+py", line 401, in __get_result
+    raise self._exception
+  File "C:\Users\Administrator\Desktop\新建文件夹\AutomatedEdit\app\core\playwright_worker.py", line 40, in _loop
+    result = func(*args, **kwargs)
+             ^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Administrator\Desktop\新建文件夹\AutomatedEdit\scripts\compare_search_flow.py", line 82, in compare
+    inp.click()
+  File "C:\Users\Administrator\Desktop\新建文件夹\AutomatedEdit\.venv\Lib\site-packages\playwright\sync_api\_generated.py", 
+line 17672, in click
+    self._sync(
+  File "C:\Users\Administrator\Desktop\新建文件夹\AutomatedEdit\.venv\Lib\site-packages\playwright\_impl\_sync_base.py", lin
+e 115, in _sync
+    return task.result()
+           ^^^^^^^^^^^^^
+  File "C:\Users\Administrator\Desktop\新建文件夹\AutomatedEdit\.venv\Lib\site-packages\playwright\_impl\_locator.py", line 
+163, in click
+    return await self._frame._click(self._selector, strict=True, **params)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Administrator\Desktop\新建文件夹\AutomatedEdit\.venv\Lib\site-packages\playwright\_impl\_frame.py", line 59
+1, in _click
+    await self._channel.send("click", self._timeout, locals_to_params(locals()))
+  File "C:\Users\Administrator\Desktop\新建文件夹\AutomatedEdit\.venv\Lib\site-packages\playwright\_impl\_connection.py", li
+ne 69, in send
+    return await self._connection.wrap_api_call(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Administrator\Desktop\新建文件夹\AutomatedEdit\.venv\Lib\site-packages\playwright\_impl\_connection.py", li
+ne 563, in wrap_api_call
+    raise rewrite_error(error, f"{parsed_st['apiName']}: {error}") from None
+playwright._impl._errors.TimeoutError: Locator.click: Timeout 30000ms exceeded.
+Call log:
+  - waiting for locator("input[type='text']").first
+

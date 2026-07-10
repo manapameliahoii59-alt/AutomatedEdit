@@ -1,0 +1,14 @@
+﻿
+[1;33m Tips:[0m QFluentWidgets Pro is now released. Click [1;96mhttps://qfluentwidgets.com/pages/pro[0m to learn more about it.
+
+{
+  "methods": {
+    "sdk_get_qs": "ERR: Cannot read properties of undefined (reading 'slice')",
+    "sdk_get_path": "ERR: Cannot read properties of undefined (reading 'slice')",
+    "sdk_post": "ERR: Cannot read properties of undefined (reading 'slice')",
+    "use_get": "ERR: Cannot read properties of undefined (reading 'slice')",
+    "use_path": "ERR: Cannot read properties of undefined (reading 'slice')"
+  },
+  "hasSdk": true,
+  "sdkType": "function"
+}

@@ -1,0 +1,15 @@
+﻿
+[1;33m Tips:[0m QFluentWidgets Pro is now released. Click [1;96mhttps://qfluentwidgets.com/pages/pro[0m to learn more about it.
+
+RAW GET: {
+  "status": 200,
+  "url": "/novelsale/distributor/content/series/list/v1/?query=%E4%B8%89%E4%BB%A3%E6%81%A9%E6%80%A8&search_type=2&sort_type=1&sort_field=8&aweme_user_new_version=true&page_index=0&page_size=10&start_time=2026-06-08&end_time=2026-07-08",
+  "textLen": 59,
+  "text": "{\"code\":0,\"data\":{\"data\":[],\"total\":1},\"message\":\"success\"}"
+}
+RAW POST: {
+  "status": 400,
+  "textLen": 0,
+  "text": ""
+}
+window keys: ['fetch', 'requestAnimationFrame', 'requestIdleCallback', 'webkitRequestAnimationFrame', 'fetchLater', 'webkitRequestFileSystem', 'useWebSecsdkApi', 'SDKNativeWebApi']

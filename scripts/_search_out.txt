@@ -1,0 +1,11 @@
+﻿
+[1;33m Tips:[0m QFluentWidgets Pro is now released. Click [1;96mhttps://qfluentwidgets.com/pages/pro[0m to learn more about it.
+
+params={'query': '三代恩怨', 'search_type': '2'} code=0 total=1 count=0 msg=success
+params={'query': '三代恩怨', 'search_type': '2', 'start_time': '', 'end_time': ''} code=0 total=1 count=0 msg=success
+params={'query': '三代恩怨', 'search_type': '2', 'page_index': '0', 'page_size': '20'} code=0 total=1 count=0 msg=success
+params={'query': '三代恩怨', 'search_type': '2', 'page_index': '1', 'page_size': '20'} code=0 total=1 count=0 msg=success
+params={'query': '三代恩怨', 'search_type': '2', 'start_time': '2020-01-01', 'end_time': '2030-12-31'} code=4009 total=None count=0 msg=访问速度过快
+params={'query': '三代恩怨', 'search_type': '2', 'sort_field': '1'} code=0 total=1 count=0 msg=success
+params={'query': '三代恩怨', 'search_type': '2', 'sort_field': '8', 'sort_type': '2'} code=0 total=1 count=0 msg=success
+FULL: {"code": 0, "data": {"data": [], "total": 1}, "message": "success"}

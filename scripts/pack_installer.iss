@@ -31,6 +31,12 @@ UninstallDisplayName=Uninstall {#MyAppName}
 Compression=lzma
 SolidCompression=yes
 WizardStyle=modern
+; 升级时自动沿用上次安装路径，并跳过目录选择页
+DisableDirPage=auto
+UsePreviousAppDir=yes
+; 安装前尝试关闭正在运行的程序
+CloseApplications=force
+CloseApplicationsFilter=entry.exe
 
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl"

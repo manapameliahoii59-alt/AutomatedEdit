@@ -1,0 +1,7 @@
+﻿
+[1;33m Tips:[0m QFluentWidgets Pro is now released. Click [1;96mhttps://qfluentwidgets.com/pages/pro[0m to learn more about it.
+
+inputs: 3
+{'tag': 'INPUT', 'type': 'text', 'placeholder': '请选择', 'className': 'arco-cascader-view-input arco-cascader-hidden', 'aria': '', 'text': '', 'w': 0, 'h': 16.09375}
+{'tag': 'DIV', 'type': '', 'placeholder': '', 'className': 'arco-select arco-select-single arco-select-size-default', 'aria': '', 'text': '10 条/页', 'w': 104.546875, 'h': 36}
+{'tag': 'INPUT', 'type': 'text', 'placeholder': '', 'className': 'arco-select-view-input arco-select-hidden', 'aria': '', 'text': '', 'w': 0, 'h': 16.09375}

@@ -1,0 +1,45 @@
+﻿
+[1;33m Tips:[0m QFluentWidgets Pro is now released. Click [1;96mhttps://qfluentwidgets.com/pages/pro[0m to learn more about it.
+
+[32m2026-07-09 15:49:30[0m | MainProcess | PlaywrightWorker | [36mplaywright_worker[0m.[36m_loop[0m:[36m42[0m | [33m[1mWARNING[0m: [33m[1mPlaywright 任务失败: HTTP 200 /novelsale/distributor/content/series/list/v1/: empty body（接口无返回内容，多为 secsdk 签名未就绪或登录态失效，请重新登录常读平台后重试）[0m
+uv : Traceback (most recent call last):
+所在位置 C:\Users\Administrator\AppData\Local\Temp\ps-script-51a32355-9f24-4e4a-b55a-233d4b4b8d51.ps1:81 字符: 22
++ ... ONPATH="."; uv run python scripts/_test_app_types_one.py 2>&1 | Out-F ...
++                 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (Traceback (most recent call last)::String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+  File "C:\Users\Administrator\Desktop\新建文件夹\AutomatedEdit\scripts\_test_app_types_one.py", line 25, in <module>
+    playwright_worker.run(test)
+  File "C:\Users\Administrator\Desktop\新建文件夹\AutomatedEdit\app\core\playwright_worker.py", line 67, in run
+    return PlaywrightWorker.instance().run(func, *args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Administrator\Desktop\新建文件夹\AutomatedEdit\app\core\playwright_worker.py", line 52, in run
+    return future.result()
+           ^^^^^^^^^^^^^^^
+  File "C:\Users\Administrator\AppData\Roaming\uv\python\cpython-3.12-windows-x86_64-none\Lib\concurrent\futures\_base.
+py", line 456, in result
+    return self.__get_result()
+           ^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Administrator\AppData\Roaming\uv\python\cpython-3.12-windows-x86_64-none\Lib\concurrent\futures\_base.
+py", line 401, in __get_result
+    raise self._exception
+  File "C:\Users\Administrator\Desktop\新建文件夹\AutomatedEdit\app\core\playwright_worker.py", line 40, in _loop
+    result = func(*args, **kwargs)
+             ^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Administrator\Desktop\新建文件夹\AutomatedEdit\scripts\_test_app_types_one.py", line 13, in test
+    r = client.search_by_name(TARGET)
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Administrator\Desktop\新建文件夹\AutomatedEdit\app\data\services\series_list_client.py", line 717, in searc
+h_by_name
+    return self._api_fetch(
+           ^^^^^^^^^^^^^^^^
+  File "C:\Users\Administrator\Desktop\新建文件夹\AutomatedEdit\app\data\services\series_list_client.py", line 303, in _api_
+fetch
+    return self._parse_api_result(api_path, result)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Administrator\Desktop\新建文件夹\AutomatedEdit\app\data\services\series_list_client.py", line 367, in _pars
+e_api_result
+    raise RuntimeError(self._format_api_error(api_path, result))
+RuntimeError: HTTP 200 /novelsale/distributor/content/series/list/v1/: empty body（接口无返回内容，多为 secsdk 签名未就绪或登录态失效，请重新登录常读
+平台后重试）

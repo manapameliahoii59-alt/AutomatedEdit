@@ -1,0 +1,7 @@
+﻿
+[1;33m Tips:[0m QFluentWidgets Pro is now released. Click [1;96mhttps://qfluentwidgets.com/pages/pro[0m to learn more about it.
+
+{'query': '三代恩怨', 'search_type': '2', 'content_genre': '2'} -> code=0 total=1 count=0
+{'query': '偷藏半分喜', 'search_type': '2', 'content_genre': '2'} -> code=0 total=0 count=0
+{'query': '偷藏半分喜', 'search_type': '2', 'content_genre': '2', 'start_time': '', 'end_time': ''} -> code=0 total=0 count=0
+{'query': '三代恩怨', 'search_type': '2', 'content_genre': '2', 'page_size': '50'} -> code=0 total=1 count=0
