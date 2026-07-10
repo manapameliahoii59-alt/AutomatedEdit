@@ -85,6 +85,27 @@ source /www/server/pyporject_evn/项目名_venv/bin/activate
 { "action": "plan", "drama_name": "某剧名" }
 ```
 
+## 服务端代理策划
+
+策划逻辑与 DeepSeek 密钥**仅存在于服务端**。推荐在管理后台 **用户密钥** 为每位用户配置独立的 `DeepSeek Keys`（逗号分隔）；未配置时可选用 `.env` 中的 `DEEPSEEK_API_KEYS` 作为全局兜底。
+
+在 **用户** 页可设置 **使用期限**（`valid_until`）：留空表示永久有效；到期后桌面端登录与 API 均返回 **「无效」**。
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| POST | `/api/client/plan/jobs` | 创建策划任务（校验每日策划配额） |
+| GET | `/api/client/plan/jobs/{job_id}` | 查询进度 |
+| GET | `/api/client/plan/jobs/{job_id}/result` | 任务完成后获取密文结果 |
+
+`.env` 示例：
+
+```env
+DEEPSEEK_API_URL=https://api.deepseek.com/chat/completions
+DEEPSEEK_MODEL=deepseek-v4-flash
+# 可选全局兜底（优先使用用户密钥表中的配置）
+# DEEPSEEK_API_KEYS=sk-xxx
+```
+
 ## 用户配置 API
 
 需携带登录后的 `Authorization: Bearer <token>`。

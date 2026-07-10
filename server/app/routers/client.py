@@ -1,12 +1,18 @@
-from fastapi import APIRouter, Depends
+from datetime import date
+
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.deps import get_current_user
-from app.models import UsageEvent, User, UserDailyActivity, UserSecret
+from app.models import UsageEvent, User, UserDailyActivity
 from app.schemas import (
     DailyActivityOut,
     DailyQuotaOut,
+    PlanJobCreateRequest,
+    PlanJobCreateResponse,
+    PlanJobResultOut,
+    PlanJobStatusOut,
     QuotaCheckOut,
     QuotaCheckRequest,
     SecretsOut,
@@ -16,6 +22,8 @@ from app.schemas import (
 )
 from app.services.daily_activity import record_daily_activity
 from app.services.daily_quota import assert_can_record, build_daily_quota, can_clip_drama, can_plan_drama
+from app.services.plan_jobs import create_plan_job, get_plan_job
+from app.services.plan_secrets import ensure_user_secret
 from app.services.user_settings import get_user_settings, patch_user_settings
 
 router = APIRouter(prefix="/api/client", tags=["client"])
@@ -37,10 +45,65 @@ def _quota_to_schema(quota) -> DailyQuotaOut:
 
 @router.get("/secrets", response_model=SecretsOut)
 def get_secrets(user: User = Depends(get_current_user), db: Session = Depends(get_db)):
-    row = db.query(UserSecret).filter(UserSecret.user_id == user.id).first()
-    if row is None:
-        return SecretsOut()
-    return SecretsOut(deepseek_keys=row.deepseek_keys or "", dashscope_key=row.dashscope_key or "")
+    row = ensure_user_secret(db, user.id)
+    return SecretsOut(
+        deepseek_keys=row.deepseek_keys or "",
+        dashscope_key=row.dashscope_key or "",
+        plan_decrypt_key=row.plan_decrypt_key or "",
+    )
+
+
+@router.post("/plan/jobs", response_model=PlanJobCreateResponse, status_code=201)
+def create_plan_job_endpoint(
+    body: PlanJobCreateRequest,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    allowed, message = can_plan_drama(db, user, body.drama_name)
+    if not allowed:
+        raise HTTPException(status_code=403, detail=message)
+
+    payload = {
+        "project_name": body.project_name,
+        "steps": body.steps,
+        "ordered_files": body.ordered_files,
+    }
+    try:
+        job = create_plan_job(db, user.id, payload)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return PlanJobCreateResponse(job_id=job.id)
+
+
+@router.get("/plan/jobs/{job_id}", response_model=PlanJobStatusOut)
+def get_plan_job_status(
+    job_id: str,
+    user: User = Depends(get_current_user),
+):
+    job = get_plan_job(job_id, user.id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="策划任务不存在")
+    return PlanJobStatusOut(
+        job_id=job.id,
+        status=job.status,
+        progress=job.progress,
+        error=job.error,
+    )
+
+
+@router.get("/plan/jobs/{job_id}/result", response_model=PlanJobResultOut)
+def get_plan_job_result(
+    job_id: str,
+    user: User = Depends(get_current_user),
+):
+    job = get_plan_job(job_id, user.id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="策划任务不存在")
+    if job.status == "failed":
+        raise HTTPException(status_code=400, detail=job.error or "策划失败")
+    if job.status != "done" or not job.result:
+        raise HTTPException(status_code=409, detail="策划尚未完成")
+    return PlanJobResultOut(job_id=job.id, **job.result)
 
 
 @router.post("/usage", status_code=201)

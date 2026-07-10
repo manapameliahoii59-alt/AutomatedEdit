@@ -28,6 +28,11 @@ def _is_active_label(model, _attr):
     return "启用" if getattr(model, "is_active", True) else "已禁用"
 
 
+def _valid_until_label(model, _attr):
+    value = getattr(model, "valid_until", None)
+    return value.isoformat() if value else "永久"
+
+
 class _SwitchCheckboxInput(CheckboxInput):
     """紧凑的 Tabler 开关样式，兼容 wtforms 3.x。"""
 
@@ -93,12 +98,14 @@ class UserAdmin(ModelView, model=User):
         User.username,
         User.role,
         User.is_active,
+        User.valid_until,
         User.daily_plan_limit,
         User.daily_clip_limit,
     ]
     form_overrides = {"is_active": _DesktopAccessField}
     form_args = {
         "is_active": {"label": "允许使用桌面端"},
+        "valid_until": {"label": "使用期限（空=永久）"},
         "daily_plan_limit": {"label": "每日策划上限（0=不限，默认30）"},
         "daily_clip_limit": {"label": "每日剪辑上限（0=不限，默认30）"},
     }
@@ -109,6 +116,7 @@ class UserAdmin(ModelView, model=User):
         User.plain_password,
         User.role,
         User.is_active,
+        User.valid_until,
         User.daily_plan_limit,
         User.daily_clip_limit,
         User.created_at,
@@ -119,6 +127,7 @@ class UserAdmin(ModelView, model=User):
         User.plain_password: "密码",
         User.role: "角色",
         User.is_active: "允许使用桌面端",
+        User.valid_until: "使用期限",
         User.daily_plan_limit: "每日策划上限",
         User.daily_clip_limit: "每日剪辑上限",
         User.created_at: "创建时间",
@@ -126,6 +135,7 @@ class UserAdmin(ModelView, model=User):
     column_searchable_list = [User.username]
     column_formatters = {
         User.is_active: _is_active_label,
+        User.valid_until: _valid_until_label,
     }
     column_details_list = [
         User.id,
@@ -133,12 +143,14 @@ class UserAdmin(ModelView, model=User):
         User.plain_password,
         User.role,
         User.is_active,
+        User.valid_until,
         User.daily_plan_limit,
         User.daily_clip_limit,
         User.created_at,
     ]
     column_formatters_detail = {
         User.is_active: _is_active_label,
+        User.valid_until: _valid_until_label,
     }
 
     @action(
@@ -169,15 +181,36 @@ class UserAdmin(ModelView, model=User):
 
 
 class UserSecretAdmin(ModelView, model=UserSecret):
+    name = "用户密钥"
+    name_plural = "用户密钥"
+    form_columns = [
+        UserSecret.user_id,
+        UserSecret.deepseek_keys,
+        UserSecret.dashscope_key,
+    ]
+    form_excluded_columns = [UserSecret.plan_decrypt_key]
+    form_args = {
+        "user_id": {"label": "用户 ID"},
+        "deepseek_keys": {
+            "label": "DeepSeek API Keys（逗号分隔，策划专用）",
+            "description": "为该用户配置独立的 DeepSeek 密钥，策划时将优先使用此处配置",
+        },
+        "dashscope_key": {"label": "DashScope Key（可选）"},
+    }
     column_list = [
         UserSecret.id,
         UserSecret.user_id,
         UserSecret.deepseek_keys,
         UserSecret.dashscope_key,
+        UserSecret.plan_decrypt_key,
         UserSecret.updated_at,
     ]
     column_labels = {
         UserSecret.user_id: "易投账号",
+        UserSecret.deepseek_keys: "DeepSeek Keys",
+        UserSecret.dashscope_key: "DashScope Key",
+        UserSecret.plan_decrypt_key: "策划解密密钥",
+        UserSecret.updated_at: "更新时间",
     }
     column_formatters = {
         UserSecret.user_id: _iocpx_account,

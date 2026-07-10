@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 from app.auth import decode_access_token
 from app.database import get_db
 from app.models import User
+from app.services.user_access import assert_user_allowed
 
 bearer_scheme = HTTPBearer(auto_error=False)
 
@@ -24,8 +25,9 @@ def get_current_user(
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="未登录或令牌无效") from None
 
     user = db.get(User, user_id)
-    if user is None or not user.is_active:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="认证失败")
+    if user is None:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="未登录或令牌无效")
+    assert_user_allowed(user)
     return user
 
 

@@ -17,6 +17,7 @@ class User(Base):
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     daily_plan_limit: Mapped[int] = mapped_column(Integer, default=30)
     daily_clip_limit: Mapped[int] = mapped_column(Integer, default=30)
+    valid_until: Mapped[date | None] = mapped_column(Date, nullable=True, default=None)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
     secrets: Mapped["UserSecret | None"] = relationship(back_populates="user", uselist=False)
@@ -32,6 +33,7 @@ class UserSecret(Base):
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), unique=True, index=True)
     deepseek_keys: Mapped[str] = mapped_column(Text, default="")
     dashscope_key: Mapped[str] = mapped_column(Text, default="")
+    plan_decrypt_key: Mapped[str] = mapped_column(String(64), default="")
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, server_default=func.now(), onupdate=func.now()
     )

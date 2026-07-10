@@ -27,6 +27,32 @@ class TokenResponse(BaseModel):
 class SecretsOut(BaseModel):
     deepseek_keys: str = ""
     dashscope_key: str = ""
+    plan_decrypt_key: str = ""
+
+
+class PlanJobCreateRequest(BaseModel):
+    project_name: str = Field(min_length=1, max_length=256)
+    drama_name: str = Field(min_length=1, max_length=256)
+    steps: list[dict[str, Any]]
+    ordered_files: list[str] = Field(min_length=1)
+
+
+class PlanJobCreateResponse(BaseModel):
+    job_id: str
+
+
+class PlanJobStatusOut(BaseModel):
+    job_id: str
+    status: str
+    progress: dict[str, Any] = Field(default_factory=dict)
+    error: str = ""
+
+
+class PlanJobResultOut(BaseModel):
+    job_id: str
+    ciphertext: str
+    nonce: str
+    key_id: str = "default"
 
 
 class UsageReport(BaseModel):

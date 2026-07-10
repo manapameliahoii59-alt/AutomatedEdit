@@ -10,6 +10,7 @@ from app.deps import get_current_user
 from app.models import User
 from app.schemas import LoginRequest, TokenResponse, UserOut
 from app.services.iocpx_auth import IocpxAuthError, verify_iocpx_credentials
+from app.services.user_access import assert_user_allowed
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
@@ -44,11 +45,7 @@ def login(body: LoginRequest, db: Session = Depends(get_db)):
     db.commit()
     db.refresh(user)
 
-    if not user.is_active:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="登录失败，请稍后重试",
-        )
+    assert_user_allowed(user)
 
     token = create_access_token(user.id, user.username, user.role)
     return TokenResponse(

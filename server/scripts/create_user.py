@@ -4,6 +4,7 @@
 import argparse
 import getpass
 import sys
+from datetime import date
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -19,8 +20,9 @@ def main():
     parser = argparse.ArgumentParser(description="创建 AutomatedEdit 用户")
     parser.add_argument("username")
     parser.add_argument("--role", choices=["user", "admin"], default="user")
-    parser.add_argument("--deepseek-keys", default="", help="逗号分隔的 DeepSeek Key")
+    parser.add_argument("--deepseek-keys", default="", help="逗号分隔的 DeepSeek Key（策划）")
     parser.add_argument("--dashscope-key", default="")
+    parser.add_argument("--valid-until", default="", help="使用期限 YYYY-MM-DD，留空=永久")
     args = parser.parse_args()
 
     password = getpass.getpass("密码: ")
@@ -42,6 +44,7 @@ def main():
             plain_password=password,
             role=args.role,
             is_active=True,
+            valid_until=date.fromisoformat(args.valid_until) if args.valid_until else None,
         )
         db.add(user)
         db.flush()

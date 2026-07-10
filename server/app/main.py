@@ -91,6 +91,25 @@ def _ensure_daily_quota_columns() -> None:
                     )
                 )
 
+    if "user_secrets" in table_names:
+        secret_cols = {col["name"] for col in inspector.get_columns("user_secrets")}
+        with engine.begin() as conn:
+            if "plan_decrypt_key" not in secret_cols:
+                conn.execute(
+                    text(
+                        "ALTER TABLE user_secrets ADD COLUMN plan_decrypt_key "
+                        "VARCHAR(64) NOT NULL DEFAULT ''"
+                    )
+                )
+
+    if "users" in table_names:
+        user_cols = {col["name"] for col in inspector.get_columns("users")}
+        with engine.begin() as conn:
+            if "valid_until" not in user_cols:
+                conn.execute(
+                    text("ALTER TABLE users ADD COLUMN valid_until DATE NULL")
+                )
+
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
