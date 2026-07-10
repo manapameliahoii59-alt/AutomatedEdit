@@ -18,6 +18,7 @@ from app.common.my_logger import my_logger as logger
 from app.common.utils import show_dialog
 from app.core.container import Container
 from app.core.playwright_worker import shutdown_playwright_worker
+from app.data.services.usage_service import UsageService
 # from view.login_window.window import LoginWindow
 from app.ui.views.login.view import LoginWindow
 # from view.main_window import MainWindow
@@ -36,24 +37,27 @@ app.installTranslator(translator)
 app.aboutToQuit.connect(shutdown_playwright_worker)
 
 
+def _run_main_window(main_window: MainWindow) -> bool:
+    """显示主窗口，返回是否为退出登录（需重新登录）。"""
+    UsageService.report_app_login()
+    main_window.show()
+    app.exec()
+    return bool(getattr(main_window, "is_logout", False))
+
+
 def main():
     auth = Container.auth_service()
     while True:
         if cfg.auto_login.value and auth.try_auto_login():
             logger.debug('自动登录成功')
-            main_window = MainWindow()
-            main_window.show()
-            app.exec()
-            if not getattr(main_window, 'is_logout', False):
-                break
-            continue
+            if _run_main_window(MainWindow()):
+                continue
+            break
         login_window = LoginWindow()
         if login_window.exec() == LoginWindow.DialogCode.Accepted:
-            main_window = MainWindow()
-            main_window.show()
-            app.exec()
-            if not getattr(main_window, 'is_logout', False):
-                break
+            if _run_main_window(MainWindow()):
+                continue
+            break
         else:
             break
 

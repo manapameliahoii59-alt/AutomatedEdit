@@ -72,6 +72,8 @@ fabric.properties
 .idea
 *.pyc
 config.json
+.env
+server/.env
 tools/ffmpeg/win/*.exe
 tools/outro/*.mp4
 logs
