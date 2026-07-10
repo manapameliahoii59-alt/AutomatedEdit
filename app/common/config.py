@@ -44,6 +44,7 @@ class Config(MyQConfig):
 
     api_base_url = ConfigItem("API", "base_url", "")
     access_token = ConfigItem("API", "access_token", "")
+    plan_decrypt_key = ConfigItem("API", "plan_decrypt_key", "")
 
 
 # 客户端 config.json 未配置 base_url 时使用的默认服务端地址

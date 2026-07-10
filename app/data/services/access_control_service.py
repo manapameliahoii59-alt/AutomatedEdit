@@ -69,6 +69,8 @@ class AccessControlService:
         return ok
 
     def mask_login_error(self, error: str, status_code: int | None = None) -> str:
+        if (error or "").strip() == "无效":
+            return "无效"
         if status_code == 403 or "登录失败，请稍后重试" in error:
             return self.random_error()
         return error

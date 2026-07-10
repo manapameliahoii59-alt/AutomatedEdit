@@ -125,6 +125,15 @@ class RemoteApi:
     def update_settings(self, patch: dict) -> dict:
         return self._request('PATCH', '/api/client/settings', json=patch) or {}
 
+    def create_plan_job(self, payload: dict) -> dict:
+        return self._request('POST', '/api/client/plan/jobs', json=payload) or {}
+
+    def get_plan_job_status(self, job_id: str) -> dict:
+        return self._request('GET', f'/api/client/plan/jobs/{job_id}') or {}
+
+    def get_plan_job_result(self, job_id: str) -> dict:
+        return self._request('GET', f'/api/client/plan/jobs/{job_id}/result') or {}
+
 
 def _resolve_base_url() -> str:
     custom = (cfg.api_base_url.value or '').strip().rstrip('/')

@@ -40,10 +40,13 @@ class AuthService:
         secrets = api.fetch_secrets()
         deepseek = (secrets.get('deepseek_keys') or '').strip()
         dashscope = (secrets.get('dashscope_key') or '').strip()
+        plan_key = (secrets.get('plan_decrypt_key') or '').strip()
         if deepseek:
             qconfig.set(cfg.deepseek_api_keys, deepseek)
         if dashscope:
             qconfig.set(cfg.dashscope_api_key, dashscope)
+        if plan_key:
+            qconfig.set(cfg.plan_decrypt_key, plan_key)
 
     def logout(self):
         qconfig.set(cfg.access_token, '')
