@@ -8,6 +8,7 @@ from qfluentwidgets import (SettingCardGroup, SwitchSettingCard, OptionsSettingC
 
 from app.common.config import cfg, FEEDBACK_URL, VERSION, YEAR, AUTHOR
 from app.common.utils import StyleSheet, changdu_account_summary, open_changdu_account_dialog
+from app.data.services.update_service import check_and_prompt_update
 from app.ui.components.icon import MyIcon
 
 
@@ -84,6 +85,13 @@ class SettingInterface(ScrollArea):
             '© Copyright' + f" {YEAR}, {AUTHOR}",
             self.aboutGroup
         )
+        self.checkUpdateCard = PushSettingCard(
+            '检查',
+            FIcon.SYNC,
+            '检查更新',
+            f'当前版本 {VERSION}',
+            self.aboutGroup,
+        )
 
         self.__init_widget()
         StyleSheet.SETTINGS.apply(self)
@@ -107,6 +115,7 @@ class SettingInterface(ScrollArea):
         self.changduGroup.addSettingCard(self.changdu_account_card)
         self.aboutGroup.addSettingCard(self.themeCard)
         self.aboutGroup.addSettingCard(self.themeColorCard)
+        self.aboutGroup.addSettingCard(self.checkUpdateCard)
         self.aboutGroup.addSettingCard(self.aboutCard)
         self.expandLayout.setSpacing(28)
         self.expandLayout.setContentsMargins(60, 0, 60, 0)
@@ -118,6 +127,7 @@ class SettingInterface(ScrollArea):
         self.themeCard.optionChanged.connect(lambda ci: setTheme(cfg.themeMode.value))
         self.themeColorCard.colorChanged.connect(setThemeColor)
         self.aboutCard.clicked.connect(lambda: QDesktopServices.openUrl(QUrl(FEEDBACK_URL)))
+        self.checkUpdateCard.clicked.connect(self.__on_check_update)
         self.logoutCard.clicked.connect(self.__on_logout_clicked)
         self.save_password.checkedChanged.connect(self.__on_save_password_changed)
         self.changdu_account_card.clicked.connect(self.__on_set_changdu_account)
@@ -142,3 +152,6 @@ class SettingInterface(ScrollArea):
         ok, email, password = open_changdu_account_dialog(self)
         if ok:
             self.changdu_account_card.setContent(changdu_account_summary())
+
+    def __on_check_update(self):
+        check_and_prompt_update(self.window(), manual=True)

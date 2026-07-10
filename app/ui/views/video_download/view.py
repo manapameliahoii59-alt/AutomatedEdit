@@ -360,7 +360,7 @@ class VideoDownloadPage(ScrollArea):
         dialog.buttonGroup.setFixedHeight(52)
 
         name_input = QPlainTextEdit(dialog)
-        name_input.setPlaceholderText("n某剧名\n…")
+        name_input.setPlaceholderText("如：某剧名\n…")
         name_input.setMaximumBlockCount(500)
         name_input.setFixedSize(360, 140)
         name_input.setStyleSheet(

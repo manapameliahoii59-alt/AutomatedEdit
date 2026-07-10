@@ -7,6 +7,7 @@ from app.common.config import cfg
 from app.core.container import Container
 from app.core.navigation import LazyViewProxy
 from app.data.services.access_control_service import access_control
+from app.data.services.update_service import prompt_update_on_startup
 from app.data.services.usage_service import UsageService
 from app.ui.views.clip_edit.view import ClipEditPage
 from app.ui.views.settings.view import SettingInterface
@@ -60,6 +61,7 @@ class MainWindow(FluentWindow):
         self.addSubInterface(self.settingInterface, FIF.SETTING, '设置', NavigationItemPosition.BOTTOM)
 
         QTimer.singleShot(0, lambda: self.navigationInterface.expand(useAni=False))
+        QTimer.singleShot(800, lambda: prompt_update_on_startup(self))
 
     def _check_access(self) -> None:
         access_control.refresh()

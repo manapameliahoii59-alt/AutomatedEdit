@@ -134,6 +134,9 @@ class RemoteApi:
     def get_plan_job_result(self, job_id: str) -> dict:
         return self._request('GET', f'/api/client/plan/jobs/{job_id}/result') or {}
 
+    def fetch_client_version(self) -> dict:
+        return self._request('GET', '/api/client/version') or {}
+
 
 def _resolve_base_url() -> str:
     custom = (cfg.api_base_url.value or '').strip().rstrip('/')
