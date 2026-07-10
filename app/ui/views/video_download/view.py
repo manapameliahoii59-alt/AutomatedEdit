@@ -1,5 +1,6 @@
 import os
 
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QFileDialog,
     QHBoxLayout,
@@ -32,6 +33,11 @@ from app.data.services.drama_folder_service import list_drama_folders_under
 from app.ui.components.bar import ProgressInfoBar
 
 from .view_model import MAX_DOWNLOAD_EPISODE, VideoDownloadViewModel
+
+
+def _style_status_item(item: QTableWidgetItem, status: str) -> None:
+    if status == "已完成":
+        item.setForeground(Qt.GlobalColor.darkGreen)
 
 
 class VideoDownloadPage(ScrollArea):
@@ -136,7 +142,7 @@ class VideoDownloadPage(ScrollArea):
         self.table.setColumnWidth(0, 220)
         self.table.setColumnWidth(1, 80)
         self.table.setColumnWidth(2, 80)
-        self.table.setColumnWidth(3, 100)
+        self.table.setColumnWidth(3, 300)
         self.table.setColumnWidth(4, 88)
         layout.addWidget(self.table, 1)
 
@@ -222,6 +228,7 @@ class VideoDownloadPage(ScrollArea):
                 self.table.setItem(row, 3, item)
             else:
                 item.setText(status)
+            _style_status_item(item, status)
             break
 
     def _handle_loading(self, loading: bool, title: str, content: str):
@@ -261,7 +268,9 @@ class VideoDownloadPage(ScrollArea):
             self.table.setItem(row, 0, name_item)
             self.table.setItem(row, 1, QTableWidgetItem(str(target.from_ep)))
             self.table.setItem(row, 2, QTableWidgetItem(str(target.to_ep)))
-            self.table.setItem(row, 3, QTableWidgetItem(target.status))
+            status_item = QTableWidgetItem(target.status)
+            _style_status_item(status_item, target.status)
+            self.table.setItem(row, 3, status_item)
 
             remove_btn = PushButton("删除", self.table)
             remove_btn.clicked.connect(

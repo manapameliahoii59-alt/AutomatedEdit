@@ -62,6 +62,7 @@ class RenderService:
         *,
         should_cancel: Callable[[], bool] | None = None,
         register_proc: Callable | None = None,
+        progress_callback: Callable[[dict], None] | None = None,
     ) -> RenderResult:
         ffmpeg = resolve_ffmpeg()
         ffprobe = resolve_ffprobe()
@@ -71,7 +72,7 @@ class RenderService:
 
         plan_path = locate_production_plan(project_path)
         if not plan_path:
-            raise FileNotFoundError(f"《{project.name}》未找到 production_plan_v3.json，请先 AI 策划")
+            raise FileNotFoundError(f"《{project.name}》未找到 production_plan_v3.json，请先完成策划")
 
         from app.common.crypto import read_json
         plans = read_json(plan_path)
@@ -108,10 +109,21 @@ class RenderService:
             f"   📦 预处理 {len(episodes)} 集缓存（倍速 {', '.join(str(s) for s in sorted(speeds))}）…",
             flush=True,
         )
+        cache_total = len(episodes) * len(speeds)
+        cache_done = 0
         for speed in sorted(speeds):
             for ep_name in episodes:
                 if should_cancel and should_cancel():
                     raise RenderCancelled("渲染已取消")
+                cache_done += 1
+                if progress_callback:
+                    progress_callback(
+                        {
+                            "phase": "cache",
+                            "current": cache_done,
+                            "total": cache_total,
+                        }
+                    )
                 cached = RenderService._ensure_episode_cached(
                     ffmpeg,
                     ffprobe,
@@ -131,11 +143,21 @@ class RenderService:
             f"\n🎬 开始渲染 《{project.name}》：共 {total} 条 -> {output_dir}",
             flush=True,
         )
+        if progress_callback:
+            progress_callback({"phase": "render", "current": 0, "total": total})
 
         for i, plan in enumerate(plans):
             if should_cancel and should_cancel():
                 raise RenderCancelled("渲染已取消")
             output_title = build_clip_export_filename(project.name, i + 1)
+            if progress_callback:
+                progress_callback(
+                    {
+                        "phase": "render",
+                        "current": i + 1,
+                        "total": total,
+                    }
+                )
             print(f"   [进度 {i+1}/{total}] 渲染: {output_title}", flush=True)
             ok = RenderService._render_single(
                 ffmpeg,

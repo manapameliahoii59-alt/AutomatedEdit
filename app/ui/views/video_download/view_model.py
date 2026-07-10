@@ -1,5 +1,4 @@
 import json
-import time
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -59,7 +58,6 @@ class VideoDownloadViewModel(ViewModel):
         self._cancel_requested = False
         self._default_from = 1
         self._default_to = 10
-        self._last_log_progress_at: dict[str, float] = {}
         self.targetsChanged.emit(self._targets)
         self._load_settings_from_server()
 
@@ -410,11 +408,6 @@ class VideoDownloadViewModel(ViewModel):
     ) -> None:
         status = format_download_progress(downloaded, total, speed_kbps)
         self._update_target_status(label, status)
-        now = time.time()
-        last_at = self._last_log_progress_at.get(label, 0.0)
-        if now - last_at >= 10:
-            self._last_log_progress_at[label] = now
-            self._append_log(f"   ↓ {label}: {status}")
 
     def _set_all_status(self, status: str) -> None:
         for t in self._targets:
@@ -434,7 +427,6 @@ class VideoDownloadViewModel(ViewModel):
 
         self._add_task("正在下载", "视频下载任务进行中，请稍候…")
         self._set_all_status("处理中" if not create_only else "创建任务中")
-        self._last_log_progress_at.clear()
         targets_payload = self._targets_to_payload()
         opts = BatchDownloadOptions(
             download_dir=resolve_video_download_root(),

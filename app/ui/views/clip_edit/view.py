@@ -113,13 +113,10 @@ class ClipEditPage(ScrollArea):
         self.batch_plan_btn.clicked.connect(self._batch_plan)
         self.batch_render_btn = PushButton("批量渲染", self.scroll_widget)
         self.batch_render_btn.clicked.connect(self._batch_render)
-        self.batch_render_timed_btn = PushButton("渲染计时", self.scroll_widget)
-        self.batch_render_timed_btn.clicked.connect(self._batch_render_timed)
         batch_row.addWidget(self.batch_all_btn)
         batch_row.addWidget(self.batch_transcribe_btn)
         batch_row.addWidget(self.batch_plan_btn)
         batch_row.addWidget(self.batch_render_btn)
-        batch_row.addWidget(self.batch_render_timed_btn)
         self.import_btn = PrimaryPushButton(
             FIF.FOLDER_ADD, "导入剧目", self.scroll_widget
         )
@@ -150,9 +147,9 @@ class ClipEditPage(ScrollArea):
         self.table.setColumnWidth(1, 180)
         self.table.setColumnWidth(2, 72)
         self.table.setColumnWidth(3, 96)
-        self.table.setColumnWidth(4, 96)
-        self.table.setColumnWidth(5, 96)
-        self.table.setColumnWidth(6, 336)
+        self.table.setColumnWidth(4, 180)
+        self.table.setColumnWidth(5, 180)
+        self.table.setColumnWidth(6, 280)
         layout.addWidget(self.table, 1)
 
         self.setViewportMargins(0, 0, 0, 0)
@@ -160,6 +157,8 @@ class ClipEditPage(ScrollArea):
     def _bind_view_model(self):
         self.vm.projectsChanged.connect(self._refresh_table)
         self.vm.loadingChanged.connect(self._handle_loading)
+        self.vm.loadingContentChanged.connect(self._handle_loading_content)
+        self.vm.stageProgressChanged.connect(self._on_stage_progress)
         self.vm.messageReceived.connect(lambda msg: show_toast(self, msg))
         self.vm.errorOccurred.connect(lambda msg: show_dialog(self, msg, "提示"))
         self._refresh_table(self.vm.get_projects())
@@ -191,8 +190,14 @@ class ClipEditPage(ScrollArea):
 
             for col, key in [(3, "transcribe"), (4, "plan"), (5, "render")]:
                 s = st.get(key, DramaStatus.PENDING)
-                item = QTableWidgetItem(STATUS_LABELS.get(s, "待处理"))
+                progress = self.vm.get_stage_progress(project.id, key)
+                if s == DramaStatus.IN_PROGRESS and progress:
+                    label = progress
+                else:
+                    label = STATUS_LABELS.get(s, "待处理")
+                item = QTableWidgetItem(label)
                 item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+                item.setToolTip(label)
                 if s == DramaStatus.DONE:
                     item.setForeground(Qt.GlobalColor.darkGreen)
                 elif s == DramaStatus.IN_PROGRESS:
@@ -225,14 +230,6 @@ class ClipEditPage(ScrollArea):
                 lambda _=False, pid=project.id: self.vm.start_render(pid)
             )
 
-            render_timed_btn = PushButton("计时", cell)
-            render_timed_btn.setFixedWidth(48)
-            render_timed_btn.setToolTip("渲染并统计耗时")
-            render_timed_btn.setProperty("project_id", project.id)
-            render_timed_btn.clicked.connect(
-                lambda _=False, pid=project.id: self.vm.start_render(pid, timed=True)
-            )
-
             del_btn = PushButton("删除", cell)
             del_btn.setFixedWidth(56)
             del_btn.setProperty("project_id", project.id)
@@ -243,7 +240,6 @@ class ClipEditPage(ScrollArea):
             cell_layout.addWidget(transcribe_btn)
             cell_layout.addWidget(plan_btn)
             cell_layout.addWidget(render_btn)
-            cell_layout.addWidget(render_timed_btn)
             cell_layout.addWidget(del_btn)
             self.table.setCellWidget(row, 6, cell)
 
@@ -300,13 +296,6 @@ class ClipEditPage(ScrollArea):
             return
         self.vm.batch_render(ids)
 
-    def _batch_render_timed(self):
-        ids = self._get_checked_ids()
-        if not ids:
-            show_dialog(self, "请先勾选要处理的剧目", "提示")
-            return
-        self.vm.batch_render(ids, timed=True)
-
     def _batch_all(self):
         if not self.vm.get_projects():
             show_dialog(self, "暂未导入任何剧目", "提示")
@@ -319,7 +308,7 @@ class ClipEditPage(ScrollArea):
 
         w = Dialog(
             "一键执行",
-            f"确认对{'全部' if auto_select_all else '选中的'} {len(ids)} 个剧目执行「识别视频 → AI导演策划 → 动态渲染」完整流程吗？",
+            f"确认对{'全部' if auto_select_all else '选中的'} {len(ids)} 个剧目执行「识别视频 → 方案策划 → 动态渲染」完整流程吗？",
             self.window(),
         )
         setup_confirm_dialog(w, window_title="一键执行")
@@ -370,6 +359,29 @@ class ClipEditPage(ScrollArea):
         )
         if folder:
             self.vm.import_drama_folder(folder)
+
+    def _handle_loading_content(self, content: str):
+        if self.loading_bar is not None and isValid(self.loading_bar):
+            self.loading_bar.contentLabel.setText(content)
+
+    def _on_stage_progress(self, project_id: str, step: str, text: str):
+        step_col = {"transcribe": 3, "plan": 4, "render": 5}.get(step)
+        if step_col is None:
+            return
+        projects = self.vm.get_projects()
+        for row, project in enumerate(projects):
+            if project.id != project_id:
+                continue
+            item = self.table.item(row, step_col)
+            if item is None:
+                item = QTableWidgetItem(text)
+                item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+                self.table.setItem(row, step_col, item)
+            else:
+                item.setText(text)
+            item.setToolTip(text)
+            item.setForeground(Qt.GlobalColor.darkYellow)
+            break
 
     def _handle_loading(self, loading: bool, title: str, content: str):
         if loading:

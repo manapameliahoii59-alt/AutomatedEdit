@@ -5,6 +5,7 @@ import queue
 import threading
 import time
 from datetime import datetime
+from typing import Any, Callable
 
 import requests
 from fuzzywuzzy import process
@@ -47,7 +48,11 @@ def safe_print(*args, **kwargs):
 class AIDirectorService:
 
     @staticmethod
-    def plan(project: DramaProject) -> str:
+    def plan(
+        project: DramaProject,
+        *,
+        progress_callback: Callable[[dict[str, Any]], None] | None = None,
+    ) -> str:
         plan_start = time.perf_counter()
         project_path = project.folder_path
         from app.common.drama_artifact_paths import (
@@ -86,7 +91,7 @@ class AIDirectorService:
 
         api_keys_raw = DEEPSEEK_API_KEYS
         if not api_keys_raw:
-            raise ValueError("未配置 DeepSeek API Key")
+            raise ValueError("未配置策划服务密钥")
 
         api_keys = [k.strip() for k in api_keys_raw.split(",") if k.strip()]
         key_pool = queue.Queue()
@@ -100,10 +105,23 @@ class AIDirectorService:
         api_call_count = 0
         api_total_seconds = 0.0
 
-        safe_print(f"\n🎬 AI 导演策划: 《{project.name}》")
+        safe_print(f"\n🎬 剪辑方案策划: 《{project.name}》")
         safe_print(f"   📄 剧本: {script_chars:,} 字 | 前 {len(target_episodes)} 集")
 
         task_groups = [("A", GROUP_A_COUNT), ("B", TARGET_CLIPS_COUNT - GROUP_A_COUNT)]
+
+        def _emit_plan_progress(detail: str = "") -> None:
+            if progress_callback:
+                progress_callback(
+                    {
+                        "phase": "plan",
+                        "current": len(final_plans),
+                        "total": TARGET_CLIPS_COUNT,
+                        "detail": detail,
+                    }
+                )
+
+        _emit_plan_progress("准备剧本…")
 
         for g_type, total_count in task_groups:
             completed_in_group = 0
@@ -116,6 +134,9 @@ class AIDirectorService:
                 request_count = remaining + group_buffer
 
                 safe_print(f"   🤖 【{g_type}组】({completed_in_group}/{total_count}) 请求 {request_count} 条...")
+                _emit_plan_progress(
+                    f"{g_type}组 {completed_in_group}/{total_count} · 正在生成方案…"
+                )
                 raw_res, elapsed, api_error = AIDirectorService._call_deepseek(
                     compressed_script, request_count, g_type, key_pool
                 )
@@ -123,18 +144,18 @@ class AIDirectorService:
                 api_total_seconds += elapsed
 
                 if api_error:
-                    safe_print(f"      📡 API #{api_call_count} 失败 | 耗时 {elapsed:.1f}s | {api_error}")
+                    safe_print(f"      📡 请求 #{api_call_count} 失败 | 耗时 {elapsed:.1f}s | {api_error}")
                     continue
 
                 if not raw_res:
-                    safe_print(f"      📡 API #{api_call_count} 失败 | 耗时 {elapsed:.1f}s | 响应内容为空")
+                    safe_print(f"      📡 请求 #{api_call_count} 失败 | 耗时 {elapsed:.1f}s | 响应内容为空")
                     continue
 
                 try:
                     clips = AIDirectorService._parse_clips_response(raw_res)
                     if not clips:
                         safe_print(
-                            f"      📡 API #{api_call_count} | 耗时 {elapsed:.1f}s | 返回 0 条"
+                            f"      📡 请求 #{api_call_count} | 耗时 {elapsed:.1f}s | 返回 0 条"
                         )
                         continue
 
@@ -195,8 +216,11 @@ class AIDirectorService:
                         batch_hooks.append(hook)
 
                     completed_in_group += batch_ok
+                    _emit_plan_progress(
+                        f"{g_type}组 · 已通过 {len(final_plans)}/{TARGET_CLIPS_COUNT} 条"
+                    )
                     safe_print(
-                        f"      📡 API #{api_call_count} | 耗时 {elapsed:.1f}s "
+                        f"      📡 请求 #{api_call_count} | 耗时 {elapsed:.1f}s "
                         f"| 返回 {len(clips)} 条 | 通过 {batch_ok} 条 "
                         f"| 组内累计 {completed_in_group}/{total_count}"
                     )
@@ -204,11 +228,11 @@ class AIDirectorService:
                         safe_print(f"         hook[{i}]: {hook}")
 
                 except Exception as e:
-                    safe_print(f"      ⚠️ 解析失败 (API #{api_call_count}, {elapsed:.1f}s): {e}")
+                    safe_print(f"      ⚠️ 解析失败 (请求 #{api_call_count}, {elapsed:.1f}s): {e}")
                     continue
 
         if not final_plans:
-            raise RuntimeError(f"《{project.name}》AI 策划未产出有效方案")
+            raise RuntimeError(f"《{project.name}》策划未产出有效方案")
 
         seen = set()
         unique_plans = []
@@ -227,7 +251,7 @@ class AIDirectorService:
         total_elapsed = time.perf_counter() - plan_start
         safe_print(
             f"📊 《{project.name}》策划完成: {len(unique_plans)} 个方案 -> {plan_output}\n"
-            f"   ⏱️ 总耗时 {total_elapsed:.1f}s | API {api_call_count} 次 "
+            f"   ⏱️ 总耗时 {total_elapsed:.1f}s | 请求 {api_call_count} 次 "
             f"(合计 {api_total_seconds:.1f}s) | 剧本 {script_chars:,} 字"
         )
         return plan_output

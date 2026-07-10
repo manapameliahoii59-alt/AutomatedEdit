@@ -527,17 +527,10 @@ def _download_prepared_with_retry(
 ) -> dict[str, Any]:
     """在线程池中仅执行 requests 流式下载（不触碰 Playwright page）。"""
     label = prepared.get("bookName") or prepared.get("taskName") or prepared["downloadId"]
-    last_log_at = 0.0
 
     def _report_progress(downloaded: int, total: int | None, speed_kbps: float) -> None:
-        nonlocal last_log_at
         if opts.on_download_progress:
             opts.on_download_progress(label, downloaded, total, speed_kbps)
-        now = time.time()
-        if now - last_log_at >= 5:
-            last_log_at = now
-            # 开发日志每 5 秒刷一次，避免并行下载时刷屏
-            print(f"   ↓ {label}: {format_download_progress(downloaded, total, speed_kbps)}")
 
     last_err: Exception | None = None
     for attempt in range(1, opts.download_retries + 1):
@@ -592,12 +585,11 @@ def phase2_download_files(
         logger.both("\n没有待下载任务")
         return summary
 
-    logger.both("\n========== 阶段 2/2: 等待转码并并行下载 ==========\n")
-    logger.say(
-        f"待下载 {len(pending)} 个",
+    logger.dev_only("\n========== 阶段 2/2: 等待转码并并行下载 ==========\n")
+    logger.dev_only(
         f"待下载 {len(pending)} 个 | 并行 {dl_opts['concurrency']} | "
         f"慢速阈值 {dl_opts['min_speed_kbps']} KB/s | "
-        f"最多尝试 {opts.download_retries} 次",
+        f"最多尝试 {opts.download_retries} 次"
     )
     logger.dev_only(
         f"转码轮询间隔 {'/'.join(str(s) for s in TRANSCODE_POLL_INTERVALS_SEC)}s；"
@@ -709,7 +701,7 @@ def phase2_download_files(
                         queued.add(download_id)
                         job["bookName"] = task.get("book_name") or job.get("bookName")
                         download_queue.append(job)
-                        logger.both(f"   ✓ 转码完成: {job.get('bookName') or job.get('name')}")
+                        logger.dev_only(f"   ✓ 转码完成: {job.get('bookName') or job.get('name')}")
 
                 while download_queue and len(futures) < opts.concurrency:
                     job = download_queue.pop(0)
@@ -733,9 +725,8 @@ def phase2_download_files(
                         if opts.stop_on_error:
                             raise RuntimeError(msg)
                         continue
-                    logger.say(
-                        f"\n📥 开始下载: {label}",
-                        f"\n📥 开始下载: {label} (并行 {len(futures) + 1}/{opts.concurrency})",
+                    logger.dev_only(
+                        f"\n📥 开始下载: {label} (并行 {len(futures) + 1}/{opts.concurrency})"
                     )
                     future = executor.submit(process_download, prepared)
                     futures[future] = job
@@ -805,7 +796,7 @@ def phase2_download_files(
                 if transcoding:
                     waiting = "、".join(j.get("bookName") or j.get("name") for j in transcoding.values())
                     poll_sec = _transcode_poll_interval_sec(transcode_poll_round)
-                    logger.both(f"\n⏳ 转码中 {len(transcoding)} 个: {waiting}（{poll_sec}s 后再次查询）")
+                    logger.dev_only(f"\n⏳ 转码中 {len(transcoding)} 个: {waiting}（{poll_sec}s 后再次查询）")
                     _interruptible_sleep(poll_sec, opts.cancel_check)
                     transcode_poll_round += 1
                 elif futures or download_queue:
