@@ -36,17 +36,21 @@ DEFAULT_MIN_SPEED_KBPS = 300
 DEFAULT_WARMUP_SEC = 20
 DEFAULT_STALL_SEC = 45
 DEFAULT_SLOW_WINDOW_SEC = 30
-TRANSCODE_POLL_START_SEC = 60
-TRANSCODE_POLL_MIN_SEC = 35
-TRANSCODE_POLL_STEP_SEC = 5
+TRANSCODE_POLL_INTERVALS_SEC = (60, 45, 30)
+DEFAULT_TRANSCODE_TIMEOUT_MIN = 15
+DEFAULT_TASK_LIST_PAGE_SIZE = 50
+BULK_TASK_LIST_MAX_PAGES = 3
+TASK_LIST_LOOKBACK_SEC = 600
 
 LogFn = Callable[[str], None]
 
 
 def _transcode_poll_interval_sec(poll_round: int) -> int:
-    """转码轮询间隔：首次 60s，每次减 5s，最低 35s。"""
-    interval = TRANSCODE_POLL_START_SEC - poll_round * TRANSCODE_POLL_STEP_SEC
-    return max(TRANSCODE_POLL_MIN_SEC, interval)
+    """转码轮询间隔：第 1 次 60s，第 2 次 45s，第 3 次及以后 30s。"""
+    if poll_round < 0:
+        return TRANSCODE_POLL_INTERVALS_SEC[0]
+    idx = min(poll_round, len(TRANSCODE_POLL_INTERVALS_SEC) - 1)
+    return TRANSCODE_POLL_INTERVALS_SEC[idx]
 
 
 class BatchLogger:
@@ -117,7 +121,7 @@ class BatchDownloadOptions:
     create_only: bool = False
     download_only: bool = False
     delay_sec: float = 3
-    timeout_min: int = 30
+    timeout_min: int = DEFAULT_TRANSCODE_TIMEOUT_MIN
     concurrency: int = DEFAULT_CONCURRENT_DOWNLOADS
     download_timeout_min: int = DEFAULT_DOWNLOAD_TIMEOUT_MIN
     download_retries: int = DEFAULT_DOWNLOAD_RETRIES
@@ -515,10 +519,13 @@ def phase2_download_files(
         f"最多尝试 {opts.download_retries} 次",
     )
     logger.dev_only(
-        f"转码轮询 {TRANSCODE_POLL_START_SEC}s 起每次 -{TRANSCODE_POLL_STEP_SEC}s，"
-        f"最低 {TRANSCODE_POLL_MIN_SEC}s；转码超时 {opts.timeout_min} 分钟，"
+        f"转码轮询间隔 {'/'.join(str(s) for s in TRANSCODE_POLL_INTERVALS_SEC)}s；"
+        f"列表批量查询 page_size={DEFAULT_TASK_LIST_PAGE_SIZE} 最多 {BULK_TASK_LIST_MAX_PAGES} 页；"
+        f"转码超时 {opts.timeout_min} 分钟，"
         f"下载总超时兜底 {opts.download_timeout_min} 分钟"
     )
+
+    phase2_started_at = int(time.time())
 
     transcoding = {j["downloadId"]: j for j in pending}
     transcode_deadlines = {
@@ -553,6 +560,21 @@ def phase2_download_files(
                         transcribe_pipeline.cancel()
                     raise RuntimeError("任务已取消")
 
+                task_map: dict[str, dict[str, Any]] = {}
+                if transcoding:
+                    query_end = str(int(time.time()))
+                    query_start = str(phase2_started_at - TASK_LIST_LOOKBACK_SEC)
+                    try:
+                        task_map = client.fetch_download_tasks_by_ids(
+                            transcoding.keys(),
+                            start_time=query_start,
+                            end_time=query_end,
+                            page_size=DEFAULT_TASK_LIST_PAGE_SIZE,
+                            max_bulk_pages=BULK_TASK_LIST_MAX_PAGES,
+                        )
+                    except Exception as exc:
+                        logger.dev_only(f"   ⚠ 批量查询转码状态失败: {exc}")
+
                 for download_id in list(transcoding.keys()):
                     job = transcoding[download_id]
                     if time.time() > transcode_deadlines[download_id]:
@@ -574,12 +596,7 @@ def phase2_download_files(
                         summary["fail"] += 1
                         continue
 
-                    try:
-                        task = client.find_download_task(download_id)
-                    except Exception as exc:
-                        logger.dev_only(f"   ⚠ 查询失败 {download_id}: {exc}")
-                        continue
-
+                    task = task_map.get(str(download_id))
                     if not task:
                         continue
 

@@ -468,10 +468,18 @@ class SeriesListClient:
             to_ep=to_ep,
         )
 
+    def _resolve_task_list_time_range(self, opts: dict[str, Any]) -> dict[str, str]:
+        if "start_time" in opts and "end_time" in opts:
+            return {
+                "start_time": str(opts.pop("start_time")),
+                "end_time": str(opts.pop("end_time")),
+            }
+        days = int(opts.pop("days", 30))
+        return self._default_unix_time_range(days)
+
     def fetch_download_task_list(self, options: dict[str, Any] | None = None) -> dict[str, Any]:
         opts = dict(options or {})
-        days = opts.pop("days", 30)
-        time_range = self._default_unix_time_range(days)
+        time_range = self._resolve_task_list_time_range(opts)
         params = {**time_range, "page_index": "0", "page_size": "10", **opts}
         referer = (
             "https://www.changdupingtai.com/sale/download-center"
@@ -482,10 +490,9 @@ class SeriesListClient:
 
     def find_download_task(self, download_id: str, options: dict[str, Any] | None = None) -> dict[str, Any] | None:
         opts = dict(options or {})
-        page_size = int(opts.get("page_size") or 10)
-        max_pages = opts.pop("maxPages", 50)
-        days = opts.pop("days", 30)
-        time_range = self._default_unix_time_range(days)
+        page_size = int(opts.pop("page_size", 10))
+        max_pages = int(opts.pop("maxPages", 50))
+        time_range = self._resolve_task_list_time_range(opts)
 
         for page in range(max_pages):
             json_data = self.fetch_download_task_list(
@@ -501,6 +508,52 @@ class SeriesListClient:
             if (page + 1) * page_size >= total:
                 break
         return None
+
+    def fetch_download_tasks_by_ids(
+        self,
+        download_ids,
+        *,
+        start_time: str | None = None,
+        end_time: str | None = None,
+        page_size: int = 50,
+        max_bulk_pages: int = 3,
+        **opts: Any,
+    ) -> dict[str, dict[str, Any]]:
+        """批量查询转码任务：先拉列表前若干页，未命中再逐个兜底查询。"""
+        ids = {str(i) for i in download_ids if i}
+        if not ids:
+            return {}
+
+        query_opts: dict[str, Any] = dict(opts)
+        if start_time is not None and end_time is not None:
+            query_opts["start_time"] = start_time
+            query_opts["end_time"] = end_time
+
+        found: dict[str, dict[str, Any]] = {}
+        list_opts = {**query_opts, "page_size": page_size}
+
+        for page in range(max_bulk_pages):
+            json_data = self.fetch_download_task_list(
+                {**list_opts, "page_index": str(page)}
+            )
+            for task in json_data.get("data") or []:
+                download_id = str(task.get("download_id") or "")
+                if download_id in ids and download_id not in found:
+                    found[download_id] = task
+            if len(found) >= len(ids):
+                break
+            total = int(json_data.get("total") or 0)
+            if (page + 1) * page_size >= total:
+                break
+
+        missing = ids - found.keys()
+        if missing:
+            fallback_opts = {**query_opts, "page_size": page_size}
+            for download_id in missing:
+                hit = self.find_download_task(download_id, fallback_opts)
+                if hit:
+                    found[download_id] = hit
+        return found
 
     def fetch_download_url(self, imagex_uri: str) -> str:
         json_data = self._api_fetch(
