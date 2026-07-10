@@ -9,6 +9,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
+from shiboken6 import isValid
 from qfluentwidgets import (
     BodyLabel,
     Dialog,
@@ -372,7 +373,7 @@ class ClipEditPage(ScrollArea):
 
     def _handle_loading(self, loading: bool, title: str, content: str):
         if loading:
-            if self.loading_bar is None:
+            if self.loading_bar is None or not isValid(self.loading_bar):
                 self.loading_bar = ProgressInfoBar(title, content, self)
                 self.loading_bar.cancelled.connect(self._on_progress_cancelled)
                 self.loading_bar.show()
@@ -383,9 +384,10 @@ class ClipEditPage(ScrollArea):
             self._close_loading()
 
     def _on_progress_cancelled(self):
+        self.loading_bar = None
         self.vm.request_cancel()
 
     def _close_loading(self):
-        if self.loading_bar:
+        if self.loading_bar and isValid(self.loading_bar):
             self.loading_bar.hide()
-            self.loading_bar = None
+        self.loading_bar = None

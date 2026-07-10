@@ -592,6 +592,7 @@ class SeriesListClient:
         stall_sec: int = 45,
         slow_window_sec: int = 30,
         cancel_check: Callable[[], bool] | None = None,
+        progress_callback: Callable[[int, int | None, float], None] | None = None,
     ) -> dict[str, Any]:
         dest_path = Path(dest_path)
         dest_path.parent.mkdir(parents=True, exist_ok=True)
@@ -603,6 +604,26 @@ class SeriesListClient:
         start_at = time.time()
         chunks: list[tuple[float, int]] = []
         done_event = threading.Event()
+        total_bytes: int | None = None
+        last_progress_at = 0.0
+        last_progress_downloaded = 0
+
+        def emit_progress(force: bool = False) -> None:
+            nonlocal last_progress_at, last_progress_downloaded
+            if not progress_callback:
+                return
+            now = time.time()
+            if not force and now - last_progress_at < 1.0:
+                return
+            elapsed = now - last_progress_at if last_progress_at else 0.0
+            delta = downloaded - last_progress_downloaded
+            if elapsed > 0 and delta > 0:
+                speed_kbps = delta / 1024 / elapsed
+            else:
+                speed_kbps = last_speed_kbps
+            last_progress_at = now
+            last_progress_downloaded = downloaded
+            progress_callback(downloaded, total_bytes, speed_kbps)
 
         def prune_chunks(cutoff: float) -> None:
             while chunks and chunks[0][0] < cutoff:
@@ -637,6 +658,10 @@ class SeriesListClient:
         try:
             response = requests.get(url, stream=True, timeout=(30, 120))
             response.raise_for_status()
+            content_length = response.headers.get("Content-Length")
+            if content_length and str(content_length).isdigit():
+                total_bytes = int(content_length)
+            emit_progress(force=True)
             with open(dest_path, "wb") as writer:
                 for chunk in response.iter_content(chunk_size=64 * 1024):
                     if abort_reason:
@@ -651,6 +676,8 @@ class SeriesListClient:
                     last_byte_at = now
                     chunks.append((now, len(chunk)))
                     writer.write(chunk)
+                    emit_progress()
+            emit_progress(force=True)
         finally:
             done_event.set()
             monitor_thread.join(timeout=1)

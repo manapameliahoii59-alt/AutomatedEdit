@@ -43,6 +43,39 @@ BULK_TASK_LIST_MAX_PAGES = 3
 TASK_LIST_LOOKBACK_SEC = 600
 
 LogFn = Callable[[str], None]
+DownloadProgressFn = Callable[[str, int, int | None, float], None]
+TargetStatusFn = Callable[[str, str], None]
+
+
+def _format_bytes(size: int) -> str:
+    if size >= 1024 * 1024 * 1024:
+        return f"{size / 1024 / 1024 / 1024:.2f} GB"
+    if size >= 1024 * 1024:
+        return f"{size / 1024 / 1024:.2f} MB"
+    if size >= 1024:
+        return f"{size / 1024:.1f} KB"
+    return f"{size} B"
+
+
+def _format_speed_kbps(speed_kbps: float) -> str:
+    if speed_kbps >= 1024:
+        return f"{speed_kbps / 1024:.1f} MB/s"
+    return f"{int(speed_kbps)} KB/s"
+
+
+def format_download_progress(downloaded: int, total: int | None, speed_kbps: float) -> str:
+    """格式化下载进度文案，供 UI 日志与表格复用。"""
+    downloaded_text = _format_bytes(downloaded)
+    speed_text = _format_speed_kbps(speed_kbps)
+    if total and total > 0:
+        pct = min(100, downloaded * 100 // total)
+        return f"下载中 {downloaded_text}/{_format_bytes(total)} ({pct}%) · {speed_text}"
+    return f"下载中 {downloaded_text} · {speed_text}"
+
+
+def _notify_target_status(opts: BatchDownloadOptions, label: str | None, status: str) -> None:
+    if opts.on_target_status and label:
+        opts.on_target_status(label, status)
 
 
 def _transcode_poll_interval_sec(poll_round: int) -> int:
@@ -51,6 +84,38 @@ def _transcode_poll_interval_sec(poll_round: int) -> int:
         return TRANSCODE_POLL_INTERVALS_SEC[0]
     idx = min(poll_round, len(TRANSCODE_POLL_INTERVALS_SEC) - 1)
     return TRANSCODE_POLL_INTERVALS_SEC[idx]
+
+
+def _interruptible_sleep(
+    seconds: float,
+    cancel_check: Callable[[], bool] | None,
+    *,
+    step: float = 2.0,
+) -> None:
+    """可中断 sleep：取消时立即抛出 RuntimeError。"""
+    if seconds <= 0:
+        return
+    deadline = time.time() + seconds
+    while True:
+        if cancel_check and cancel_check():
+            raise RuntimeError("任务已取消")
+        remaining = deadline - time.time()
+        if remaining <= 0:
+            return
+        time.sleep(min(step, remaining))
+
+
+def _abort_if_cancelled(
+    opts: BatchDownloadOptions,
+    logger: BatchLogger,
+    *,
+    transcribe_pipeline: _TranscribePipeline | None = None,
+) -> None:
+    if opts.cancel_check and opts.cancel_check():
+        if transcribe_pipeline is not None:
+            transcribe_pipeline.cancel()
+        logger.both("任务已取消")
+        raise RuntimeError("任务已取消")
 
 
 class BatchLogger:
@@ -132,6 +197,8 @@ class BatchDownloadOptions:
     cancel_check: Callable[[], bool] | None = None
     auto_unzip_and_delete: bool = True
     auto_transcribe: bool = True
+    on_download_progress: DownloadProgressFn | None = None
+    on_target_status: TargetStatusFn | None = None
 
 
 @dataclass
@@ -426,7 +493,7 @@ def phase1_create_tasks(
                 raise
 
         if i < len(targets) - 1 and opts.delay_sec > 0:
-            time.sleep(opts.delay_sec)
+            _interruptible_sleep(opts.delay_sec, opts.cancel_check)
 
     _save_pending(jobs)
     logger.both(
@@ -459,6 +526,19 @@ def _download_prepared_with_retry(
     dl_opts: dict[str, Any],
 ) -> dict[str, Any]:
     """在线程池中仅执行 requests 流式下载（不触碰 Playwright page）。"""
+    label = prepared.get("bookName") or prepared.get("taskName") or prepared["downloadId"]
+    last_log_at = 0.0
+
+    def _report_progress(downloaded: int, total: int | None, speed_kbps: float) -> None:
+        nonlocal last_log_at
+        if opts.on_download_progress:
+            opts.on_download_progress(label, downloaded, total, speed_kbps)
+        now = time.time()
+        if now - last_log_at >= 5:
+            last_log_at = now
+            # 开发日志每 5 秒刷一次，避免并行下载时刷屏
+            print(f"   ↓ {label}: {format_download_progress(downloaded, total, speed_kbps)}")
+
     last_err: Exception | None = None
     for attempt in range(1, opts.download_retries + 1):
         try:
@@ -471,6 +551,7 @@ def _download_prepared_with_retry(
                 stall_sec=dl_opts["stall_sec"],
                 slow_window_sec=dl_opts["slow_window_sec"],
                 cancel_check=opts.cancel_check,
+                progress_callback=_report_progress,
             )
             return {
                 "downloadId": prepared["downloadId"],
@@ -527,6 +608,9 @@ def phase2_download_files(
 
     phase2_started_at = int(time.time())
 
+    for job in pending:
+        _notify_target_status(opts, job.get("bookName") or job.get("name"), "转码中")
+
     transcoding = {j["downloadId"]: j for j in pending}
     transcode_deadlines = {
         j["downloadId"]: time.time() + opts.timeout_min * 60 for j in pending
@@ -546,19 +630,18 @@ def phase2_download_files(
             return "fail", {"job": job, "label": label, "error": str(exc)}
 
     try:
-        with ThreadPoolExecutor(max_workers=opts.concurrency) as executor:
-            futures: dict[Any, dict[str, Any]] = {}
+        executor = ThreadPoolExecutor(max_workers=opts.concurrency)
+        futures: dict[Any, dict[str, Any]] = {}
+        cancelled = False
 
+        try:
             while (
                 transcoding
                 or futures
                 or download_queue
                 or (transcribe_pipeline is not None and transcribe_pipeline.has_pending())
             ):
-                if opts.cancel_check and opts.cancel_check():
-                    if transcribe_pipeline is not None:
-                        transcribe_pipeline.cancel()
-                    raise RuntimeError("任务已取消")
+                _abort_if_cancelled(opts, logger, transcribe_pipeline=transcribe_pipeline)
 
                 task_map: dict[str, dict[str, Any]] = {}
                 if transcoding:
@@ -594,6 +677,7 @@ def phase2_download_files(
                         )
                         transcoding.pop(download_id)
                         summary["fail"] += 1
+                        _notify_target_status(opts, label, "转码超时")
                         continue
 
                     task = task_map.get(str(download_id))
@@ -617,6 +701,7 @@ def phase2_download_files(
                         )
                         transcoding.pop(download_id)
                         summary["fail"] += 1
+                        _notify_target_status(opts, label, "转码失败")
                         continue
 
                     if task.get("task_status") == DOWNLOAD_TASK_STATUS_DONE and download_id not in queued:
@@ -644,6 +729,7 @@ def phase2_download_files(
                             }
                         )
                         summary["fail"] += 1
+                        _notify_target_status(opts, label, "失败")
                         if opts.stop_on_error:
                             raise RuntimeError(msg)
                         continue
@@ -675,6 +761,7 @@ def phase2_download_files(
                             f"   ✅ {label} 下载完成{ui_speed}",
                             f"   ✅ {label} → {result['filePath']}{dev_speed}",
                         )
+                        _notify_target_status(opts, label, "已完成")
                         _post_process_downloaded_file(
                             file_path,
                             opts,
@@ -701,6 +788,7 @@ def phase2_download_files(
                         label = payload["label"]
                         msg = payload["error"]
                         logger.both(f"   ❌ {label} 下载失败: {msg}")
+                        _notify_target_status(opts, label, "失败")
                         _append_log(
                             {
                                 "phase": 2,
@@ -718,15 +806,31 @@ def phase2_download_files(
                     waiting = "、".join(j.get("bookName") or j.get("name") for j in transcoding.values())
                     poll_sec = _transcode_poll_interval_sec(transcode_poll_round)
                     logger.both(f"\n⏳ 转码中 {len(transcoding)} 个: {waiting}（{poll_sec}s 后再次查询）")
-                    time.sleep(poll_sec)
+                    _interruptible_sleep(poll_sec, opts.cancel_check)
                     transcode_poll_round += 1
                 elif futures or download_queue:
-                    time.sleep(0.5)
+                    _interruptible_sleep(0.5, opts.cancel_check)
                 elif transcribe_pipeline is not None and transcribe_pipeline.has_pending():
-                    time.sleep(0.5)
+                    _interruptible_sleep(0.5, opts.cancel_check)
+        except RuntimeError as exc:
+            if str(exc) == "任务已取消":
+                cancelled = True
+                for future in list(futures.keys()):
+                    future.cancel()
+                raise
+            raise
+        finally:
+            if cancelled:
+                executor.shutdown(wait=False, cancel_futures=True)
+            else:
+                executor.shutdown(wait=True)
     finally:
-        if transcribe_pipeline is not None:
+        if transcribe_pipeline is not None and not (
+            opts.cancel_check and opts.cancel_check()
+        ):
             summary["transcribed_folders"] = transcribe_pipeline.wait_all()
+        elif transcribe_pipeline is not None:
+            transcribe_pipeline.cancel()
 
     return summary
 

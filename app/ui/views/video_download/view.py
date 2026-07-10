@@ -9,6 +9,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
+from shiboken6 import isValid
 from qfluentwidgets import (
     BodyLabel,
     CheckBox,
@@ -163,6 +164,7 @@ class VideoDownloadPage(ScrollArea):
         self.vm.targetsChanged.connect(self._refresh_table)
         self.vm.loadingChanged.connect(self._handle_loading)
         self.vm.logAppended.connect(self._append_log)
+        self.vm.targetProgressChanged.connect(self._on_target_progress)
         self.vm.authStatusChanged.connect(self._update_auth_status)
         self.vm.messageReceived.connect(lambda msg: show_toast(self, msg))
         self.vm.errorOccurred.connect(lambda msg: show_dialog(self, msg, "提示"))
@@ -210,6 +212,18 @@ class VideoDownloadPage(ScrollArea):
             self.log_view.verticalScrollBar().maximum()
         )
 
+    def _on_target_progress(self, label: str, status: str):
+        for row, target in enumerate(self.vm.get_targets()):
+            if target.name != label:
+                continue
+            item = self.table.item(row, 3)
+            if item is None:
+                item = QTableWidgetItem(status)
+                self.table.setItem(row, 3, item)
+            else:
+                item.setText(status)
+            break
+
     def _handle_loading(self, loading: bool, title: str, content: str):
         busy = loading
         self.login_btn.setEnabled(not busy)
@@ -219,11 +233,24 @@ class VideoDownloadPage(ScrollArea):
         self.start_btn.setEnabled(not busy)
         self.import_all_btn.setEnabled(not busy)
         if loading:
-            self.loading_bar = ProgressInfoBar(title, content, self)
-            self.loading_bar.show()
-        elif self.loading_bar is not None:
+            if self.loading_bar is None or not isValid(self.loading_bar):
+                self.loading_bar = ProgressInfoBar(title, content, self)
+                self.loading_bar.cancelled.connect(self._on_progress_cancelled)
+                self.loading_bar.show()
+            else:
+                self.loading_bar.titleLabel.setText(title)
+                self.loading_bar.contentLabel.setText(content)
+        else:
+            self._close_loading()
+
+    def _close_loading(self):
+        if self.loading_bar is not None and isValid(self.loading_bar):
             self.loading_bar.hide()
-            self.loading_bar = None
+        self.loading_bar = None
+
+    def _on_progress_cancelled(self):
+        self.loading_bar = None
+        self.vm.request_cancel()
 
     def _refresh_table(self):
         targets = self.vm.get_targets()
@@ -324,7 +351,7 @@ class VideoDownloadPage(ScrollArea):
         dialog.buttonGroup.setFixedHeight(52)
 
         name_input = QPlainTextEdit(dialog)
-        name_input.setPlaceholderText("半山青果第一季\n某剧名\n…")
+        name_input.setPlaceholderText("n某剧名\n…")
         name_input.setMaximumBlockCount(500)
         name_input.setFixedSize(360, 140)
         name_input.setStyleSheet(

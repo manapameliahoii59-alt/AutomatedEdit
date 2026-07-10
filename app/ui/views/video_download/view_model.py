@@ -1,4 +1,5 @@
 import json
+import time
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -12,7 +13,11 @@ from app.core.playwright_worker import playwright_worker
 from app.core.task_manager import task_manager
 from app.core.view_model import ViewModel
 from app.data.api.api import ApiError, get_api
-from app.data.services.batch_download_service import BatchDownloadOptions, run_batch_download
+from app.data.services.batch_download_service import (
+    BatchDownloadOptions,
+    format_download_progress,
+    run_batch_download,
+)
 from app.data.services.changdu_login_service import (
     clear_auth_file,
     get_changdu_credentials,
@@ -40,6 +45,7 @@ class VideoDownloadViewModel(ViewModel):
     targetsChanged = Signal(list)
     loadingChanged = Signal(bool, str, str)  # loading, title, content
     logAppended = Signal(str)
+    targetProgressChanged = Signal(str, str)
     authStatusChanged = Signal(bool, str)
     messageReceived = Signal(str)
     errorOccurred = Signal(str)
@@ -53,6 +59,7 @@ class VideoDownloadViewModel(ViewModel):
         self._cancel_requested = False
         self._default_from = 1
         self._default_to = 10
+        self._last_log_progress_at: dict[str, float] = {}
         self.targetsChanged.emit(self._targets)
         self._load_settings_from_server()
 
@@ -135,6 +142,18 @@ class VideoDownloadViewModel(ViewModel):
     def request_cancel(self) -> None:
         self._cancel_requested = True
         self._append_log("正在取消…")
+
+    def _is_cancelled(self) -> bool:
+        return self._cancel_requested
+
+    def _finish_task_with_error(self, msg: str, *, cancelled_message: str) -> bool:
+        """结束任务；若为取消则提示并返回 True。"""
+        self._remove_task()
+        if "已取消" in msg:
+            self._append_log("任务已取消")
+            self.messageReceived.emit(cancelled_message)
+            return True
+        return False
 
     def login_changdu(self) -> None:
         if self._active_tasks > 0:
@@ -246,13 +265,15 @@ class VideoDownloadViewModel(ViewModel):
             self.messageReceived.emit("当前有任务进行中，请稍候")
             return
 
-        self._add_task("正在验证剧名", "正在常读平台搜索剧目，请稍候…")
+        self._add_task("正在验证剧名", "请稍候…")
 
         def _do_lookup():
             def _run():
                 with SeriesListClient(headless=True) as client:
                     results = []
                     for name in names:
+                        if self._is_cancelled():
+                            raise RuntimeError("任务已取消")
                         try:
                             drama = client.find_drama_by_name(name)
                             results.append(
@@ -263,9 +284,13 @@ class VideoDownloadViewModel(ViewModel):
                                 }
                             )
                         except RuntimeError as exc:
+                            if self._is_cancelled() or "已取消" in str(exc):
+                                raise RuntimeError("任务已取消") from exc
                             results.append(
                                 {"input_name": name, "ok": False, "error": str(exc)}
                             )
+                    if self._is_cancelled():
+                        raise RuntimeError("任务已取消")
                     return results
 
             return playwright_worker.run(_run)
@@ -303,7 +328,8 @@ class VideoDownloadViewModel(ViewModel):
                 self.start_download()
 
         def _on_error(msg: str):
-            self._remove_task()
+            if self._finish_task_with_error(msg, cancelled_message="剧名验证已取消"):
+                return
             self.errorOccurred.emit(f"剧名验证失败：{msg}")
 
         task_manager.submit_task(_do_lookup, on_success=_on_success, on_error=_on_error)
@@ -368,6 +394,28 @@ class VideoDownloadViewModel(ViewModel):
                 payload.append({"name": t.name, "from": t.from_ep, "to": t.to_ep})
         return payload
 
+    def _update_target_status(self, label: str, status: str) -> None:
+        for target in self._targets:
+            if target.name == label:
+                target.status = status
+                self.targetProgressChanged.emit(label, status)
+                return
+
+    def _handle_download_progress(
+        self,
+        label: str,
+        downloaded: int,
+        total: int | None,
+        speed_kbps: float,
+    ) -> None:
+        status = format_download_progress(downloaded, total, speed_kbps)
+        self._update_target_status(label, status)
+        now = time.time()
+        last_at = self._last_log_progress_at.get(label, 0.0)
+        if now - last_at >= 10:
+            self._last_log_progress_at[label] = now
+            self._append_log(f"   ↓ {label}: {status}")
+
     def _set_all_status(self, status: str) -> None:
         for t in self._targets:
             t.status = status
@@ -386,6 +434,7 @@ class VideoDownloadViewModel(ViewModel):
 
         self._add_task("正在下载", "视频下载任务进行中，请稍候…")
         self._set_all_status("处理中" if not create_only else "创建任务中")
+        self._last_log_progress_at.clear()
         targets_payload = self._targets_to_payload()
         opts = BatchDownloadOptions(
             download_dir=resolve_video_download_root(),
@@ -396,6 +445,8 @@ class VideoDownloadViewModel(ViewModel):
             cancel_check=lambda: self._cancel_requested,
             auto_unzip_and_delete=cfg.video_download_auto_unzip.value,
             auto_transcribe=cfg.video_download_auto_transcribe.value,
+            on_download_progress=self._handle_download_progress,
+            on_target_status=self._update_target_status,
         )
 
         def _do_download():
@@ -409,8 +460,13 @@ class VideoDownloadViewModel(ViewModel):
 
         def _on_success(_result: dict):
             self._remove_task()
-            for t in self._targets:
-                t.status = "已完成" if not create_only else "已创建"
+            if create_only:
+                for t in self._targets:
+                    t.status = "已创建"
+            else:
+                for t in self._targets:
+                    if t.status in ("处理中", "转码中") or t.status.startswith("下载中"):
+                        t.status = "已完成"
             self.targetsChanged.emit(self._targets)
             if create_only:
                 self.messageReceived.emit("下载任务已创建，可稍后点击「继续下载」")
@@ -423,11 +479,15 @@ class VideoDownloadViewModel(ViewModel):
                     self.clipHandoffRequested.emit(folders)
 
         def _on_error(msg: str):
-            self._remove_task()
+            cancelled = "已取消" in msg
+            active_statuses = ("处理中", "创建任务中", "转码中")
             for t in self._targets:
-                if t.status == "处理中" or t.status == "创建任务中":
-                    t.status = "失败"
+                active = t.status in active_statuses or t.status.startswith("下载中")
+                if active:
+                    t.status = "已取消" if cancelled else "失败"
             self.targetsChanged.emit(self._targets)
+            if self._finish_task_with_error(msg, cancelled_message="下载已取消"):
+                return
             self._append_log(f"❌ {msg}")
             self.errorOccurred.emit(msg)
 
