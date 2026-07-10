@@ -107,7 +107,7 @@ def _build_anchor_preview_pixmap(
 
 
 class LlmAnchorTrackingDialog(QDialog):
-    """大模型追踪进行中的锚点说明弹窗（非模态，追踪结束自动关闭）。"""
+    """智能追踪进行中的锚点说明弹窗（非模态，追踪结束自动关闭）。"""
 
     def __init__(
         self,
@@ -118,7 +118,7 @@ class LlmAnchorTrackingDialog(QDialog):
         preview: QPixmap | None,
     ):
         super().__init__(parent)
-        self.setWindowTitle("大模型追踪锚点")
+        self.setWindowTitle("智能追踪锚点")
         self.setWindowModality(Qt.WindowModality.NonModal)
         self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
 
@@ -133,7 +133,7 @@ class LlmAnchorTrackingDialog(QDialog):
                 self,
             )
         )
-        layout.addWidget(BodyLabel("以下画面将作为大模型追踪的参考锚点", self))
+        layout.addWidget(BodyLabel("以下画面将作为智能追踪的参考锚点", self))
 
         preview_label = QLabel(self)
         preview_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -150,7 +150,7 @@ class LlmAnchorTrackingDialog(QDialog):
         spinner.setFixedSize(20, 20)
         spinner.setStrokeWidth(3)
         status_row.addWidget(spinner)
-        status_row.addWidget(BodyLabel("大模型追踪中，完成后自动关闭…", self))
+        status_row.addWidget(BodyLabel("智能追踪中，完成后自动关闭…", self))
         status_row.addStretch(1)
         layout.addLayout(status_row)
 
@@ -514,11 +514,11 @@ class MaskTimelineWidget(QWidget):
         self.delete_segment_btn.clicked.connect(self._on_delete_segment_clicked)
         segment_actions.addWidget(self.delete_segment_btn)
 
-        self.llm_track_btn = PushButton("大模型追踪", self)
+        self.llm_track_btn = PushButton("智能追踪", self)
         self.llm_track_btn.setEnabled(False)
         self.llm_track_btn.setToolTip(
-            "将锚定框选图与片段画面（5fps）发送给通义千问视觉模型，"
-            "补充 OpenCV 跟丢或拉长入出点后的追踪"
+            "根据锚定框选图与片段画面（5fps 采样），"
+            "补充跟丢或拉长入出点后的追踪轨迹"
         )
         self.llm_track_btn.clicked.connect(self._on_llm_track_clicked)
         segment_actions.addWidget(self.llm_track_btn)
@@ -941,7 +941,7 @@ class MaskEditorWorkspace(QWidget):
         else:
             btn.setToolTip(
                 f"对选中的「{region.label}」从入点 {format_time_ms(region.start_ms)} "
-                f"执行 OpenCV CSRT 追踪（种子框与预览一致）"
+                f"执行自动追踪（种子框与预览一致）"
             )
 
     def _bind_shortcuts(self):
@@ -1304,7 +1304,7 @@ class MaskEditorWorkspace(QWidget):
 
     def _on_llm_track_requested(self, index: int):
         if not self._current_path:
-            show_dialog(self, "请先加载视频后再使用大模型追踪。", "大模型追踪")
+            show_dialog(self, "请先加载视频后再使用智能追踪。", "智能追踪")
             return
         regions = self._history.current()
         if index < 0 or index >= len(regions):
@@ -1315,14 +1315,14 @@ class MaskEditorWorkspace(QWidget):
             show_dialog(
                 self,
                 "当前片段缺少锚定框选，请暂停到入点并重新框选目标。",
-                "大模型追踪",
+                "智能追踪",
             )
             return
         anchor_time_ms, anchor_nx, anchor_ny, anchor_nw, anchor_nh = anchor
         self._select_region_index(index)
 
         self.timeline.llm_track_btn.setEnabled(False)
-        self.timeline.llm_track_btn.setText("大模型追踪中…")
+        self.timeline.llm_track_btn.setText("智能追踪中…")
         self._refocus_editor()
 
         self._close_llm_anchor_dialog()
@@ -1370,7 +1370,7 @@ class MaskEditorWorkspace(QWidget):
                 return
             show_dialog(
                 self,
-                f"大模型追踪未完成：{message}\n已保留现有追踪结果，可调整后重试。",
+                f"智能追踪未完成：{message}\n已保留现有追踪结果，可调整后重试。",
                 "提示",
             )
             self._sync_llm_track_button()
@@ -1395,7 +1395,7 @@ class MaskEditorWorkspace(QWidget):
 
     def _sync_llm_track_button(self):
         btn = self.timeline.llm_track_btn
-        btn.setText("大模型追踪")
+        btn.setText("智能追踪")
         self.timeline._sync_segment_action_buttons()
 
 

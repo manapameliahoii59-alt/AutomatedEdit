@@ -90,7 +90,7 @@ class ClipEditPage(ScrollArea):
         name_tag_row.setSpacing(8)
         name_tag_row.addWidget(BodyLabel("文件名标识：", self.scroll_widget))
         self.export_name_tag_input = LineEdit(self.scroll_widget)
-        self.export_name_tag_input.setPlaceholderText("如：李鹏")
+        self.export_name_tag_input.setPlaceholderText("如：阿飞")
         self.export_name_tag_input.setText(cfg.clip_export_name_tag.value)
         self.export_name_tag_input.setClearButtonEnabled(True)
         self.export_name_tag_input.setFixedWidth(140)

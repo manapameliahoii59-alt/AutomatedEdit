@@ -189,12 +189,12 @@ def _call_qwen_locate(
             ],
         )
     except Exception as exc:
-        raise RuntimeError(f"通义千问调用失败: {exc}") from exc
+        raise RuntimeError(f"追踪服务调用失败: {exc}") from exc
 
     text = completion.choices[0].message.content or ""
     payload = _extract_json_object(text)
     if payload is None:
-        logger.debug("无法解析大模型返回: {}", text[:200])
+        logger.debug("无法解析追踪服务返回: {}", text[:200])
         return None
     return _parse_bbox_payload(payload)
 
@@ -221,10 +221,7 @@ def track_object_with_llm(
 
     resolved_key = (api_key or resolve_dashscope_api_key()).strip()
     if not resolved_key:
-        raise RuntimeError(
-            "未配置通义千问 API Key。请在 config.json 的 LLM.dashscope_api_key 中填写，"
-            "或设置环境变量 DASHSCOPE_API_KEY。"
-        )
+        raise RuntimeError("视觉追踪服务未配置，请联系管理员。")
 
     capture = cv2.VideoCapture(video_path)
     if not capture.isOpened():
@@ -257,7 +254,7 @@ def track_object_with_llm(
     frame_index = start_frame - 1
     while frame_index < end_frame:
         if should_cancel and should_cancel():
-            logger.info("大模型追踪已取消（切换剧集或新任务）")
+            logger.info("智能追踪已取消（切换剧集或新任务）")
             break
         ok, frame = capture.read()
         if not ok or frame is None:
@@ -278,14 +275,14 @@ def track_object_with_llm(
             base_url=base_url,
         )
         if bbox is None:
-            logger.debug("大模型未定位到目标 time_ms={}", time_ms)
+            logger.debug("追踪服务未定位到目标 time_ms={}", time_ms)
             continue
         llm_keyframes.append((time_ms, *bbox))
 
     capture.release()
 
     if not llm_keyframes:
-        raise RuntimeError("大模型追踪未能在片段内定位到目标，请检查锚定框或 API 配置。")
+        raise RuntimeError("智能追踪未能在片段内定位到目标，请检查锚定框或联系管理员。")
 
     seed = (start_ms, anchor_nx, anchor_ny, anchor_nw, anchor_nh)
     if not llm_keyframes or llm_keyframes[0][0] != start_ms:
