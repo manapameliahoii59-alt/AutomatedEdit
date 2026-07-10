@@ -84,7 +84,7 @@ def create_plan_job(db: Session, user_id: int, payload: dict[str, Any]) -> PlanJ
     plan_key = row.plan_decrypt_key
     api_keys_raw = resolve_deepseek_keys(db, user_id)
     if not api_keys_raw:
-        raise ValueError("未配置 DeepSeek API 密钥，请在管理后台「用户密钥」中设置")
+        raise ValueError("未配置策划服务密钥，请联系管理员")
 
     job_id = uuid.uuid4().hex
     job = PlanJobRecord(

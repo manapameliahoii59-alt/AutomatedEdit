@@ -64,10 +64,31 @@ def test_user_edit_page_renders(admin_client):
     response = admin_client.get("/admin/user/edit/1")
     assert response.status_code == 200, response.text[:2000]
     assert "允许使用桌面端" in response.text
+    assert "DeepSeek API Keys" in response.text
     assert "form-check form-switch" in response.text
     assert 'role="switch"' in response.text
     assert 'class="form-check-input"' in response.text
     assert 'class="form-control"' not in response.text.split("is_active")[1][:200]
+
+
+def test_user_edit_saves_deepseek_keys(admin_client):
+    save_resp = admin_client.post(
+        "/admin/user/edit/1",
+        data={
+            "username": "a@b.com",
+            "role": "user",
+            "deepseek_keys": "sk-test-1,sk-test-2",
+            "dashscope_key": "ds-key",
+            "save": "Save",
+        },
+        follow_redirects=False,
+    )
+    assert save_resp.status_code == 302
+
+    check_resp = admin_client.get("/admin/user/edit/1")
+    assert check_resp.status_code == 200
+    assert "sk-test-1,sk-test-2" in check_resp.text
+    assert "ds-key" in check_resp.text
 
 
 def test_user_edit_toggle_is_active(admin_client):
@@ -99,6 +120,7 @@ def test_user_edit_toggle_is_active(admin_client):
     assert "checked" in check_resp.text
 
 
-def test_user_secret_edit_page_renders(admin_client):
-    response = admin_client.get("/admin/user-secret/edit/1")
-    assert response.status_code in (200, 404), response.text[:2000]
+def test_user_list_shows_deepseek_column(admin_client):
+    response = admin_client.get("/admin/user/list")
+    assert response.status_code == 200
+    assert "DeepSeek Keys" in response.text

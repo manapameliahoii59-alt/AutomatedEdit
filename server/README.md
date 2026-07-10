@@ -7,7 +7,7 @@
 - 按用户下发 DeepSeek / DashScope 秘钥
 - 客户端上报使用记录，并汇总为**每日活动**（登录/关闭时间、下载剧目、剪辑剧目）
 - 按用户保存客户端配置（下载集数、自动解压/识别/剪辑等），支持命名空间扩展
-- SQLAdmin 管理后台：`/admin`（查看用户、秘钥、用量）
+- SQLAdmin 管理后台：`/admin`（用户、秘钥、用量）
 
 ## 本地运行
 
@@ -31,6 +31,7 @@ source venv/bin/activate
 
 
 # 服务端项目路径/www/wwwroot/automated-edit-api
+# 服务端管理后台http://129.204.86.63:7172/admin
 # 服务端地址129.204.86.63
 source ../venv/bin/activate
 

@@ -8,12 +8,13 @@ from starlette.middleware.sessions import SessionMiddleware
 from starlette.requests import Request
 from starlette.responses import RedirectResponse
 from markupsafe import Markup
-from wtforms import BooleanField as WTBooleanField
+from wtforms import BooleanField as WTBooleanField, StringField, TextAreaField
 from wtforms.widgets import CheckboxInput
 
 from app.config import settings
 from app.database import engine
-from app.models import UsageEvent, User, UserDailyActivity, UserSecret, UserSettings
+from app.models import UsageEvent, User, UserDailyActivity, UserSettings
+from app.services.plan_secrets import ensure_user_secret
 
 
 def _iocpx_account(model, _attr):
@@ -31,6 +32,14 @@ def _is_active_label(model, _attr):
 def _valid_until_label(model, _attr):
     value = getattr(model, "valid_until", None)
     return value.isoformat() if value else "永久"
+
+
+def _deepseek_keys_label(model, _attr):
+    secret = getattr(model, "secrets", None)
+    keys = (secret.deepseek_keys if secret else "") or ""
+    if not keys:
+        return "未配置"
+    return keys if len(keys) <= 32 else f"{keys[:32]}…"
 
 
 class _SwitchCheckboxInput(CheckboxInput):
@@ -119,6 +128,7 @@ class UserAdmin(ModelView, model=User):
         User.valid_until,
         User.daily_plan_limit,
         User.daily_clip_limit,
+        "deepseek_keys",
         User.created_at,
     ]
     column_labels = {
@@ -131,11 +141,13 @@ class UserAdmin(ModelView, model=User):
         User.daily_plan_limit: "每日策划上限",
         User.daily_clip_limit: "每日剪辑上限",
         User.created_at: "创建时间",
+        "deepseek_keys": "DeepSeek Keys",
     }
     column_searchable_list = [User.username]
     column_formatters = {
         User.is_active: _is_active_label,
         User.valid_until: _valid_until_label,
+        "deepseek_keys": _deepseek_keys_label,
     }
     column_details_list = [
         User.id,
@@ -151,7 +163,51 @@ class UserAdmin(ModelView, model=User):
     column_formatters_detail = {
         User.is_active: _is_active_label,
         User.valid_until: _valid_until_label,
+        "deepseek_keys": _deepseek_keys_label,
     }
+
+    def list_query(self, request: Request):
+        return select(User).options(joinedload(User.secrets))
+
+    def form_edit_query(self, request: Request):
+        pk = request.path_params.get("pk")
+        stmt = select(User).options(joinedload(User.secrets))
+        if pk:
+            return self._stmt_by_identifier(pk).options(joinedload(User.secrets))
+        return stmt
+
+    async def get_object_for_edit(self, request: Request):
+        user = await super().get_object_for_edit(request)
+        if user is None:
+            return None
+        secret = user.secrets
+        user.deepseek_keys = (secret.deepseek_keys if secret else "") or ""
+        user.dashscope_key = (secret.dashscope_key if secret else "") or ""
+        return user
+
+    async def scaffold_form(self, rules=None):
+        base_form = await super().scaffold_form(rules=None)
+
+        class UserForm(base_form):
+            deepseek_keys = TextAreaField("DeepSeek API Keys（逗号分隔，策划专用）")
+            dashscope_key = StringField("DashScope Key（可选）")
+
+        if rules:
+            self._validate_form_class(rules, UserForm)
+        return UserForm
+
+    async def on_model_change(self, data, model, is_created, request):
+        request.state.admin_user_deepseek_keys = (data.pop("deepseek_keys", None) or "").strip()
+        request.state.admin_user_dashscope_key = (data.pop("dashscope_key", None) or "").strip()
+
+    async def after_model_change(self, data, model, is_created, request):
+        deepseek = getattr(request.state, "admin_user_deepseek_keys", "")
+        dashscope = getattr(request.state, "admin_user_dashscope_key", "")
+        with self.session_maker() as session:
+            secret = ensure_user_secret(session, model.id)
+            secret.deepseek_keys = deepseek
+            secret.dashscope_key = dashscope
+            session.commit()
 
     @action(
         name="enable-access",
@@ -178,49 +234,6 @@ class UserAdmin(ModelView, model=User):
         if pks:
             _set_users_active(self, pks, False)
         return _redirect_back(request, self.identity)
-
-
-class UserSecretAdmin(ModelView, model=UserSecret):
-    name = "用户密钥"
-    name_plural = "用户密钥"
-    form_columns = [
-        UserSecret.user_id,
-        UserSecret.deepseek_keys,
-        UserSecret.dashscope_key,
-    ]
-    form_excluded_columns = [UserSecret.plan_decrypt_key]
-    form_args = {
-        "user_id": {"label": "用户 ID"},
-        "deepseek_keys": {
-            "label": "DeepSeek API Keys（逗号分隔，策划专用）",
-            "description": "为该用户配置独立的 DeepSeek 密钥，策划时将优先使用此处配置",
-        },
-        "dashscope_key": {"label": "DashScope Key（可选）"},
-    }
-    column_list = [
-        UserSecret.id,
-        UserSecret.user_id,
-        UserSecret.deepseek_keys,
-        UserSecret.dashscope_key,
-        UserSecret.plan_decrypt_key,
-        UserSecret.updated_at,
-    ]
-    column_labels = {
-        UserSecret.user_id: "易投账号",
-        UserSecret.deepseek_keys: "DeepSeek Keys",
-        UserSecret.dashscope_key: "DashScope Key",
-        UserSecret.plan_decrypt_key: "策划解密密钥",
-        UserSecret.updated_at: "更新时间",
-    }
-    column_formatters = {
-        UserSecret.user_id: _iocpx_account,
-    }
-
-    def list_query(self, request: Request):
-        return select(UserSecret).options(joinedload(UserSecret.user))
-
-    def details_query(self, request: Request):
-        return select(UserSecret).options(joinedload(UserSecret.user))
 
 
 class UserSettingsAdmin(ModelView, model=UserSettings):
@@ -378,7 +391,6 @@ def setup_admin(app: Starlette) -> Admin:
         middlewares=[Middleware(SessionMiddleware, secret_key=settings.jwt_secret)],
     )
     admin.add_view(UserAdmin)
-    admin.add_view(UserSecretAdmin)
     admin.add_view(UserSettingsAdmin)
     admin.add_view(UsageEventAdmin)
     admin.add_view(UserDailyActivityAdmin)
