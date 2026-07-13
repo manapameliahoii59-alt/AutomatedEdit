@@ -48,10 +48,14 @@ VC_RUNTIME_DLLS = (
 
 # nofollow 后需原样拷贝到 dist 的包目录名
 NOFOLLOW_COPY_PACKAGES = (
-    "transformers",
-    "modelscope",
     "torch._dynamo",
     "torch._inductor",
+)
+
+# 打包完成后从 dist 删除的无用目录（运行时不需要）
+CLEANUP_DIRS = (
+    "llvmlite",
+    "torch/include",
 )
 
 
@@ -117,6 +121,17 @@ def bundle_config() -> None:
         print(f"Bundled config.json")
     else:
         print("Warning: config.json not found in project root, skipping")
+
+
+def cleanup_dist() -> None:
+    for name in CLEANUP_DIRS:
+        path = DIST_DIR.joinpath(*name.split("/"))
+        if path.is_dir():
+            shutil.rmtree(path)
+            print(f"Removed unused: {name}")
+        elif path.is_file():
+            path.unlink()
+            print(f"Removed unused: {name}")
 
 
 def bundle_outro() -> None:
@@ -218,6 +233,7 @@ def main():
     bundle_ffmpeg()
     bundle_outro()
     bundle_config()
+    cleanup_dist()
     print("Build success")
 
 

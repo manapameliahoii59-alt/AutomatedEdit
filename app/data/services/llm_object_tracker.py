@@ -26,9 +26,10 @@ _LOCATE_PROMPT = (
 def resolve_dashscope_api_key() -> str:
     """从 config.json 或环境变量读取 DashScope API Key。"""
     try:
+        from app.common.aes import aes_decrypt
         from app.common.config import cfg
 
-        key = str(cfg.dashscope_api_key.value or "").strip()
+        key = aes_decrypt(str(cfg.dashscope_api_key.value or "").strip())
         if key:
             return key
     except Exception:

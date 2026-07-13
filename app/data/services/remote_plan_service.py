@@ -9,6 +9,7 @@ from typing import Any, Callable
 
 from qfluentwidgets import qconfig
 
+from app.common.aes import aes_encrypt, aes_decrypt
 from app.common.config import cfg
 from app.common.plan_crypto import decrypt_plan_payload
 from app.data.api.api import ApiError, get_api
@@ -21,7 +22,7 @@ class RemotePlanService:
 
     @staticmethod
     def _require_api():
-        token = (cfg.access_token.value or "").strip()
+        token = aes_decrypt((cfg.access_token.value or "").strip())
         if not token:
             raise RuntimeError("请先登录后再策划")
         api = get_api()
@@ -31,7 +32,7 @@ class RemotePlanService:
 
     @staticmethod
     def _require_plan_key() -> str:
-        key = (cfg.plan_decrypt_key.value or "").strip()
+        key = aes_decrypt((cfg.plan_decrypt_key.value or "").strip())
         if not key:
             raise RuntimeError("策划密钥未就绪，请重新登录")
         return key
@@ -115,4 +116,4 @@ class RemotePlanService:
             return
         plan_key = (secrets.get("plan_decrypt_key") or "").strip()
         if plan_key:
-            qconfig.set(cfg.plan_decrypt_key, plan_key)
+            qconfig.set(cfg.plan_decrypt_key, aes_encrypt(plan_key))

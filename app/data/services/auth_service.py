@@ -1,5 +1,6 @@
 from qfluentwidgets import qconfig
 
+from app.common.aes import aes_encrypt, aes_decrypt
 from app.common.config import cfg
 from app.data.services.access_control_service import access_control
 from app.data.api.api import ApiError, LoginResult, get_api
@@ -16,13 +17,13 @@ class AuthService:
             ) from exc
         if isinstance(result, LoginResult) and result.access_token:
             access_control.unblock()
-            qconfig.set(cfg.access_token, result.access_token)
+            qconfig.set(cfg.access_token, aes_encrypt(result.access_token))
             self._apply_secrets(api)
             return result
         raise RuntimeError("登录失败，请检查账号密码")
 
     def try_auto_login(self) -> bool:
-        token = (cfg.access_token.value or '').strip()
+        token = aes_decrypt((cfg.access_token.value or '').strip())
         if not token:
             return False
 
@@ -42,11 +43,11 @@ class AuthService:
         dashscope = (secrets.get('dashscope_key') or '').strip()
         plan_key = (secrets.get('plan_decrypt_key') or '').strip()
         if deepseek:
-            qconfig.set(cfg.deepseek_api_keys, deepseek)
+            qconfig.set(cfg.deepseek_api_keys, aes_encrypt(deepseek))
         if dashscope:
-            qconfig.set(cfg.dashscope_api_key, dashscope)
+            qconfig.set(cfg.dashscope_api_key, aes_encrypt(dashscope))
         if plan_key:
-            qconfig.set(cfg.plan_decrypt_key, plan_key)
+            qconfig.set(cfg.plan_decrypt_key, aes_encrypt(plan_key))
 
     def logout(self):
         qconfig.set(cfg.access_token, '')

@@ -33,7 +33,7 @@ class LoginViewModel(ViewModel):
         )
 
     def _handle_login_success(self, username, password, remember_me, auto_login):
-        qconfig.set(cfg.user, username)
+        qconfig.set(cfg.user, aes_encrypt(username))
         if remember_me:
             qconfig.set(cfg.password, aes_encrypt(password))
             qconfig.set(cfg.save_password, True)

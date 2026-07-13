@@ -3,6 +3,7 @@ from dataclasses import dataclass
 
 import requests
 
+from app.common.aes import aes_decrypt
 from app.common.config import VERSION, cfg, DEFAULT_API_BASE_URL
 
 
@@ -145,7 +146,7 @@ def _resolve_base_url() -> str:
 
 def get_api() -> RemoteApi:
     api = RemoteApi(_resolve_base_url())
-    token = (cfg.access_token.value or '').strip()
+    token = aes_decrypt((cfg.access_token.value or '').strip())
     if token:
         api.set_token(token)
     return api

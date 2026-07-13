@@ -32,8 +32,7 @@ class TranscriptionService:
 
         try:
             import os
-            from modelscope.utils.file_utils import get_default_cache_dir
-            cache_dir = get_default_cache_dir()
+            cache_dir = os.path.join(os.path.expanduser("~"), ".cache", "modelscope", "hub")
             for label, model_id in [
                 ("视频识别", MODEL_ID),
                 ("VAD 静音检测", VAD_MODEL),

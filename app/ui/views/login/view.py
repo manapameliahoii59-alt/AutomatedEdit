@@ -38,7 +38,7 @@ class LoginWindow(FramelessDialog):
             widget.hide()
 
     def init_data(self):
-        self.ui.username.setText(cfg.user.value)
+        self.ui.username.setText(aes_decrypt(cfg.user.value))
         p = aes_decrypt(cfg.password.value)
         if p != '':
             self.ui.password.setText(p)
