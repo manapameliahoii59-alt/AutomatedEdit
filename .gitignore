@@ -90,3 +90,9 @@ build/
 
 # uv
 .venv/
+
+# Generated artifacts
+.coverage
+nuitka-crash-report.xml
+release/
+changdu_data/

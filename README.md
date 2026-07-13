@@ -31,6 +31,9 @@ Designer使用，专为PySide6开发者打造的快速开发解决方案。
 - 📌 内置配置管理（密码保存）和日志模块
 - uv run python scripts/pack_resources.py
 - uv run python .\entry.py
+- uv sync
+- uv run python scripts/build.py
+- iscc scripts/pack_installer.iss
 
 ## ⚠️ 注意事项
 
