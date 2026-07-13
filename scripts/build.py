@@ -113,6 +113,26 @@ def bundle_ffmpeg() -> None:
         shutil.copy2(license_src, dst_dir.parent / "LICENSE")
 
 
+def bundle_playwright_browsers() -> None:
+    """将 Playwright Chromium 浏览器拷贝到 dist，避免用户手动下载。"""
+    local_browsers = Path(os.environ["USERPROFILE"]) / "AppData" / "Local" / "ms-playwright"
+    dst_base = DIST_DIR / "playwright" / "driver" / "package" / ".local-browsers"
+
+    # 只打包当前 Playwright 版本所需的 Chromium（含 headless shell）
+    keep = {"chromium-1228", "chromium_headless_shell-1228", "ffmpeg-1011", "winldd-1007"}
+    for browser_dir in local_browsers.iterdir():
+        if not browser_dir.is_dir() or browser_dir.name not in keep:
+            continue
+        dst = dst_base / browser_dir.name
+        if dst.exists():
+            shutil.rmtree(dst)
+        try:
+            shutil.copytree(browser_dir, dst)
+            print(f"Bundled Playwright browser: {browser_dir.name}")
+        except Exception as exc:
+            print(f"Warning: failed to bundle {browser_dir.name}: {exc}")
+
+
 def bundle_config() -> None:
     src = PROJECT_ROOT / "config.json"
     dst = DIST_DIR / "config.json"
@@ -232,6 +252,7 @@ def main():
     bundle_vc_runtime()
     bundle_ffmpeg()
     bundle_outro()
+    bundle_playwright_browsers()
     bundle_config()
     cleanup_dist()
     print("Build success")
