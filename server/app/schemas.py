@@ -125,6 +125,7 @@ class VideoDownloadSettings(BaseModel):
     download_dir: str = ""
     auto_unzip: bool = True
     auto_transcribe: bool = True
+    auto_plan: bool = True
     auto_import_clip: bool = True
     auto_start_after_add: bool = True
     changdu_email: str = ""
@@ -145,6 +146,7 @@ class VideoDownloadSettingsPatch(BaseModel):
     download_dir: str | None = None
     auto_unzip: bool | None = None
     auto_transcribe: bool | None = None
+    auto_plan: bool | None = None
     auto_import_clip: bool | None = None
     auto_start_after_add: bool | None = None
     changdu_email: str | None = None

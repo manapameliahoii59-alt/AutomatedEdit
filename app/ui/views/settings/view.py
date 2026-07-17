@@ -6,7 +6,7 @@ from qfluentwidgets import FluentIcon as FIcon, CustomColorSettingCard, setTheme
 from qfluentwidgets import (SettingCardGroup, SwitchSettingCard, OptionsSettingCard, PrimaryPushSettingCard, PushSettingCard, ScrollArea,
                             ExpandLayout, setTheme, Dialog)
 
-from app.common.config import cfg, FEEDBACK_URL, VERSION, YEAR, AUTHOR
+from app.common.config import cfg, FEEDBACK_URL, VERSION, YEAR, AUTHOR, AUTHOR_EMAIL
 from app.common.utils import StyleSheet, changdu_account_summary, open_changdu_account_dialog
 from app.data.services.update_service import check_and_prompt_update
 from app.ui.components.icon import MyIcon
@@ -82,7 +82,7 @@ class SettingInterface(ScrollArea):
             '联系作者',
             FIcon.INFO,
             '当前版本:' + VERSION,
-            '© Copyright' + f" {YEAR}, {AUTHOR}",
+            f'作者：{AUTHOR}  邮箱：{AUTHOR_EMAIL}\n© Copyright {YEAR}, {AUTHOR}',
             self.aboutGroup
         )
         self.checkUpdateCard = PushSettingCard(

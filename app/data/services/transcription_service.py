@@ -19,12 +19,12 @@ class TranscriptionService:
         try:
             import torch  # noqa: F401
         except (ImportError, OSError) as e:
-            raise ImportError(f"PyTorch (torch) 加载失败：{e}，请检查环境配置")
+            raise ImportError(f"识别模块tt加载失败：{e}，请检查环境配置")
 
         try:
             import funasr  # noqa: F401
         except (ImportError, OSError) as e:
-            raise ImportError(f"FunASR 加载失败：{e}，请检查环境配置")
+            raise ImportError(f"识别模块ff加载失败：{e}，请检查环境配置")
 
         warnings = []
         if not torch.cuda.is_available():
@@ -54,7 +54,7 @@ class TranscriptionService:
         from funasr import AutoModel
         cls._torch = torch
         device = "cuda" if torch.cuda.is_available() else "cpu"
-        print(f"🚀 正在初始化 FunASR 引擎 (device={device}, beam={BEAM_SIZE})")
+        print(f"🚀 正在初始化 ff 引擎 (device={device}, beam={BEAM_SIZE})")
         cls._model = AutoModel(
             model=MODEL_ID,
             device=device,

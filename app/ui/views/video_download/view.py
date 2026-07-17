@@ -49,6 +49,7 @@ class VideoDownloadPage(ScrollArea):
         self.vm = VideoDownloadViewModel(self)
         self.setObjectName("video_download_page")
         self.loading_bar = None
+        self._busy = False
         self._init_ui()
         self._bind_view_model()
 
@@ -186,9 +187,20 @@ class VideoDownloadPage(ScrollArea):
         if vd.get("download_dir"):
             self.download_path_label.setText(vd["download_dir"])
 
-    def _on_clip_handoff(self, folders: list):
+    def _on_clip_handoff(
+        self,
+        folders: list,
+        run_plan: bool = True,
+        run_render: bool = True,
+        switch_tab: bool = True,
+    ):
         if self._parent_window and hasattr(self._parent_window, "handoff_to_clip_edit"):
-            self._parent_window.handoff_to_clip_edit(folders)
+            self._parent_window.handoff_to_clip_edit(
+                folders,
+                run_plan=run_plan,
+                run_render=run_render,
+                switch_tab=switch_tab,
+            )
 
     def _on_delete_auth(self):
         dialog = Dialog(
@@ -232,13 +244,24 @@ class VideoDownloadPage(ScrollArea):
             break
 
     def _handle_loading(self, loading: bool, title: str, content: str):
+        self._busy = loading
         busy = loading
-        self.login_btn.setEnabled(not busy)
-        self.check_auth_btn.setEnabled(not busy)
-        self.delete_auth_btn.setEnabled(not busy)
-        self.auth_more_btn.setEnabled(not busy)
-        self.start_btn.setEnabled(not busy)
-        self.import_all_btn.setEnabled(not busy)
+        for w in (
+            self.login_btn,
+            self.check_auth_btn,
+            self.delete_auth_btn,
+            self.auth_more_btn,
+            self.download_browse_btn,
+            self.download_open_btn,
+            self.from_input,
+            self.to_input,
+            self.add_btn,
+            self.more_btn,
+            self.start_btn,
+            self.import_all_btn,
+            self.table,
+        ):
+            w.setEnabled(not busy)
         if loading:
             if self.loading_bar is None or not isValid(self.loading_bar):
                 self.loading_bar = ProgressInfoBar(title, content, self)
@@ -249,6 +272,7 @@ class VideoDownloadPage(ScrollArea):
                 self.loading_bar.contentLabel.setText(content)
         else:
             self._close_loading()
+            self._refresh_table()
 
     def _close_loading(self):
         if self.loading_bar is not None and isValid(self.loading_bar):
@@ -273,6 +297,7 @@ class VideoDownloadPage(ScrollArea):
             self.table.setItem(row, 3, status_item)
 
             remove_btn = PushButton("删除", self.table)
+            remove_btn.setEnabled(not self._busy)
             remove_btn.clicked.connect(
                 lambda _checked=False, tid=target.id: self.vm.remove_target(tid)
             )
@@ -416,47 +441,74 @@ class VideoDownloadPage(ScrollArea):
         auto_unzip_cb.setChecked(cfg.video_download_auto_unzip.value)
         auto_transcribe_cb = CheckBox("解压后自动识别视频", dialog)
         auto_transcribe_cb.setChecked(cfg.video_download_auto_transcribe.value)
-        auto_clip_cb = CheckBox("识别完成后自动导入剪辑并执行后续流程", dialog)
+        auto_plan_cb = CheckBox("识别完成后自动策划", dialog)
+        auto_plan_cb.setChecked(cfg.video_download_auto_plan.value)
+        auto_clip_cb = CheckBox("策划完成后自动导入剪辑并渲染", dialog)
         auto_clip_cb.setChecked(cfg.video_download_auto_import_clip.value)
-        auto_clip_cb.setEnabled(auto_transcribe_cb.isChecked())
         auto_start_cb = CheckBox("添加剧目确定后自动开始下载", dialog)
         auto_start_cb.setChecked(cfg.video_download_auto_start_after_add.value)
+
+        def _sync_enabled() -> None:
+            transcribe_on = auto_transcribe_cb.isChecked()
+            plan_on = auto_plan_cb.isChecked()
+            auto_plan_cb.setEnabled(transcribe_on)
+            auto_clip_cb.setEnabled(transcribe_on and plan_on)
 
         def _on_transcribe_toggled(checked: bool) -> None:
             if checked:
                 auto_unzip_cb.setChecked(True)
             else:
+                auto_plan_cb.setChecked(False)
                 auto_clip_cb.setChecked(False)
-            auto_clip_cb.setEnabled(checked)
+            _sync_enabled()
+
+        def _on_plan_toggled(checked: bool) -> None:
+            if checked:
+                auto_unzip_cb.setChecked(True)
+                auto_transcribe_cb.setChecked(True)
+            else:
+                auto_clip_cb.setChecked(False)
+            _sync_enabled()
 
         def _on_clip_toggled(checked: bool) -> None:
             if checked:
                 auto_unzip_cb.setChecked(True)
                 auto_transcribe_cb.setChecked(True)
+                auto_plan_cb.setChecked(True)
+            _sync_enabled()
 
+        if auto_clip_cb.isChecked() and not auto_plan_cb.isChecked():
+            auto_plan_cb.setChecked(True)
+
+        _sync_enabled()
         auto_transcribe_cb.toggled.connect(_on_transcribe_toggled)
+        auto_plan_cb.toggled.connect(_on_plan_toggled)
         auto_clip_cb.toggled.connect(_on_clip_toggled)
 
         dialog.textLayout.setContentsMargins(24, 16, 24, 8)
         dialog.textLayout.addWidget(auto_unzip_cb)
         dialog.textLayout.addWidget(auto_transcribe_cb)
+        dialog.textLayout.addWidget(auto_plan_cb)
         dialog.textLayout.addWidget(auto_clip_cb)
         dialog.textLayout.addWidget(auto_start_cb)
 
-        dialog.setFixedSize(420, 300)
+        dialog.setFixedSize(420, 340)
         if dialog.exec():
             clip = auto_clip_cb.isChecked()
-            transcribe = auto_transcribe_cb.isChecked() or clip
+            plan = auto_plan_cb.isChecked() or clip
+            transcribe = auto_transcribe_cb.isChecked() or plan
             unzip = auto_unzip_cb.isChecked() or transcribe
             start = auto_start_cb.isChecked()
             qconfig.set(cfg.video_download_auto_unzip, unzip)
             qconfig.set(cfg.video_download_auto_transcribe, transcribe)
+            qconfig.set(cfg.video_download_auto_plan, plan)
             qconfig.set(cfg.video_download_auto_import_clip, clip)
             qconfig.set(cfg.video_download_auto_start_after_add, start)
             self.vm.save_to_server({
                 "video_download": {
                     "auto_unzip": unzip,
                     "auto_transcribe": transcribe,
+                    "auto_plan": plan,
                     "auto_import_clip": clip,
                     "auto_start_after_add": start,
                 }

@@ -87,8 +87,9 @@ def create_plan_job_endpoint(
 def get_plan_job_status(
     job_id: str,
     user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
 ):
-    job = get_plan_job(job_id, user.id)
+    job = get_plan_job(db, job_id, user.id)
     if job is None:
         raise HTTPException(status_code=404, detail="策划任务不存在")
     return PlanJobStatusOut(
@@ -103,8 +104,9 @@ def get_plan_job_status(
 def get_plan_job_result(
     job_id: str,
     user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
 ):
-    job = get_plan_job(job_id, user.id)
+    job = get_plan_job(db, job_id, user.id)
     if job is None:
         raise HTTPException(status_code=404, detail="策划任务不存在")
     if job.status == "failed":

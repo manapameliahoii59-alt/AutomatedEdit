@@ -1,9 +1,10 @@
 import sys
+import threading
 from PySide6.QtCore import QRect, QTimer
 from PySide6.QtGui import QIcon
 from qfluentwidgets import FluentWindow, NavigationItemPosition, FluentIcon as FIF, qconfig
 
-from app.common.config import cfg
+from app.common.config import APP_NAME, cfg
 from app.core.container import Container
 from app.core.navigation import LazyViewProxy
 from app.data.services.access_control_service import access_control
@@ -21,12 +22,12 @@ class MainWindow(FluentWindow):
         self.is_logout = False
         self.init_window()
         self.init_navigation()
-        access_control.refresh()
+        threading.Thread(target=access_control.refresh, daemon=True).start()
 
     def init_window(self):
         if sys.platform != "darwin":
             self.setWindowIcon(QIcon(':/resource/images/logo.png'))
-            self.setWindowTitle('MyApp')
+            self.setWindowTitle(APP_NAME)
         self.resize(1200, 800)
         
         # Center window
@@ -64,15 +65,31 @@ class MainWindow(FluentWindow):
         QTimer.singleShot(800, lambda: prompt_update_on_startup(self))
 
     def _check_access(self) -> None:
-        access_control.refresh()
+        # 放到后台，避免探活超时卡住界面
+        threading.Thread(target=access_control.refresh, daemon=True).start()
 
-    def handoff_to_clip_edit(self, folder_paths: list[str]) -> None:
-        """下载识别完成后，导入剪辑页并执行策划与渲染。"""
+    def handoff_to_clip_edit(
+        self,
+        folder_paths: list[str],
+        *,
+        run_plan: bool = True,
+        run_render: bool = True,
+        switch_tab: bool = True,
+    ) -> None:
+        """下载识别完成后，按设置导入剪辑页并执行策划/渲染。
+
+        folder_paths 为空时仍可仅切换到剪辑页（用于批量下载全部结束后跳转）。
+        """
+        page = self.clipEditPage.ensure_loaded()
+        if switch_tab:
+            self.switchTo(self.clipEditPage)
         if not folder_paths:
             return
-        page = self.clipEditPage.ensure_loaded()
-        self.switchTo(self.clipEditPage)
-        page.vm.import_and_run_clip_pipeline(folder_paths)
+        page.vm.import_and_run_clip_pipeline(
+            folder_paths,
+            run_plan=run_plan,
+            run_render=run_render,
+        )
 
     def import_to_clip_edit(self, folder_paths: list[str]) -> None:
         """将下载目录中的剧目导入自动化剪辑页（不执行后续流程）。"""

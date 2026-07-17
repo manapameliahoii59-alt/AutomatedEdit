@@ -33,7 +33,7 @@ WAIT_SEC = 600  # 10 分钟，供用户手动搜索
 def _short_play_list_url() -> str:
     """与网站列表页一致的 URL（含日期范围、page_index=1）。"""
     end = datetime.now()
-    start = end - timedelta(days=30)
+    start = end - timedelta(days=29)  # 含首尾共 30 天
     return (
         "https://www.changdupingtai.com/sale/short-play/list"
         f"?sort_type=1"

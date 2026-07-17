@@ -12,6 +12,8 @@ from scenedetect import ContentDetector, detect
 from app.common.export_paths import build_clip_export_filename, resolve_project_export_dir
 from app.common.ffmpeg_paths import resolve_ffmpeg, resolve_ffprobe
 from app.common.outro_paths import outro_filename, resolve_outro_path
+from app.common.win_subprocess import popen as win_popen
+from app.common.win_subprocess import run as win_run
 from app.data.models.drama_project import DramaProject
 
 FONT_FILENAME = "msyh.ttc"
@@ -387,7 +389,7 @@ class RenderService:
                 "-of", "csv=s=x:p=0",
                 video_path,
             ]
-            proc = subprocess.run(cmd, capture_output=True, text=True, check=True)
+            proc = win_run(cmd, capture_output=True, text=True, check=True)
             out = proc.stdout.strip()
             if "x" in out:
                 w, h = map(int, out.split("x"))
@@ -436,7 +438,7 @@ class RenderService:
         if probe_cache is not None and cache_key in probe_cache:
             return bool(probe_cache[cache_key])
         try:
-            proc = subprocess.run(
+            proc = win_run(
                 [
                     ffprobe, "-v", "error",
                     "-select_streams", "v",
@@ -461,7 +463,7 @@ class RenderService:
         if probe_cache is not None and cache_key in probe_cache:
             return float(probe_cache[cache_key])
         try:
-            proc = subprocess.run(
+            proc = win_run(
                 [
                     ffprobe, "-v", "error",
                     "-show_entries", "format=duration",
@@ -504,7 +506,7 @@ class RenderService:
         try:
             print(f"   ▶ {desc}…", flush=True)
             with tempfile.TemporaryFile(mode="w+b") as stderr_sink:
-                proc = subprocess.Popen(
+                proc = win_popen(
                     cmd,
                     stdout=subprocess.DEVNULL,
                     stderr=stderr_sink,
@@ -539,7 +541,7 @@ class RenderService:
         if probe_cache is not None and cache_key in probe_cache:
             return bool(probe_cache[cache_key])
         try:
-            proc = subprocess.run(
+            proc = win_run(
                 [
                     ffprobe, "-v", "error",
                     "-select_streams", "a",
@@ -561,7 +563,7 @@ class RenderService:
     @staticmethod
     def _has_nvenc(ffmpeg: str) -> bool:
         try:
-            proc = subprocess.run(
+            proc = win_run(
                 [ffmpeg, "-hide_banner", "-encoders"],
                 capture_output=True,
                 text=True,

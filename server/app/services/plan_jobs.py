@@ -1,19 +1,31 @@
-"""策划异步任务（内存队列，按用户隔离）。"""
+"""策划异步任务（MySQL 持久化，按用户隔离）。"""
 
 from __future__ import annotations
 
+import json
+import logging
 import threading
+import time
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
+from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
 from app.config import settings
+from app.database import SessionLocal
+from app.models import PlanJob
 from app.services.plan_crypto import encrypt_plan_payload
 from app.services.plan_director import run_plan
 from app.services.plan_secrets import ensure_user_secret, resolve_deepseek_keys
+
+logger = logging.getLogger(__name__)
+
+JOB_TTL = timedelta(hours=2)
+# 进度回调写库节流，避免 LLM 流式回调打爆连接池
+_PROGRESS_WRITE_INTERVAL_SEC = 1.0
 
 
 @dataclass
@@ -28,29 +40,109 @@ class PlanJobRecord:
     updated_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
 
 
-_lock = threading.Lock()
-_jobs: dict[str, PlanJobRecord] = {}
-JOB_TTL = timedelta(hours=2)
+def _utc_now() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def _loads_dict(raw: str) -> dict[str, Any]:
+    if not raw:
+        return {}
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError:
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _row_to_record(row: PlanJob) -> PlanJobRecord:
+    result = _loads_dict(row.result_json or "")
+    return PlanJobRecord(
+        id=row.id,
+        user_id=row.user_id,
+        status=row.status,
+        progress=_loads_dict(row.progress_json or ""),
+        error=row.error or "",
+        result=result or None,
+        created_at=row.created_at or _utc_now(),
+        updated_at=row.updated_at or _utc_now(),
+    )
 
 
 def _cleanup_old_jobs() -> None:
-    cutoff = datetime.now(timezone.utc) - JOB_TTL
-    stale = [job_id for job_id, job in _jobs.items() if job.updated_at < cutoff]
-    for job_id in stale:
-        _jobs.pop(job_id, None)
+    cutoff = _utc_now() - JOB_TTL
+    db = SessionLocal()
+    try:
+        db.execute(delete(PlanJob).where(PlanJob.updated_at < cutoff))
+        db.commit()
+    except Exception:
+        db.rollback()
+        logger.exception("清理过期策划任务失败")
+    finally:
+        db.close()
 
 
-def _set_progress(job: PlanJobRecord, progress: dict[str, Any]) -> None:
-    job.progress = progress
-    job.updated_at = datetime.now(timezone.utc)
+def fail_interrupted_jobs() -> int:
+    """进程启动时：将未完成任务标为失败，避免客户端无限轮询僵尸任务。"""
+    db = SessionLocal()
+    try:
+        rows = db.scalars(
+            select(PlanJob).where(PlanJob.status.in_(("pending", "running")))
+        ).all()
+        for row in rows:
+            row.status = "failed"
+            row.error = "服务重启，策划任务已中断，请重新策划"
+            row.updated_at = _utc_now()
+        db.commit()
+        return len(rows)
+    except Exception:
+        db.rollback()
+        logger.exception("标记中断策划任务失败")
+        return 0
+    finally:
+        db.close()
+
+
+def _persist_job(
+    job_id: str,
+    *,
+    status: str | None = None,
+    progress: dict[str, Any] | None = None,
+    error: str | None = None,
+    result: dict[str, Any] | None = None,
+) -> None:
+    db = SessionLocal()
+    try:
+        row = db.get(PlanJob, job_id)
+        if row is None:
+            return
+        if status is not None:
+            row.status = status
+        if progress is not None:
+            row.progress_json = json.dumps(progress, ensure_ascii=False)
+        if error is not None:
+            row.error = error
+        if result is not None:
+            row.result_json = json.dumps(result, ensure_ascii=False)
+        row.updated_at = _utc_now()
+        db.commit()
+    except Exception:
+        db.rollback()
+        logger.exception("更新策划任务失败 job_id=%s", job_id)
+    finally:
+        db.close()
 
 
 def _run_job(job_id: str, payload: dict[str, Any], plan_key: str, api_keys_raw: str) -> None:
-    job = _jobs.get(job_id)
-    if job is None:
-        return
-    job.status = "running"
-    job.updated_at = datetime.now(timezone.utc)
+    _persist_job(job_id, status="running")
+    last_progress_at = 0.0
+
+    def on_progress(progress: dict[str, Any]) -> None:
+        nonlocal last_progress_at
+        now = time.monotonic()
+        if now - last_progress_at < _PROGRESS_WRITE_INTERVAL_SEC:
+            return
+        last_progress_at = now
+        _persist_job(job_id, progress=progress)
 
     try:
         plans = run_plan(
@@ -60,40 +152,50 @@ def _run_job(job_id: str, payload: dict[str, Any], plan_key: str, api_keys_raw: 
             api_keys_raw=api_keys_raw,
             api_url=settings.deepseek_api_url,
             model_name=settings.deepseek_model,
-            progress_callback=lambda p: _set_progress(job, p),
+            progress_callback=on_progress,
         )
         encrypted = encrypt_plan_payload(plan_key, plans)
-        job.result = encrypted
-        job.status = "done"
-        job.progress = {
-            "phase": "plan",
-            "current": len(plans),
-            "total": len(plans),
-            "detail": "完成",
-        }
+        _persist_job(
+            job_id,
+            status="done",
+            result=encrypted,
+            progress={
+                "phase": "plan",
+                "current": len(plans),
+                "total": len(plans),
+                "detail": "完成",
+            },
+            error="",
+        )
     except Exception as exc:
-        job.status = "failed"
-        job.error = str(exc)
-    finally:
-        job.updated_at = datetime.now(timezone.utc)
+        _persist_job(job_id, status="failed", error=str(exc))
 
 
 def create_plan_job(db: Session, user_id: int, payload: dict[str, Any]) -> PlanJobRecord:
     _cleanup_old_jobs()
-    row = ensure_user_secret(db, user_id)
-    plan_key = row.plan_decrypt_key
+    ensure_user_secret(db, user_id)
     api_keys_raw = resolve_deepseek_keys(db, user_id)
     if not api_keys_raw:
         raise ValueError("未配置策划服务密钥，请联系管理员")
 
+    row_secret = ensure_user_secret(db, user_id)
+    plan_key = row_secret.plan_decrypt_key
     job_id = uuid.uuid4().hex
-    job = PlanJobRecord(
+    progress = {"phase": "plan", "current": 0, "total": 15, "detail": "排队中…"}
+    now = _utc_now()
+    row = PlanJob(
         id=job_id,
         user_id=user_id,
-        progress={"phase": "plan", "current": 0, "total": 15, "detail": "排队中…"},
+        status="pending",
+        progress_json=json.dumps(progress, ensure_ascii=False),
+        error="",
+        result_json="",
+        created_at=now,
+        updated_at=now,
     )
-    with _lock:
-        _jobs[job_id] = job
+    db.add(row)
+    db.commit()
+    db.refresh(row)
 
     thread = threading.Thread(
         target=_run_job,
@@ -102,11 +204,13 @@ def create_plan_job(db: Session, user_id: int, payload: dict[str, Any]) -> PlanJ
         name=f"plan-job-{job_id[:8]}",
     )
     thread.start()
-    return job
+    return _row_to_record(row)
 
 
-def get_plan_job(job_id: str, user_id: int) -> PlanJobRecord | None:
-    job = _jobs.get(job_id)
-    if job is None or job.user_id != user_id:
+def get_plan_job(db: Session, job_id: str, user_id: int) -> PlanJobRecord | None:
+    row = db.scalar(
+        select(PlanJob).where(PlanJob.id == job_id, PlanJob.user_id == user_id)
+    )
+    if row is None:
         return None
-    return job
+    return _row_to_record(row)

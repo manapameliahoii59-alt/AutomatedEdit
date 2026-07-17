@@ -6,7 +6,7 @@ import json
 import time
 import uuid
 import zipfile
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable
@@ -41,10 +41,13 @@ DEFAULT_TRANSCODE_TIMEOUT_MIN = 15
 DEFAULT_TASK_LIST_PAGE_SIZE = 50
 BULK_TASK_LIST_MAX_PAGES = 3
 TASK_LIST_LOOKBACK_SEC = 600
+# 阶段 1 创建任务失败后，末尾再统一重试一轮
+PHASE1_CREATE_RETRY_PASSES = 1
 
 LogFn = Callable[[str], None]
 DownloadProgressFn = Callable[[str, int, int | None, float], None]
 TargetStatusFn = Callable[[str, str], None]
+TranscribeDoneFn = Callable[[str], None]
 
 
 def _format_bytes(size: int) -> str:
@@ -140,8 +143,14 @@ class BatchLogger:
 class _TranscribePipeline:
     """串行识别队列：解压后立即入队，同一时刻只跑一部剧的识别。"""
 
-    def __init__(self, logger: BatchLogger) -> None:
+    def __init__(
+        self,
+        logger: BatchLogger,
+        *,
+        on_transcribe_done: TranscribeDoneFn | None = None,
+    ) -> None:
         self._logger = logger
+        self._on_transcribe_done = on_transcribe_done
         self._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="Transcribe")
         self._futures: list[Any] = []
 
@@ -155,23 +164,43 @@ class _TranscribePipeline:
     def has_pending(self) -> bool:
         return any(not f.done() for f in self._futures)
 
-    def wait_all(self) -> list[str]:
-        if not self._futures:
-            self._executor.shutdown(wait=True)
-            return []
-        self._logger.say("⏳ 等待识别完成…", "\n⏳ 等待识别队列完成…")
+    def _finish_future(self, future: Any) -> str | None:
+        try:
+            folder = future.result()
+        except Exception:
+            return None
+        if folder:
+            if self._on_transcribe_done is not None:
+                try:
+                    self._on_transcribe_done(folder)
+                except Exception:
+                    pass
+        return folder
+
+    def poll_completed(self) -> list[str]:
+        """收集已完成的识别任务；每完成一部即触发 on_transcribe_done。"""
         completed: list[str] = []
+        still_pending: list[Any] = []
         for future in self._futures:
-            try:
-                folder = future.result()
+            if future.done():
+                folder = self._finish_future(future)
                 if folder:
                     completed.append(folder)
-            except Exception:
-                pass
-        self._futures.clear()
-        self._executor.shutdown(wait=True)
-        self._logger.say("   识别全部完成", "   识别队列已全部处理完毕")
+            else:
+                still_pending.append(future)
+        self._futures = still_pending
         return completed
+
+    def wait_all(self) -> list[str]:
+        all_completed: list[str] = []
+        while self._futures:
+            all_completed.extend(self.poll_completed())
+            if self._futures:
+                wait(self._futures, return_when=FIRST_COMPLETED)
+        self._executor.shutdown(wait=True)
+        if all_completed:
+            self._logger.say("   识别全部完成", "   识别队列已全部处理完毕")
+        return all_completed
 
     def cancel(self) -> None:
         self._executor.shutdown(wait=False, cancel_futures=True)
@@ -197,6 +226,7 @@ class BatchDownloadOptions:
     cancel_check: Callable[[], bool] | None = None
     auto_unzip_and_delete: bool = True
     auto_transcribe: bool = True
+    on_transcribe_done: TranscribeDoneFn | None = None
     on_download_progress: DownloadProgressFn | None = None
     on_target_status: TargetStatusFn | None = None
 
@@ -414,6 +444,62 @@ def _resolve_episode_range(
     return {"from": from_ep, "to": to_ep, "bookId": book_id, "name": name}
 
 
+def _create_single_download_job(
+    client: SeriesListClient,
+    item: dict[str, Any],
+    index: int,
+    total: int,
+    ep_defaults: dict[str, int],
+    key: str,
+    logger: BatchLogger,
+    *,
+    retry_label: str = "",
+) -> dict[str, Any]:
+    """创建或登记单个下载任务，成功返回 job 字典。"""
+    prefix = f"[{index + 1}/{total}]"
+    if retry_label:
+        prefix = f"{retry_label}{prefix}"
+
+    if item.get("mode") == "id":
+        task_id = str(item["id"])
+        logger.say(
+            f"{prefix} 使用已有任务",
+            f"{prefix} 使用已有任务: download_id={task_id}",
+        )
+        return {
+            "key": key,
+            "downloadId": task_id,
+            "bookName": None,
+            "name": task_id,
+            "from": None,
+            "to": None,
+            "item": item,
+        }
+
+    resolved = _resolve_episode_range(client, item, ep_defaults)
+    from_ep, to_ep = resolved["from"], resolved["to"]
+    book_id, name = resolved["bookId"], resolved["name"]
+    logger.both(f"{prefix} 创建任务: {name} ({from_ep}-{to_ep})")
+
+    created = client.batch_download_in_range(book_id, name, from_ep, to_ep)
+    if created.get("code") != 0:
+        raise RuntimeError(
+            f"创建失败: {created.get('message') or json.dumps(created, ensure_ascii=False)}"
+        )
+
+    task_id = str(created["task_id"])
+    logger.dev_only(f"   ✅ download_id={task_id}")
+    return {
+        "key": key,
+        "downloadId": task_id,
+        "bookName": name,
+        "name": name,
+        "from": from_ep,
+        "to": to_ep,
+        "item": item,
+    }
+
+
 def phase1_create_tasks(
     client: SeriesListClient,
     targets: list[dict[str, Any]],
@@ -424,6 +510,7 @@ def phase1_create_tasks(
 ) -> list[dict[str, Any]]:
     jobs: list[dict[str, Any]] = []
     summary = {"created": 0, "skip": 0, "fail": 0}
+    failed: list[tuple[int, dict[str, Any], str]] = []
 
     logger.both("\n========== 阶段 1/2: 批量创建下载任务 ==========\n")
 
@@ -440,60 +527,74 @@ def phase1_create_tasks(
             continue
 
         try:
-            if item.get("mode") == "id":
-                task_id = str(item["id"])
-                logger.say(
-                    f"[{i + 1}/{len(targets)}] 使用已有任务",
-                    f"[{i + 1}/{len(targets)}] 使用已有任务: download_id={task_id}",
+            jobs.append(
+                _create_single_download_job(
+                    client, item, i, len(targets), ep_defaults, key, logger
                 )
-                jobs.append(
-                    {
-                        "key": key,
-                        "downloadId": task_id,
-                        "bookName": None,
-                        "name": task_id,
-                        "from": None,
-                        "to": None,
-                        "item": item,
-                    }
-                )
-                summary["created"] += 1
-            else:
-                resolved = _resolve_episode_range(client, item, ep_defaults)
-                from_ep, to_ep = resolved["from"], resolved["to"]
-                book_id, name = resolved["bookId"], resolved["name"]
-                logger.both(f"[{i + 1}/{len(targets)}] 创建任务: {name} ({from_ep}-{to_ep})")
-
-                created = client.batch_download_in_range(book_id, name, from_ep, to_ep)
-                if created.get("code") != 0:
-                    raise RuntimeError(
-                        f"创建失败: {created.get('message') or json.dumps(created, ensure_ascii=False)}"
-                    )
-
-                task_id = str(created["task_id"])
-                logger.dev_only(f"   ✅ download_id={task_id}")
-                jobs.append(
-                    {
-                        "key": key,
-                        "downloadId": task_id,
-                        "bookName": name,
-                        "name": name,
-                        "from": from_ep,
-                        "to": to_ep,
-                        "item": item,
-                    }
-                )
-                summary["created"] += 1
+            )
+            summary["created"] += 1
         except Exception as exc:
             msg = str(exc)
             logger.both(f"   ❌ {msg}")
             _append_log({"phase": 1, "key": key, "status": "fail", "error": msg, "item": item})
             summary["fail"] += 1
+            failed.append((i, item, key))
             if opts.stop_on_error:
                 raise
 
         if i < len(targets) - 1 and opts.delay_sec > 0:
             _interruptible_sleep(opts.delay_sec, opts.cancel_check)
+
+    for pass_no in range(1, PHASE1_CREATE_RETRY_PASSES + 1):
+        if not failed:
+            break
+        if opts.cancel_check and opts.cancel_check():
+            raise RuntimeError("任务已取消")
+
+        logger.both(
+            f"\n--- 重试创建失败剧目（第 {pass_no} 轮，共 {len(failed)} 个）---\n"
+        )
+        still_failed: list[tuple[int, dict[str, Any], str]] = []
+        for retry_i, (i, item, key) in enumerate(failed):
+            if opts.cancel_check and opts.cancel_check():
+                raise RuntimeError("任务已取消")
+            try:
+                jobs.append(
+                    _create_single_download_job(
+                        client,
+                        item,
+                        i,
+                        len(targets),
+                        ep_defaults,
+                        key,
+                        logger,
+                        retry_label="[重试] ",
+                    )
+                )
+                summary["created"] += 1
+                summary["fail"] -= 1
+                logger.both("   ✅ 重试创建成功")
+            except Exception as exc:
+                msg = str(exc)
+                logger.both(f"   ❌ 重试仍失败: {msg}")
+                _append_log(
+                    {
+                        "phase": 1,
+                        "key": key,
+                        "status": "fail_retry",
+                        "error": msg,
+                        "item": item,
+                        "retry_pass": pass_no,
+                    }
+                )
+                still_failed.append((i, item, key))
+                if opts.stop_on_error:
+                    raise
+
+            if retry_i < len(failed) - 1 and opts.delay_sec > 0:
+                _interruptible_sleep(opts.delay_sec, opts.cancel_check)
+
+        failed = still_failed
 
     _save_pending(jobs)
     logger.both(
@@ -524,6 +625,7 @@ def _download_prepared_with_retry(
     prepared: dict[str, Any],
     opts: BatchDownloadOptions,
     dl_opts: dict[str, Any],
+    logger: BatchLogger | None = None,
 ) -> dict[str, Any]:
     """在线程池中仅执行 requests 流式下载（不触碰 Playwright page）。"""
     label = prepared.get("bookName") or prepared.get("taskName") or prepared["downloadId"]
@@ -558,6 +660,11 @@ def _download_prepared_with_retry(
         except Exception as exc:
             last_err = exc
             if attempt < opts.download_retries:
+                if logger is not None:
+                    logger.both(
+                        f"   ⚠ {label} 下载中断（{exc}），"
+                        f"第 {attempt + 1}/{opts.download_retries} 次重试…"
+                    )
                 time.sleep(2)
     assert last_err is not None
     raise last_err
@@ -610,13 +717,17 @@ def phase2_download_files(
     queued: set[str] = set()
     download_queue: list[dict[str, Any]] = []
     transcode_poll_round = 0
-    transcribe_pipeline = _TranscribePipeline(logger) if opts.auto_transcribe else None
+    transcribe_pipeline = (
+        _TranscribePipeline(logger, on_transcribe_done=opts.on_transcribe_done)
+        if opts.auto_transcribe
+        else None
+    )
 
     def process_download(prepared: dict[str, Any]) -> tuple[str, dict[str, Any]]:
         job = prepared["job"]
         label = job.get("bookName") or job.get("name")
         try:
-            result = _download_prepared_with_retry(client, prepared, opts, dl_opts)
+            result = _download_prepared_with_retry(client, prepared, opts, dl_opts, logger)
             return "ok", {"job": job, "label": label, "result": result}
         except Exception as exc:
             return "fail", {"job": job, "label": label, "error": str(exc)}
@@ -793,10 +904,20 @@ def phase2_download_files(
                         if opts.stop_on_error:
                             raise RuntimeError(msg)
 
+                if transcribe_pipeline is not None:
+                    transcribe_pipeline.poll_completed()
+
                 if transcoding:
-                    waiting = "、".join(j.get("bookName") or j.get("name") for j in transcoding.values())
+                    waiting = "、".join(
+                        str(j.get("bookName") or j.get("name") or j.get("downloadId"))
+                        for j in transcoding.values()
+                    )
                     poll_sec = _transcode_poll_interval_sec(transcode_poll_round)
-                    logger.dev_only(f"\n⏳ 转码中 {len(transcoding)} 个: {waiting}（{poll_sec}s 后再次查询）")
+                    logger.both(
+                        f"⏳ 转码轮询中（第 {transcode_poll_round + 1} 轮）"
+                        f"：{len(transcoding)} 个待完成 — {waiting}"
+                        f"（{poll_sec}s 后再次查询）"
+                    )
                     _interruptible_sleep(poll_sec, opts.cancel_check)
                     transcode_poll_round += 1
                 elif futures or download_queue:

@@ -31,6 +31,25 @@ class TestTaskManager:
         qtbot.waitUntil(lambda: len(result_container) > 0, timeout=1000)
         assert result_container[0] == 3
 
+    def test_callback_survives_runnable_autodelete(self, qtbot):
+        """Queued callbacks must still fire after QRunnable AutoDelete."""
+        tm = TaskManager.instance()
+        results = []
+
+        def work():
+            time.sleep(0.05)
+            return "ok"
+
+        def on_success(result):
+            # Allow the runnable to be auto-deleted before this runs.
+            time.sleep(0.05)
+            results.append(result)
+
+        tm.submit_task(work, on_success=on_success)
+        qtbot.waitUntil(lambda: len(results) == 1, timeout=2000)
+        assert results[0] == "ok"
+        qtbot.waitUntil(lambda: len(tm._live_signals) == 0, timeout=1000)
+
     def test_submit_task_error(self, qtbot):
         """Test submitting a task that raises an exception"""
         tm = TaskManager.instance()

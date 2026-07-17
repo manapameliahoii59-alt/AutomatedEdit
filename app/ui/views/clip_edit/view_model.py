@@ -5,6 +5,8 @@ import uuid
 from PySide6.QtCore import Signal
 
 from app.common.clip_progress import format_plan_progress, format_render_progress
+from app.common.export_paths import resolve_clip_export_root
+from app.common.my_logger import my_logger as logger
 from app.core.render_queue import CANCEL_MESSAGE, render_queue
 from app.core.task_manager import task_manager
 from app.core.view_model import ViewModel
@@ -12,7 +14,6 @@ from app.data.models.drama_project import DramaProject, DramaStatus
 from app.data.services.drama_folder_service import DramaFolderError, scan_drama_folder
 from app.data.services.transcription_service import TranscriptionService
 from app.data.services.ai_director_service import AIDirectorService
-from app.common.export_paths import resolve_clip_export_root
 from app.data.services.render_service import RenderService, RenderResult
 from app.data.services.usage_service import UsageService
 from app.data.services.quota_service import QuotaService
@@ -177,8 +178,19 @@ class ClipEditViewModel(ViewModel):
         self._active_tasks += 1
 
     def _remove_task(self):
-        self._active_tasks -= 1
-        if self._active_tasks == 0:
+        if self._active_tasks > 0:
+            self._active_tasks -= 1
+        if self._active_tasks <= 0:
+            self._active_tasks = 0
+            if not render_queue.is_busy():
+                self._loading_project_id = None
+                self._loading_base_content = ""
+                self.loadingChanged.emit(False, "", "")
+
+    def _finish_loading_if_idle(self) -> None:
+        """渲染队列空闲且无活跃任务时关闭进度条（避免收尾竞态卡住）。"""
+        if self._active_tasks <= 0 and not render_queue.is_busy():
+            self._active_tasks = 0
             self._loading_project_id = None
             self._loading_base_content = ""
             self.loadingChanged.emit(False, "", "")
@@ -267,7 +279,7 @@ class ClipEditViewModel(ViewModel):
             )
 
         progress_handler = self._make_render_progress_handler(pid)
-        render_queue.submit(
+        started = render_queue.submit(
             lambda: RenderService.render(
                 project,
                 should_cancel=render_queue.is_cancelled,
@@ -278,6 +290,9 @@ class ClipEditViewModel(ViewModel):
             on_error=on_error,
             on_start=_on_start,
         )
+        # 已有任务在渲时，立刻标成排队中，避免第二部一直显示「待处理」
+        if not started:
+            self._set_stage_progress(pid, "render", "排队中")
 
     def start_transcribe(self, project_id: str):
         project = next((p for p in self._projects if p.id == project_id), None)
@@ -382,11 +397,13 @@ class ClipEditViewModel(ViewModel):
             UsageService.report("render", success=result.success_count > 0)
             self._report_clip_done(project.name)
             self.messageReceived.emit(self._format_render_message(project.name, result))
+            self._finish_loading_if_idle()
 
         def _on_error(msg):
             self._remove_task()
             self._update_status(project_id, "render", DramaStatus.PENDING)
             self._emit_render_error(msg)
+            self._finish_loading_if_idle()
 
         self._submit_render(project, on_success=_on_success, on_error=_on_error)
 
@@ -543,7 +560,7 @@ class ClipEditViewModel(ViewModel):
                 self._update_status(pid, "render", DramaStatus.DONE)
                 results["success"] += 1
                 self._report_clip_done(pname)
-                if self._active_tasks == 0:
+                if self._active_tasks == 0 and not render_queue.is_busy():
                     root = resolve_clip_export_root()
                     self._emit_batch_summary(
                         f"批量渲染完成（导出目录：{root}）",
@@ -555,7 +572,7 @@ class ClipEditViewModel(ViewModel):
                 self._remove_task()
                 self._update_status(pid, "render", DramaStatus.PENDING)
                 results["fail"] += 1
-                if self._active_tasks == 0:
+                if self._active_tasks == 0 and not render_queue.is_busy():
                     if self._is_render_cancelled(msg):
                         self.messageReceived.emit("渲染已取消")
                     self._emit_batch_summary("批量渲染完成", results, skipped)
@@ -600,8 +617,14 @@ class ClipEditViewModel(ViewModel):
             self.messageReceived.emit("未找到可导入的剧目文件夹")
         return imported
 
-    def import_and_run_clip_pipeline(self, folder_paths: list[str]) -> int:
-        """从下载页导入已识别剧目，并执行策划与渲染。"""
+    def import_and_run_clip_pipeline(
+        self,
+        folder_paths: list[str],
+        *,
+        run_plan: bool = True,
+        run_render: bool = True,
+    ) -> int:
+        """从下载页导入已识别剧目，并按需执行策划与渲染。"""
         imported_ids: list[str] = []
         for folder in folder_paths:
             project = self.import_drama_folder(
@@ -614,14 +637,35 @@ class ClipEditViewModel(ViewModel):
             self.messageReceived.emit("没有可导入剪辑的剧目（识别可能未成功）")
             return 0
 
+        if not run_plan and not run_render:
+            self.messageReceived.emit(
+                f"已从下载页自动导入 {len(imported_ids)} 个剧目到自动化剪辑"
+            )
+            return len(imported_ids)
+
         total = len(imported_ids)
         for index, pid in enumerate(imported_ids, 1):
             project = next((p for p in self._projects if p.id == pid), None)
-            if project:
-                self._run_pipeline_after_transcribe(project, index=index, total=total)
+            if not project:
+                continue
+            if run_plan:
+                self._run_pipeline_after_transcribe(
+                    project,
+                    index=index,
+                    total=total,
+                    run_render=run_render,
+                )
+            elif run_render:
+                self._run_render_only(project, index=index, total=total)
 
+        if run_plan and run_render:
+            hint = "正在执行策划与渲染…"
+        elif run_plan:
+            hint = "正在执行策划…"
+        else:
+            hint = "正在执行渲染…"
         self.messageReceived.emit(
-            f"已从下载页自动导入 {len(imported_ids)} 个剧目，正在执行策划与渲染…"
+            f"已从下载页自动导入 {len(imported_ids)} 个剧目，{hint}"
         )
         return len(imported_ids)
 
@@ -631,6 +675,7 @@ class ClipEditViewModel(ViewModel):
         *,
         index: int = 1,
         total: int = 1,
+        run_render: bool = True,
     ):
         pid = project.id
         pname = project.name
@@ -649,6 +694,10 @@ class ClipEditViewModel(ViewModel):
             self._update_status(pid, "plan", DramaStatus.DONE)
             UsageService.report("batch_all_plan")
             self._report_plan_done(pname)
+            if not run_render:
+                self._remove_task()
+                self.messageReceived.emit(f"《{pname}》策划完成")
+                return
             if not self._ensure_can_clip(pname):
                 self._remove_task()
                 return
@@ -662,6 +711,7 @@ class ClipEditViewModel(ViewModel):
                     f"《{pname}》自动剪辑完成。\n"
                     f"{self._format_render_message(pname, result)}"
                 )
+                self._finish_loading_if_idle()
 
             def step3_err(msg):
                 self._remove_task()
@@ -670,6 +720,7 @@ class ClipEditViewModel(ViewModel):
                     self.messageReceived.emit(f"《{pname}》渲染已取消")
                 else:
                     self.errorOccurred.emit(f"《{pname}》渲染失败：{msg}")
+                self._finish_loading_if_idle()
 
             self._submit_render(
                 project,
@@ -694,6 +745,63 @@ class ClipEditViewModel(ViewModel):
         )
         self._update_status(pid, "plan", DramaStatus.IN_PROGRESS)
         task_manager.submit_task(step2, on_success=step2_done, on_error=step2_err)
+
+    def _run_render_only(
+        self,
+        project: DramaProject,
+        *,
+        index: int = 1,
+        total: int = 1,
+    ) -> None:
+        """策划已完成时仅执行渲染（用于下载页增量策划后的批量收尾）。"""
+        from app.common.drama_artifact_paths import locate_production_plan
+
+        pid = project.id
+        pname = project.name
+        self._update_status(pid, "transcribe", DramaStatus.DONE)
+        if not locate_production_plan(project.folder_path):
+            self.errorOccurred.emit(f"《{pname}》尚未策划，无法渲染")
+            return
+        self._update_status(pid, "plan", DramaStatus.DONE)
+        if not self._ensure_can_clip(pname):
+            self._update_status(pid, "render", DramaStatus.PENDING)
+            return
+
+        def step3_done(result: RenderResult):
+            self._remove_task()
+            self._update_status(pid, "render", DramaStatus.DONE)
+            UsageService.report("batch_all_render", success=result.success_count > 0)
+            self._report_clip_done(pname)
+            self.messageReceived.emit(
+                f"《{pname}》自动剪辑完成。\n"
+                f"{self._format_render_message(pname, result)}"
+            )
+            self._finish_loading_if_idle()
+
+        def step3_err(msg):
+            self._remove_task()
+            self._update_status(pid, "render", DramaStatus.PENDING)
+            if self._is_render_cancelled(msg):
+                self.messageReceived.emit(f"《{pname}》渲染已取消")
+            else:
+                self.errorOccurred.emit(f"《{pname}》渲染失败：{msg}")
+            self._finish_loading_if_idle()
+
+        self._add_task()
+        logger.debug(
+            "提交渲染-only: 《{}》 ({}/{}) folder={}",
+            pname,
+            index,
+            total,
+            project.folder_path,
+        )
+        self._submit_render(
+            project,
+            on_success=step3_done,
+            on_error=step3_err,
+            index=index,
+            total=total,
+        )
 
     def _run_pipeline(
         self,
@@ -737,6 +845,7 @@ class ClipEditViewModel(ViewModel):
                         f"《{pname}》一键执行完成。\n"
                         f"{self._format_render_message(pname, result)}"
                     )
+                    self._finish_loading_if_idle()
 
                 def step3_err(msg):
                     self._remove_task()
@@ -745,6 +854,7 @@ class ClipEditViewModel(ViewModel):
                         self.messageReceived.emit(f"《{pname}》渲染已取消")
                     else:
                         self.errorOccurred.emit(f"《{pname}》渲染失败：{msg}")
+                    self._finish_loading_if_idle()
 
                 self._submit_render(
                     project,

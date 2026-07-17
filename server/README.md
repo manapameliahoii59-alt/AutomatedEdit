@@ -46,8 +46,9 @@ source /www/server/pyporject_evn/项目名_venv/bin/activate
 
 1. MySQL 建库 + 用户权限
 2. 上传 `server/` 目录，配置 `.env`
-3. Supervisor 启动: `uvicorn app.main:app --host 127.0.0.1 --port 8000`
-4. Nginx 反代 `api.你的域名.com` → `8000`，配置 SSL
+3. Supervisor 启动（**保持单 worker**，策划任务虽已落库，执行线程仍绑定进程）:
+   `uvicorn app.main:app --host 127.0.0.1 --port 8000 --workers 1`
+4. Nginx 反代 `api.你的域名.com` → `8000`，配置 SSL；建议用 `/health` 做上游探活（会检查数据库）
 
 ## 客户端配置
 

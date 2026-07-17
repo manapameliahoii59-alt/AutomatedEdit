@@ -1,11 +1,12 @@
 import subprocess
 
 from app.common.ffmpeg_paths import resolve_ffmpeg
+from app.common.win_subprocess import run as win_run
 
 
 def _ffmpeg_has_nvenc(ffmpeg: str) -> bool:
     try:
-        proc = subprocess.run(
+        proc = win_run(
             [ffmpeg, "-hide_banner", "-encoders"],
             capture_output=True,
             text=True,
@@ -18,7 +19,7 @@ def _ffmpeg_has_nvenc(ffmpeg: str) -> bool:
 
 def _test_nvenc_encode(ffmpeg: str) -> bool:
     try:
-        proc = subprocess.run(
+        proc = win_run(
             [
                 ffmpeg, "-y",
                 "-f", "lavfi", "-i", "color=c=black:s=64x64:d=0.1",
@@ -36,7 +37,7 @@ def _test_nvenc_encode(ffmpeg: str) -> bool:
 
 def _query_nvidia_smi() -> str:
     try:
-        proc = subprocess.run(
+        proc = win_run(
             ["nvidia-smi", "--query-gpu=name,driver_version", "--format=csv,noheader"],
             capture_output=True,
             text=True,
@@ -52,10 +53,10 @@ def _query_nvidia_smi() -> str:
 def run_gpu_diagnostics() -> str:
     lines = ["【系统显卡】", _query_nvidia_smi(), ""]
 
-    lines.append("【PyTorch / 识别】")
+    lines.append("【识别】")
     try:
         import torch
-        lines.append(f"PyTorch 版本：{torch.__version__}")
+        lines.append(f"识别 版本：{torch.__version__}")
         if torch.cuda.is_available():
             lines.append("CUDA 可用：是")
             lines.append(f"设备：{torch.cuda.get_device_name(0)}")
@@ -63,7 +64,7 @@ def run_gpu_diagnostics() -> str:
         else:
             lines.append("CUDA 可用：否（识别将使用 CPU）")
     except Exception as e:
-        lines.append(f"PyTorch 加载失败：{e}")
+        lines.append(f"加载失败：{e}")
 
     lines.append("")
     lines.append("【FFmpeg / 渲染】")

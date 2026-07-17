@@ -92,3 +92,20 @@ class UserDailyActivity(Base):
     )
 
     user: Mapped["User"] = relationship(back_populates="daily_activities")
+
+
+class PlanJob(Base):
+    """策划异步任务（落库，避免重启/多 worker 丢任务导致 404）。"""
+
+    __tablename__ = "plan_jobs"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    status: Mapped[str] = mapped_column(String(16), default="pending", index=True)
+    progress_json: Mapped[str] = mapped_column(Text, default="{}")
+    error: Mapped[str] = mapped_column(Text, default="")
+    result_json: Mapped[str] = mapped_column(Text, default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), index=True)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, server_default=func.now(), onupdate=func.now(), index=True
+    )

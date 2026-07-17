@@ -1,4 +1,5 @@
 import sys
+from contextlib import contextmanager
 from datetime import date
 from pathlib import Path
 
@@ -37,6 +38,10 @@ class _FakeSession:
     def flush(self):
         if self.row is not None:
             self.row._persisted = True
+
+    @contextmanager
+    def begin_nested(self):
+        yield
 
 
 def test_record_login_and_close(monkeypatch):

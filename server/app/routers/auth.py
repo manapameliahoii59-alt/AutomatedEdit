@@ -2,6 +2,7 @@ import secrets
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.auth import create_access_token, hash_password
@@ -27,9 +28,17 @@ def _get_or_create_user(db: Session, username: str) -> User:
         is_active=True,
     )
     db.add(user)
-    db.commit()
-    db.refresh(user)
-    return user
+    try:
+        db.commit()
+        db.refresh(user)
+        return user
+    except IntegrityError:
+        # 并发首次登录：另一请求已插入同名用户
+        db.rollback()
+        user = db.scalar(select(User).where(User.username == username))
+        if user is None:
+            raise
+        return user
 
 
 @router.post("/login", response_model=TokenResponse)

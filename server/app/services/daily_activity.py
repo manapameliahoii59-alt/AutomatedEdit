@@ -6,6 +6,7 @@ import json
 from datetime import date, datetime, timezone
 
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.models import UserDailyActivity
@@ -63,9 +64,22 @@ def _get_or_create_today(db: Session, user_id: int) -> UserDailyActivity:
         plan_count=0,
         clip_count=0,
     )
-    db.add(row)
-    db.flush()
-    return row
+    try:
+        # 使用 savepoint，避免并发插入时 rollback 丢掉同事务内其它写入
+        with db.begin_nested():
+            db.add(row)
+            db.flush()
+        return row
+    except IntegrityError:
+        row = db.scalar(
+            select(UserDailyActivity).where(
+                UserDailyActivity.user_id == user_id,
+                UserDailyActivity.activity_date == today,
+            )
+        )
+        if row is None:
+            raise
+        return row
 
 
 def record_daily_activity(db: Session, user_id: int, event: str, meta: str = "") -> None:

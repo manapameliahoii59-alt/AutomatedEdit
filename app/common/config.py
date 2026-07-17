@@ -25,12 +25,17 @@ class Config(MyQConfig):
     ffprobe_path = ConfigItem("Tools", "ffprobe_path", "")
     clip_export_dir = ConfigItem("Tools", "clip_export_dir", "")
     clip_export_name_tag = ConfigItem("Tools", "clip_export_name_tag", "")
+    # 自动化剪辑「导入剧目」对话框上次打开的目录
+    clip_last_import_dir = ConfigItem("Tools", "clip_last_import_dir", "")
     video_download_dir = ConfigItem("Tools", "video_download_dir", "")
     video_download_auto_unzip = ConfigItem(
         "Tools", "video_download_auto_unzip", True, BoolValidator()
     )
     video_download_auto_transcribe = ConfigItem(
         "Tools", "video_download_auto_transcribe", True, BoolValidator()
+    )
+    video_download_auto_plan = ConfigItem(
+        "Tools", "video_download_auto_plan", True, BoolValidator()
     )
     video_download_auto_import_clip = ConfigItem(
         "Tools", "video_download_auto_import_clip", True, BoolValidator()
@@ -54,9 +59,11 @@ DEFAULT_API_BASE_URL = "http://129.204.86.63:7172"
 
 
 YEAR = datetime.datetime.now().year
-AUTHOR = "Cheukfung"
+AUTHOR = "dragon"
+AUTHOR_EMAIL = "857134647@qq.com"
 VERSION = '0.0.1'
-FEEDBACK_URL = "https://github.com/Cheukfung"
+APP_NAME = "剪辑助手"
+FEEDBACK_URL = f"mailto:{AUTHOR_EMAIL}"
 
 cfg = Config()
 # qconfig.themeColor = ColorConfigItem("QFluentWidgets", "ThemeColor", '#70d5f3')

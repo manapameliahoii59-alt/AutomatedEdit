@@ -23,7 +23,7 @@ class TestRemoteApi:
             'access_token': 'tok',
             'user': {'username': 'u', 'role': 'user'},
         }
-        mocker.patch('requests.request', return_value=mock_resp)
+        mocker.patch.object(api._session, 'request', return_value=mock_resp)
 
         result = api.login('u', 'p')
         assert result.access_token == 'tok'
@@ -35,7 +35,7 @@ class TestRemoteApi:
         mock_resp.status_code = 401
         mock_resp.text = 'bad'
         mock_resp.json.side_effect = ValueError()
-        mocker.patch('requests.request', return_value=mock_resp)
+        mocker.patch.object(api._session, 'request', return_value=mock_resp)
 
         with pytest.raises(ApiError):
             api.login('u', 'wrong')

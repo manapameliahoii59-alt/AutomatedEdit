@@ -1,12 +1,18 @@
 from contextlib import asynccontextmanager
+import logging
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from sqlalchemy import inspect, text
+from sqlalchemy.exc import OperationalError
 
 from app.admin_panel import setup_admin
 from app.database import Base, engine
 from app.routers import admin, auth, client
+from app.services.plan_jobs import fail_interrupted_jobs
+
+logger = logging.getLogger(__name__)
 
 
 def _ensure_user_plain_password_column() -> None:
@@ -116,15 +122,19 @@ async def lifespan(_app: FastAPI):
     Base.metadata.create_all(bind=engine)
     _ensure_user_plain_password_column()
     _ensure_daily_quota_columns()
+    interrupted = fail_interrupted_jobs()
+    if interrupted:
+        logger.warning("已将 %s 个未完成策划任务标记为失败（服务重启）", interrupted)
     yield
 
 
 app = FastAPI(title="AutomatedEdit API", version="1.0.0", lifespan=lifespan)
 
+# 桌面端走 requests，不依赖 CORS；避免 * + credentials 的非法组合
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
-    allow_credentials=True,
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -136,6 +146,24 @@ app.include_router(admin.router)
 setup_admin(app)
 
 
+@app.exception_handler(OperationalError)
+async def _db_operational_error_handler(_request: Request, exc: OperationalError):
+    logger.exception("数据库不可用: %s", exc)
+    return JSONResponse(
+        status_code=503,
+        content={"detail": "数据库暂时不可用，请稍后重试"},
+    )
+
+
 @app.get("/health")
 def health():
-    return {"status": "ok"}
+    try:
+        with engine.connect() as conn:
+            conn.execute(text("SELECT 1"))
+    except Exception as exc:
+        logger.warning("health 检查失败: %s", exc)
+        raise HTTPException(
+            status_code=503,
+            detail="database unavailable",
+        ) from exc
+    return {"status": "ok", "database": "ok"}

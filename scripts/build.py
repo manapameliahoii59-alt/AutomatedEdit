@@ -12,13 +12,12 @@ sys.path.insert(0, str(PROJECT_ROOT))
 # Try to import config, handle missing dependencies gracefully for build script if possible,
 # but since we need VERSION and AUTHOR, we assume dependencies are there.
 try:
-    from app.common.config import VERSION, AUTHOR
+    from app.common.config import VERSION, AUTHOR, APP_NAME
 except ImportError:
     print("Warning: Could not import app.common.config. Using default values.")
     VERSION = "1.0.0"
     AUTHOR = "Unknown"
-
-APP_NAME = 'MyApp'
+    APP_NAME = "剪辑助手"
 OUT_DIR = PROJECT_ROOT / "out"
 DIST_DIR = OUT_DIR / "entry.dist"
 SITE_PACKAGES = PROJECT_ROOT / ".venv" / "Lib" / "site-packages"
@@ -31,6 +30,8 @@ NUITKA_NOFOLLOW_MODULES = (
     # 不可 nofollow：torch.utils.data 会在 import torch 时加载 distributed
     "transformers",
     "modelscope",
+    # funasr 依赖包内 version.txt 等数据文件，编译后易缺失，改为源码拷贝
+    "funasr",
     # torch 子包中使用 walrus 操作符等语法，Nuitka 无法稳定编译
     "torch._dynamo",
     "torch._inductor",
@@ -46,15 +47,151 @@ VC_RUNTIME_DLLS = (
     "vcomp140.dll",
 )
 
-# nofollow 后需原样拷贝到 dist 的包目录名
+# nofollow 后需原样拷贝到 dist 的包目录名（含数据文件，如 funasr/version.txt）
 NOFOLLOW_COPY_PACKAGES = (
+    "transformers",
+    "modelscope",
+    "funasr",
     "torch._dynamo",
     "torch._inductor",
 )
 
+# FunASR 为 nofollow 源码包，其传递依赖未必被 Nuitka 跟踪，需一并拷贝
+# 支持目录包名，或单文件模块（如 soundfile.py）
+FUNASR_RUNTIME_COPY_PACKAGES = (
+    "omegaconf",
+    "hydra",
+    "antlr4",
+    "editdistance",
+    "jaconv",
+    "jamo",
+    "jieba",
+    "kaldiio",
+    "librosa",
+    "oss2",
+    "aliyunsdkcore",
+    "aliyunsdkkms",
+    "crcmod",
+    "soundfile.py",
+    "_soundfile.py",
+    "_soundfile_data",
+    "tensorboardX",
+    "tiktoken",
+    "torch_complex",
+    "audioread",
+    "pooch",
+    "soxr",
+    "lazy_loader",
+    "msgpack",
+    "numba",
+    "llvmlite",
+    "llvmlite.libs",
+    "sentencepiece",
+    # modelscope / transformers / funasr 常见传递依赖（Nuitka 常漏）
+    "packaging",
+    "setuptools",
+    "_distutils_hack",
+    "pkg_resources",
+    "filelock",
+    "tqdm",
+    "yaml",
+    "requests",
+    "urllib3",
+    "charset_normalizer",
+    "idna",
+    "certifi",
+    "huggingface_hub",
+    "safetensors",
+    "fsspec",
+    "jinja2",
+    "markupsafe",
+    "six.py",
+    # Paraformer / BiCifParaformer -> funasr.utils.load_utils 强依赖
+    "torchaudio",
+)
+
+# FunASR / ModelScope / torchaudio 动态 import 的标准库（Nuitka 静态分析常漏掉）
+# --include-module 用完整模块名；拷贝用下方 STDLIB_COPY_ITEMS 的顶层名
+STDLIB_INCLUDE_MODULES = (
+    "wave",
+    "chunk",
+    "audioop",
+    "aifc",
+    "sunau",
+    "logging",
+    "logging.config",
+    "logging.handlers",
+    "concurrent",
+    "concurrent.futures",
+    "xml",
+    "xml.etree",
+    "xml.etree.ElementTree",
+    "html",
+    "http",
+    "urllib",
+    "email",
+    "csv",
+    "configparser",
+    "sqlite3",
+    "gzip",
+    "bz2",
+    "lzma",
+    "zipfile",
+    "tarfile",
+    "secrets",
+    "fractions",
+    "decimal",
+    "statistics",
+    "zoneinfo",
+    "mimetypes",
+    "queue",
+    "bisect",
+    "heapq",
+    "numbers",
+    "getpass",
+    "netrc",
+    "plistlib",
+)
+
+# 从 CPython Lib/DLLs 拷到 dist 的顶层模块/包（覆盖 include 未编进二进制的情况）
+STDLIB_COPY_ITEMS = (
+    "wave",
+    "chunk",
+    "aifc",
+    "sunau",
+    "logging",
+    "concurrent",
+    "xml",
+    "html",
+    "http",
+    "urllib",
+    "email",
+    "csv",
+    "configparser",
+    "sqlite3",
+    "gzip",
+    "bz2",
+    "lzma",
+    "zipfile",
+    "tarfile",
+    "secrets",
+    "fractions",
+    "decimal",
+    "statistics",
+    "zoneinfo",
+    "mimetypes",
+    "queue",
+    "bisect",
+    "heapq",
+    "numbers",
+    "getpass",
+    "netrc",
+    "plistlib",
+    "audioop",
+)
+
 # 打包完成后从 dist 删除的无用目录（运行时不需要）
 CLEANUP_DIRS = (
-    "llvmlite",
     "torch/include",
 )
 
@@ -189,24 +326,158 @@ def bundle_vc_runtime() -> None:
             print(f"Warning: {name} not found in {system32}")
 
 
+def _copy_site_package(name: str, *, label: str) -> None:
+    """从 venv site-packages 拷贝目录包或单文件模块到 dist。"""
+    # 单文件模块：soundfile.py
+    if name.endswith(".py"):
+        src = SITE_PACKAGES / name
+        dst = DIST_DIR / name
+        if not src.is_file():
+            print(f"Warning: {label} {name} not found in venv, skip copy")
+            return
+        shutil.copy2(src, dst)
+        print(f"Copied {label}: {name}")
+        return
+
+    # 支持子包路径：torch.testing -> SITE_PACKAGES/torch/testing
+    parts = name.split(".")
+    src = SITE_PACKAGES.joinpath(*parts)
+    if not src.is_dir():
+        print(f"Warning: {label} {name} not found in venv, skip copy")
+        return
+    dst = DIST_DIR.joinpath(*parts)
+    if dst.exists():
+        shutil.rmtree(dst)
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copytree(src, dst)
+    print(f"Copied {label}: {name}")
+
+
 def bundle_nofollow_packages() -> None:
     """将 nofollow 跳过的包以源码形式复制进 dist。"""
     if not SITE_PACKAGES.is_dir():
         print(f"Warning: site-packages not found at {SITE_PACKAGES}, skip nofollow copy")
         return
     for name in NOFOLLOW_COPY_PACKAGES:
-        # 支持子包路径：torch.testing -> SITE_PACKAGES/torch/testing
-        parts = name.split(".")
-        src = SITE_PACKAGES.joinpath(*parts)
-        if not src.is_dir():
-            print(f"Warning: package {name} not found in venv, skip copy")
-            continue
-        dst = DIST_DIR.joinpath(*parts)
+        _copy_site_package(name, label="nofollow package")
+
+
+def bundle_funasr_runtime_packages() -> None:
+    """拷贝 FunASR 运行所需的传递依赖（nofollow 后 Nuitka 可能未收集）。"""
+    if not SITE_PACKAGES.is_dir():
+        print(f"Warning: site-packages not found at {SITE_PACKAGES}, skip ff deps copy")
+        return
+    for name in FUNASR_RUNTIME_COPY_PACKAGES:
+        _copy_site_package(name, label="ff runtime dep")
+
+
+def _stdlib_lib_dir() -> Path:
+    return Path(sys.base_prefix) / "Lib"
+
+
+def _stdlib_dlls_dir() -> Path:
+    return Path(sys.base_prefix) / "DLLs"
+
+
+def _copy_stdlib_item(name: str, lib_dir: Path, dlls_dir: Path) -> None:
+    src_py = lib_dir / f"{name}.py"
+    src_pkg = lib_dir / name
+    src_pyd = None
+    if dlls_dir.is_dir():
+        for candidate in dlls_dir.glob(f"{name}*.pyd"):
+            src_pyd = candidate
+            break
+    if src_py.is_file():
+        shutil.copy2(src_py, DIST_DIR / f"{name}.py")
+        print(f"Copied stdlib module: {name}.py")
+    elif src_pkg.is_dir():
+        dst = DIST_DIR / name
         if dst.exists():
             shutil.rmtree(dst)
-        dst.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copytree(src, dst)
-        print(f"Copied nofollow package: {name}")
+        shutil.copytree(
+            src_pkg,
+            dst,
+            ignore=shutil.ignore_patterns("__pycache__", "*.pyc", "test", "tests"),
+        )
+        print(f"Copied stdlib package: {name}")
+    elif src_pyd is not None:
+        shutil.copy2(src_pyd, DIST_DIR / src_pyd.name)
+        print(f"Copied stdlib extension: {src_pyd.name}")
+    else:
+        print(f"Warning: stdlib {name} not found under {lib_dir} or {dlls_dir}, skip")
+
+
+def bundle_stdlib_modules() -> None:
+    """拷贝 ASR 链路可能动态 import 的标准库模块到 dist。"""
+    lib_dir = _stdlib_lib_dir()
+    dlls_dir = _stdlib_dlls_dir()
+    if not lib_dir.is_dir():
+        print(f"Warning: stdlib Lib not found at {lib_dir}, skip stdlib copy")
+        return
+    for name in STDLIB_COPY_ITEMS:
+        _copy_stdlib_item(name, lib_dir, dlls_dir)
+    install_stdlib_bootstrap()
+
+
+_STDLIB_BOOTSTRAP_MARKER = "import _ae_stdlib_bootstrap"
+_STDLIB_BOOTSTRAP_SRC = PROJECT_ROOT / "scripts" / "ae_stdlib_bootstrap.py"
+
+
+_CRITICAL_MODELS_MARKER = "# ae_critical_asr_models"
+_CRITICAL_MODELS_FOOTER = """
+# ae_critical_asr_models
+def _ae_ensure_critical_asr_models():
+    import traceback as _tb
+    _log = os.path.join(os.path.dirname(os.path.dirname(__file__)), "funasr_import_debug.log")
+    for _name in (
+        "funasr.utils.load_utils",
+        "funasr.models.paraformer.model",
+        "funasr.models.bicif_paraformer.model",
+    ):
+        try:
+            importlib.import_module(_name)
+        except Exception as _e:
+            _record_import_error(_name, _e)
+            try:
+                with open(_log, "a", encoding="utf-8") as _f:
+                    _f.write(f"{_name}: {_e}\\n")
+                    _f.write(_tb.format_exc() + "\\n")
+            except Exception:
+                pass
+
+_ae_ensure_critical_asr_models()
+"""
+
+
+def install_stdlib_bootstrap() -> None:
+    """在 dist 写入引导模块，并挂到 funasr 入口（无需重编 entry.exe 也能生效）。"""
+    if not _STDLIB_BOOTSTRAP_SRC.is_file():
+        print(f"Warning: {_STDLIB_BOOTSTRAP_SRC} missing, skip bootstrap")
+        return
+    bootstrap = DIST_DIR / "_ae_stdlib_bootstrap.py"
+    shutil.copy2(_STDLIB_BOOTSTRAP_SRC, bootstrap)
+    print(f"Wrote {bootstrap.name}")
+
+    inject_targets = (
+        DIST_DIR / "funasr" / "__init__.py",
+        DIST_DIR / "modelscope" / "__init__.py",
+    )
+    header = (
+        f"{_STDLIB_BOOTSTRAP_MARKER}\n"
+        "_ae_stdlib_bootstrap.apply()\n"
+    )
+    for init_py in inject_targets:
+        if not init_py.is_file():
+            continue
+        text = init_py.read_text(encoding="utf-8")
+        if _STDLIB_BOOTSTRAP_MARKER not in text:
+            text = header + text
+            print(f"Injected stdlib bootstrap into {init_py.relative_to(DIST_DIR)}")
+        if init_py.name == "__init__.py" and "funasr" in str(init_py.parent.name):
+            if _CRITICAL_MODELS_MARKER not in text:
+                text = text.rstrip() + "\n" + _CRITICAL_MODELS_FOOTER
+                print("Injected critical ASR model ensure into funasr/__init__.py")
+        init_py.write_text(text, encoding="utf-8")
 
 
 def main():
@@ -230,17 +501,24 @@ def main():
         build_command += "--noinclude-numba-mode=nofollow "
         for module in NUITKA_NOFOLLOW_MODULES:
             build_command += f"--nofollow-import-to={module} "
+        for module in STDLIB_INCLUDE_MODULES:
+            build_command += f"--include-module={module} "
         build_command += "entry.py"
 
         if run_cmd(build_command) != 0:
             sys.exit("Nuitka build failed")
         bundle_nofollow_packages()
+        bundle_funasr_runtime_packages()
+        bundle_stdlib_modules()
     else:
         print("Skipping Nuitka build (--quick-test)")
         DIST_DIR.mkdir(parents=True, exist_ok=True)
         exe_path = DIST_DIR / "entry.exe"
         if not exe_path.exists():
             exe_path.write_text("Dummy executable")
+        bundle_nofollow_packages()
+        bundle_funasr_runtime_packages()
+        bundle_stdlib_modules()
 
     useless_dlls = []
     for dll in useless_dlls:

@@ -35,6 +35,7 @@ class RemoteApi:
     def __init__(self, base_url: str):
         self.base_url = base_url.rstrip('/')
         self._token = ''
+        self._session = requests.Session()
 
     def set_token(self, token: str):
         self._token = token or ''
@@ -47,8 +48,22 @@ class RemoteApi:
 
     def _request(self, method: str, path: str, **kwargs):
         url = f'{self.base_url}{path}'
+        timeout = kwargs.pop('timeout', 30)
         try:
-            resp = requests.request(method, url, headers=self._headers(), timeout=30, **kwargs)
+            # connect / read 分开，避免连接阶段拖满整个 timeout
+            if isinstance(timeout, (int, float)):
+                timeout = (min(10.0, float(timeout)), float(timeout))
+            resp = self._session.request(
+                method, url, headers=self._headers(), timeout=timeout, **kwargs
+            )
+        except requests.exceptions.ConnectTimeout as e:
+            raise ApiError(
+                f'无法连接服务器（连接超时）：{self.base_url}，请检查网络或稍后重试'
+            ) from e
+        except requests.exceptions.ReadTimeout as e:
+            raise ApiError(
+                f'服务器响应超时：{self.base_url}，请稍后重试'
+            ) from e
         except requests.RequestException as e:
             raise ApiError(f'无法连接服务器：{e}') from e
         if resp.status_code >= 400:
@@ -77,14 +92,30 @@ class RemoteApi:
             role=user.get('role', 'user'),
         )
 
-    def validate_session(self) -> bool:
+    def check_session(self) -> str:
+        """校验登录会话。
+
+        Returns:
+            "valid" — 会话有效
+            "invalid" — 明确无效（无 token / 401 / 403 / is_active=False）
+            "unreachable" — 网络或服务端暂时不可达（不应因此封禁客户端）
+        """
         if not self._token:
-            return False
+            return 'invalid'
         try:
-            data = self._request('GET', '/api/auth/me') or {}
-            return bool(data.get('is_active', True))
-        except ApiError:
-            return False
+            # 探活略放宽，降低服务端短暂变慢时的误判
+            data = self._request('GET', '/api/auth/me', timeout=10) or {}
+            if not bool(data.get('is_active', True)):
+                return 'invalid'
+            return 'valid'
+        except ApiError as exc:
+            if exc.status_code in (401, 403):
+                return 'invalid'
+            return 'unreachable'
+
+    def validate_session(self) -> bool:
+        """兼容旧调用：仅在明确有效时返回 True。"""
+        return self.check_session() == 'valid'
 
     def fetch_secrets(self) -> dict:
         return self._request('GET', '/api/client/secrets') or {}

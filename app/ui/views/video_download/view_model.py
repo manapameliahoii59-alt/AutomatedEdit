@@ -3,7 +3,7 @@ import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from PySide6.QtCore import Signal
+from PySide6.QtCore import QTimer, Signal
 from qfluentwidgets import qconfig
 
 from app.common.aes import aes_encrypt
@@ -30,6 +30,16 @@ from app.data.services.usage_service import UsageService
 MAX_DOWNLOAD_EPISODE = 10
 
 
+def _format_changdu_precheck_error(detail: str) -> str:
+    """将常读前置检查失败映射为可读错误（避免把业务错误当成登录过期）。"""
+    text = (detail or "").strip() or "未知错误"
+    if any(k in text for k in ("查询时间", "查询天数", "最大查询")):
+        return f"剧目列表查询参数无效：{text}"
+    if any(k in text for k in ("登录", "未登录", "过期", "passport", "401", "403")):
+        return f"登录态已过期，请重新登录常读平台（{text}）"
+    return f"剧目查询前置检查失败：{text}"
+
+
 @dataclass
 class VideoDownloadTarget:
     id: str
@@ -48,7 +58,8 @@ class VideoDownloadViewModel(ViewModel):
     authStatusChanged = Signal(bool, str)
     messageReceived = Signal(str)
     errorOccurred = Signal(str)
-    clipHandoffRequested = Signal(list)
+    clipHandoffRequested = Signal(list, bool, bool, bool)  # folders, run_plan, run_render, switch_tab
+    transcribeDoneForClip = Signal(str)
     settingsLoaded = Signal(dict)
 
     def __init__(self, parent=None):
@@ -58,7 +69,10 @@ class VideoDownloadViewModel(ViewModel):
         self._cancel_requested = False
         self._default_from = 1
         self._default_to = 10
+        self._incremental_planned_folders: set[str] = set()
+        self._pending_render_folders: list[str] = []
         self.targetsChanged.emit(self._targets)
+        self.transcribeDoneForClip.connect(self._on_transcribe_done_for_clip)
         self._load_settings_from_server()
 
     def refresh_auth_status(self) -> None:
@@ -98,6 +112,10 @@ class VideoDownloadViewModel(ViewModel):
             qconfig.set(cfg.video_download_auto_unzip, bool(vd["auto_unzip"]))
         if vd.get("auto_transcribe") is not None:
             qconfig.set(cfg.video_download_auto_transcribe, bool(vd["auto_transcribe"]))
+        if vd.get("auto_plan") is not None:
+            qconfig.set(cfg.video_download_auto_plan, bool(vd["auto_plan"]))
+        elif vd.get("auto_import_clip"):
+            qconfig.set(cfg.video_download_auto_plan, True)
         if vd.get("auto_import_clip") is not None:
             qconfig.set(cfg.video_download_auto_import_clip, bool(vd["auto_import_clip"]))
         if vd.get("auto_start_after_add") is not None:
@@ -133,8 +151,10 @@ class VideoDownloadViewModel(ViewModel):
             self.loadingChanged.emit(True, title, content)
 
     def _remove_task(self) -> None:
-        self._active_tasks -= 1
-        if self._active_tasks == 0:
+        if self._active_tasks > 0:
+            self._active_tasks -= 1
+        if self._active_tasks <= 0:
+            self._active_tasks = 0
             self.loadingChanged.emit(False, "", "")
 
     def request_cancel(self) -> None:
@@ -200,15 +220,17 @@ class VideoDownloadViewModel(ViewModel):
             if result.get("ok"):
                 self.authStatusChanged.emit(True, "登录态有效")
                 self.messageReceived.emit("常读平台登录态有效")
-            else:
+                return
+            detail = str(result.get("message") or result.get("code") or "未知错误")
+            msg = _format_changdu_precheck_error(detail)
+            if "登录态已过期" in msg:
                 self.authStatusChanged.emit(False, "登录已过期")
-                self.errorOccurred.emit(
-                    f"登录态无效：{result.get('message') or result.get('code')}"
-                )
+            self.errorOccurred.emit(msg)
 
         def _on_error(msg: str):
             self._remove_task()
-            self.authStatusChanged.emit(False, "登录已过期")
+            if any(k in msg for k in ("登录", "过期", "401", "403")):
+                self.authStatusChanged.emit(False, "登录已过期")
             self.errorOccurred.emit(f"验证失败：{msg}")
 
         task_manager.submit_task(_do_check, on_success=_on_success, on_error=_on_error)
@@ -259,15 +281,27 @@ class VideoDownloadViewModel(ViewModel):
         if not names:
             self.errorOccurred.emit("请至少输入一个剧名（每行一个）")
             return
+        if not is_auth_file_present():
+            self.errorOccurred.emit("请先登录常读平台")
+            return
         if self._active_tasks > 0:
             self.messageReceived.emit("当前有任务进行中，请稍候")
             return
 
-        self._add_task("正在验证剧名", "请稍候…")
+        self._add_task("正在添加剧目", "先验证登录态，再查询剧名…")
 
         def _do_lookup():
             def _run():
                 with SeriesListClient(headless=True) as client:
+                    auth = client.check_auth()
+                    if not auth.get("ok"):
+                        detail = str(
+                            auth.get("message") or auth.get("code") or "未知错误"
+                        )
+                        raise RuntimeError(_format_changdu_precheck_error(detail))
+                    if self._is_cancelled():
+                        raise RuntimeError("任务已取消")
+
                     results = []
                     for name in names:
                         if self._is_cancelled():
@@ -295,6 +329,7 @@ class VideoDownloadViewModel(ViewModel):
 
         def _on_success(results: list[dict]):
             self._remove_task()
+            self.authStatusChanged.emit(True, "登录态有效")
             ok = [r for r in results if r["ok"]]
             failed = [r for r in results if not r["ok"]]
 
@@ -328,6 +363,8 @@ class VideoDownloadViewModel(ViewModel):
         def _on_error(msg: str):
             if self._finish_task_with_error(msg, cancelled_message="剧名验证已取消"):
                 return
+            if "登录态已过期" in msg or "登录可能已过期" in msg:
+                self.authStatusChanged.emit(False, "登录已过期")
             self.errorOccurred.emit(f"剧名验证失败：{msg}")
 
         task_manager.submit_task(_do_lookup, on_success=_on_success, on_error=_on_error)
@@ -426,8 +463,14 @@ class VideoDownloadViewModel(ViewModel):
             return
 
         self._add_task("正在下载", "视频下载任务进行中，请稍候…")
+        self._incremental_planned_folders.clear()
+        self._pending_render_folders.clear()
         self._set_all_status("处理中" if not create_only else "创建任务中")
         targets_payload = self._targets_to_payload()
+
+        def _on_transcribe_done(folder: str) -> None:
+            self.transcribeDoneForClip.emit(folder)
+
         opts = BatchDownloadOptions(
             download_dir=resolve_video_download_root(),
             create_only=create_only,
@@ -437,6 +480,7 @@ class VideoDownloadViewModel(ViewModel):
             cancel_check=lambda: self._cancel_requested,
             auto_unzip_and_delete=cfg.video_download_auto_unzip.value,
             auto_transcribe=cfg.video_download_auto_transcribe.value,
+            on_transcribe_done=_on_transcribe_done,
             on_download_progress=self._handle_download_progress,
             on_target_status=self._update_target_status,
         )
@@ -451,24 +495,55 @@ class VideoDownloadViewModel(ViewModel):
             return playwright_worker.run(_run)
 
         def _on_success(_result: dict):
+            # 先清忙态，避免后续 handoff/上报异常导致「正在下载」一直挂着
             self._remove_task()
-            if create_only:
-                for t in self._targets:
-                    t.status = "已创建"
-            else:
-                for t in self._targets:
-                    if t.status in ("处理中", "转码中") or t.status.startswith("下载中"):
-                        t.status = "已完成"
-            self.targetsChanged.emit(self._targets)
-            if create_only:
-                self.messageReceived.emit("下载任务已创建，可稍后点击「继续下载」")
-            else:
+            try:
+                if create_only:
+                    for t in self._targets:
+                        t.status = "已创建"
+                else:
+                    for t in self._targets:
+                        if t.status in ("处理中", "转码中") or t.status.startswith("下载中"):
+                            t.status = "已完成"
+                self.targetsChanged.emit(self._targets)
+                if create_only:
+                    self.messageReceived.emit("下载任务已创建，可稍后点击「继续下载」")
+                    return
                 self.messageReceived.emit("批量下载流程已结束，详见下方日志")
                 downloaded = [t.name for t in self._targets if t.status == "已完成"]
                 UsageService.report_download_dramas(downloaded)
-                folders = _result.get("transcribed_folders") or []
-                if cfg.video_download_auto_import_clip.value and folders:
-                    self.clipHandoffRequested.emit(folders)
+                folders = (_result or {}).get("transcribed_folders") or []
+                auto_plan = (
+                    cfg.video_download_auto_plan.value
+                    or cfg.video_download_auto_import_clip.value
+                )
+                auto_clip = cfg.video_download_auto_import_clip.value
+                if auto_clip and folders:
+                    # 与增量策划目录合并，避免 wait_all 漏掉已识别剧目导致只渲一部
+                    merged = list(
+                        dict.fromkeys(
+                            [
+                                *folders,
+                                *self._incremental_planned_folders,
+                            ]
+                        )
+                    )
+                    self._schedule_batch_render(merged)
+                elif auto_plan and folders:
+                    missed = [
+                        f for f in folders if f not in self._incremental_planned_folders
+                    ]
+                    if missed:
+                        # 补策划也不切页；切页只发生在下方「整批结束」处
+                        self.clipHandoffRequested.emit(missed, True, False, False)
+                # 仅在整批下载（含识别队列）全部结束后切到剪辑页；单部完成时不切
+                if (auto_plan or auto_clip) and (
+                    folders or self._incremental_planned_folders
+                ):
+                    self.clipHandoffRequested.emit([], False, False, True)
+            except Exception as exc:
+                self._append_log(f"❌ 下载收尾异常: {exc}")
+                self.errorOccurred.emit(f"下载已完成，但收尾处理失败：{exc}")
 
         def _on_error(msg: str):
             cancelled = "已取消" in msg
@@ -484,6 +559,75 @@ class VideoDownloadViewModel(ViewModel):
             self.errorOccurred.emit(msg)
 
         task_manager.submit_task(_do_download, on_success=_on_success, on_error=_on_error)
+
+    def _on_transcribe_done_for_clip(self, folder: str) -> None:
+        """单部剧识别完成：若开启自动策划，立即策划（不等其余剧下载完）。"""
+        if not folder:
+            return
+        auto_plan = (
+            cfg.video_download_auto_plan.value
+            or cfg.video_download_auto_import_clip.value
+        )
+        if not auto_plan:
+            return
+        if folder in self._incremental_planned_folders:
+            return
+        self._incremental_planned_folders.add(folder)
+        name = Path(folder).name
+        self._append_log(f"   🎬《{name}》识别完成，开始自动策划…")
+        # 下载未全部结束前不切页
+        self.clipHandoffRequested.emit([folder], True, False, False)
+
+    def _schedule_batch_render(self, folders: list[str]) -> None:
+        """批量下载结束后渲染：等全部策划就绪（或超时）再一次性入队，避免只渲一部。"""
+        # 规范化路径，避免同一剧因路径写法不同被当成两部/漏检策划文件
+        normalized: list[str] = []
+        seen: set[str] = set()
+        for folder in folders:
+            key = str(Path(folder).resolve()) if folder else ""
+            if not key or key in seen:
+                continue
+            seen.add(key)
+            normalized.append(key)
+        self._pending_render_folders = normalized
+        self._render_poll_attempts = 0
+        self._append_log(
+            f"   ⏳ 等待 {len(normalized)} 部剧策划完成后再开始渲染…"
+        )
+        self._try_render_pending_planned()
+
+    def _try_render_pending_planned(self) -> None:
+        from app.common.drama_artifact_paths import locate_production_plan
+
+        ready = [
+            f for f in self._pending_render_folders if locate_production_plan(f)
+        ]
+        still = [f for f in self._pending_render_folders if f not in ready]
+        self._render_poll_attempts = getattr(self, "_render_poll_attempts", 0) + 1
+        # 2s 一轮，最多约 5 分钟
+        max_attempts = 150
+        wait_for_all = bool(still) and self._render_poll_attempts < max_attempts
+
+        if wait_for_all:
+            if self._render_poll_attempts == 1 or self._render_poll_attempts % 5 == 0:
+                self._append_log(
+                    f"   ⏳ 策划进度 {len(ready)}/{len(self._pending_render_folders)}，"
+                    f"待完成：{'、'.join(Path(f).name for f in still)}"
+                )
+            QTimer.singleShot(2000, self._try_render_pending_planned)
+            return
+
+        if ready:
+            names = "、".join(Path(f).name for f in ready)
+            self._append_log(
+                f"   🎬 {len(ready)} 部剧策划已就绪，一并加入渲染队列：{names}"
+            )
+            self.clipHandoffRequested.emit(ready, False, True, False)
+        if still:
+            names = "、".join(Path(f).name for f in still)
+            self._append_log(f"   ⚠ 以下剧目策划未完成，已跳过渲染：{names}")
+            self.errorOccurred.emit(f"以下剧目策划未完成，无法自动渲染：\n{names}")
+        self._pending_render_folders = []
 
     def set_download_dir(self, path: str) -> None:
         cfg.video_download_dir.value = path.strip()

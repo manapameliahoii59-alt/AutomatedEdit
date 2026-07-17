@@ -27,6 +27,7 @@ from app.common.config import cfg
 from app.common.export_paths import build_clip_export_filename, resolve_clip_export_root
 from app.common.utils import setup_confirm_dialog, show_dialog, show_toast
 from app.data.models.drama_project import DramaProject, DramaStatus
+from app.data.services.changdu_paths import resolve_video_download_root
 from app.ui.components.bar import ProgressInfoBar
 
 from .view_model import ClipEditViewModel
@@ -45,6 +46,7 @@ class ClipEditPage(ScrollArea):
         self.vm = ClipEditViewModel(self)
         self.setObjectName("clip_edit_page")
         self.loading_bar = None
+        self._busy = False
         self._init_ui()
         self._bind_view_model()
 
@@ -237,6 +239,9 @@ class ClipEditPage(ScrollArea):
                 lambda _=False, pid=project.id: self._confirm_delete(pid)
             )
 
+            for btn in (transcribe_btn, plan_btn, render_btn, del_btn):
+                btn.setEnabled(not self._busy)
+
             cell_layout.addWidget(transcribe_btn)
             cell_layout.addWidget(plan_btn)
             cell_layout.addWidget(render_btn)
@@ -351,13 +356,20 @@ class ClipEditPage(ScrollArea):
         os.startfile(path)
 
     def _pick_drama_folder(self):
+        start = (cfg.clip_last_import_dir.value or "").strip()
+        if not start or not os.path.isdir(start):
+            start = resolve_video_download_root()
         folder = QFileDialog.getExistingDirectory(
             self,
             "选择剧集文件夹",
-            "",
+            start,
             QFileDialog.Option.ShowDirsOnly | QFileDialog.Option.DontResolveSymlinks,
         )
         if folder:
+            # 记住上一级目录，下次可直接挑选同目录下的其他剧
+            parent = os.path.dirname(folder.rstrip("\\/"))
+            remember = parent if parent and os.path.isdir(parent) else folder
+            qconfig.set(cfg.clip_last_import_dir, remember)
             self.vm.import_drama_folder(folder)
 
     def _handle_loading_content(self, content: str):
@@ -384,6 +396,19 @@ class ClipEditPage(ScrollArea):
             break
 
     def _handle_loading(self, loading: bool, title: str, content: str):
+        self._busy = loading
+        for w in (
+            self.export_browse_btn,
+            self.export_open_btn,
+            self.export_name_tag_input,
+            self.batch_all_btn,
+            self.batch_transcribe_btn,
+            self.batch_plan_btn,
+            self.batch_render_btn,
+            self.import_btn,
+            self.table,
+        ):
+            w.setEnabled(not loading)
         if loading:
             if self.loading_bar is None or not isValid(self.loading_bar):
                 self.loading_bar = ProgressInfoBar(title, content, self)
@@ -394,6 +419,7 @@ class ClipEditPage(ScrollArea):
                 self.loading_bar.contentLabel.setText(content)
         else:
             self._close_loading()
+            self._refresh_table(self.vm.get_projects())
 
     def _on_progress_cancelled(self):
         self.loading_bar = None

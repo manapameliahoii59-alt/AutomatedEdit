@@ -1,5 +1,3 @@
-from unittest.mock import MagicMock
-
 from app.core.render_queue import CANCEL_MESSAGE, RenderQueue
 from app.data.services.render_service import RenderCancelled, RenderService
 
@@ -10,23 +8,71 @@ class TestRenderQueueCancel:
         self.queue = RenderQueue.instance()
 
     def test_request_cancel_skips_pending_tasks(self):
-        started = []
         errors = []
 
         def make_task(name):
             def task():
-                started.append(name)
                 return name
 
             return task
 
-        self.queue.submit(make_task("first"), on_error=lambda msg: errors.append(("first", msg)))
-        self.queue.submit(make_task("second"), on_error=lambda msg: errors.append(("second", msg)))
+        self.queue.submit(
+            make_task("first"), on_error=lambda msg: errors.append(("first", msg))
+        )
+        self.queue.submit(
+            make_task("second"), on_error=lambda msg: errors.append(("second", msg))
+        )
 
         self.queue.request_cancel()
 
         assert ("second", CANCEL_MESSAGE) in errors
         assert self.queue.is_cancelled()
+
+    def test_runs_second_after_first_completes(self, qtbot):
+        """第一部完成后必须自动开渲第二部（不依赖 TaskManager）。"""
+        done = []
+
+        def make_task(name):
+            def task():
+                return name
+
+            return task
+
+        self.queue.submit(
+            make_task("first"),
+            on_success=lambda r: done.append(r),
+        )
+        self.queue.submit(
+            make_task("second"),
+            on_success=lambda r: done.append(r),
+        )
+
+        qtbot.waitUntil(lambda: done == ["first", "second"], timeout=3000)
+        qtbot.waitUntil(lambda: not self.queue.is_busy(), timeout=2000)
+
+    def test_runs_queued_job_even_if_success_callback_raises(self, qtbot):
+        """一部剧成功回调异常时，仍应继续渲染队列中的下一部。"""
+        done = []
+
+        def make_task(name):
+            def task():
+                return name
+
+            return task
+
+        def ok_then_raise(result):
+            done.append(("ok", result))
+            raise RuntimeError("toast boom")
+
+        def ok_second(result):
+            done.append(("ok", result))
+
+        self.queue.submit(make_task("first"), on_success=ok_then_raise)
+        self.queue.submit(make_task("second"), on_success=ok_second)
+
+        qtbot.waitUntil(lambda: ("ok", "second") in done, timeout=3000)
+        assert ("ok", "first") in done
+        qtbot.waitUntil(lambda: not self.queue.is_busy(), timeout=2000)
 
     def test_render_raises_when_cancelled_before_plan(self, tmp_path, monkeypatch):
         project_path = tmp_path / "drama"

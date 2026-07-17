@@ -179,8 +179,10 @@ class SeriesListClient:
 
     @staticmethod
     def _default_series_date_range(days: int = 30) -> dict[str, str]:
+        """与常读列表页一致：含首尾共 days 天（如 30 → 6/17～7/16）。"""
         end = datetime.now()
-        start = end - timedelta(days=days)
+        # timedelta(days=30) 会得到 31 个自然日，触发「超过最大查询天数」
+        start = end - timedelta(days=max(days - 1, 0))
         return {
             "start_time": start.strftime("%Y-%m-%d"),
             "end_time": end.strftime("%Y-%m-%d"),

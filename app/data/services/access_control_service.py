@@ -5,6 +5,7 @@ from __future__ import annotations
 import random
 
 from app.common.config import cfg
+from app.common.my_logger import my_logger as logger
 from app.data.api.api import get_api
 
 _RANDOM_ERRORS = (
@@ -55,18 +56,33 @@ class AccessControlService:
             raise RuntimeError(self.random_error())
 
     def refresh(self) -> bool:
+        """刷新封禁状态。
+
+        - 会话有效 → 解封
+        - 明确无效 → 封禁
+        - 网络/服务不可达 → 保持原状态（避免把连不上 API 误判成封禁）
+        """
         if not self.is_remote_mode():
             self.unblock()
             return True
         api = get_api()
-        if not hasattr(api, "validate_session"):
+        if not hasattr(api, "check_session") and not hasattr(api, "validate_session"):
             return True
-        ok = api.validate_session()
-        if ok:
-            self.unblock()
+        if hasattr(api, "check_session"):
+            status = api.check_session()
         else:
+            status = "valid" if api.validate_session() else "invalid"
+
+        if status == "valid":
+            self.unblock()
+            return True
+        if status == "invalid":
             self.block()
-        return ok
+            return False
+        # 不可达：不误封；并解除可能由超时造成的误封，避免业务全卡死
+        logger.debug("会话校验暂时不可达，保持可用（不因网络误封禁）")
+        self.unblock()
+        return True
 
     def mask_login_error(self, error: str, status_code: int | None = None) -> str:
         if (error or "").strip() == "无效":

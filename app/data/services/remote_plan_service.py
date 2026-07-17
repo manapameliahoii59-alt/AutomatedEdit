@@ -16,9 +16,30 @@ from app.data.api.api import ApiError, get_api
 from app.data.models.drama_project import DramaProject
 
 
+def _is_transient_api_error(exc: BaseException) -> bool:
+    """连接超时、断连等可重试的网络错误。"""
+    if not isinstance(exc, ApiError):
+        return False
+    msg = str(exc).lower()
+    needles = (
+        "无法连接服务器",
+        "connecttimeout",
+        "connectionerror",
+        "readtimeout",
+        "timed out",
+        "max retries exceeded",
+        "connection aborted",
+        "connection reset",
+    )
+    return any(n in msg for n in needles)
+
+
 class RemotePlanService:
     POLL_INTERVAL_SEC = 2.0
     POLL_TIMEOUT_SEC = 20 * 60
+    # 单次请求失败后的重试（提交 / 轮询 / 取结果）
+    REQUEST_RETRIES = 5
+    REQUEST_RETRY_DELAY_SEC = 3.0
 
     @staticmethod
     def _require_api():
@@ -63,6 +84,20 @@ class RemotePlanService:
         }
 
     @classmethod
+    def _call_with_retry(cls, fn: Callable[[], Any]) -> Any:
+        last_err: BaseException | None = None
+        for attempt in range(1, cls.REQUEST_RETRIES + 1):
+            try:
+                return fn()
+            except ApiError as e:
+                last_err = e
+                if not _is_transient_api_error(e) or attempt >= cls.REQUEST_RETRIES:
+                    raise
+                time.sleep(cls.REQUEST_RETRY_DELAY_SEC * attempt)
+        assert last_err is not None
+        raise last_err
+
+    @classmethod
     def plan(
         cls,
         project: DramaProject,
@@ -77,21 +112,22 @@ class RemotePlanService:
         payload = cls._build_payload(project)
         plan_output = prepare_write_path(project.folder_path, script=False)
 
-        job = api.create_plan_job(payload)
+        job = cls._call_with_retry(lambda: api.create_plan_job(payload))
         job_id = job.get("job_id") or job.get("id")
         if not job_id:
             raise RuntimeError("服务端未返回策划任务 ID")
 
         deadline = time.time() + cls.POLL_TIMEOUT_SEC
         while time.time() < deadline:
-            status = api.get_plan_job_status(job_id)
+            status = cls._call_with_retry(lambda: api.get_plan_job_status(job_id))
             progress = status.get("progress") or {}
             if progress_callback and progress:
                 progress_callback(progress)
 
             state = status.get("status") or ""
             if state == "done":
-                result = api.get_plan_job_result(job_id)
+                result = cls._call_with_retry(lambda: api.get_plan_job_result(job_id))
+
                 plans = decrypt_plan_payload(
                     plan_key,
                     result["ciphertext"],

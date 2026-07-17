@@ -28,17 +28,27 @@ class AuthService:
             return False
 
         api = get_api()
-        if not api.validate_session():
+        status = api.check_session() if hasattr(api, "check_session") else (
+            "valid" if api.validate_session() else "invalid"
+        )
+        if status == "valid":
+            access_control.unblock()
+            self._apply_secrets(api)
+            return True
+        if status == "invalid":
             access_control.block()
             return False
-        access_control.unblock()
-        self._apply_secrets(api)
-        return True
+        # 服务暂时不可达：不封禁，也不当作自动登录成功
+        return False
 
     def _apply_secrets(self, api) -> None:
         if not hasattr(api, 'fetch_secrets'):
             return
-        secrets = api.fetch_secrets()
+        try:
+            secrets = api.fetch_secrets()
+        except ApiError:
+            # 密钥拉取失败不阻断登录；策划密钥可稍后重试
+            return
         deepseek = (secrets.get('deepseek_keys') or '').strip()
         dashscope = (secrets.get('dashscope_key') or '').strip()
         plan_key = (secrets.get('plan_decrypt_key') or '').strip()
