@@ -137,7 +137,10 @@ class RenderService:
                 if not cached:
                     if should_cancel and should_cancel():
                         raise RenderCancelled("渲染已取消")
-                    raise RuntimeError(f"集数缓存失败: {ep_name}")
+                    raise RuntimeError(
+                        f"集数缓存失败: {ep_name}（请确认本机 FFmpeg 可用；"
+                        f"无 NVIDIA 显卡时会自动使用 CPU 编码）"
+                    )
 
         total = len(plans)
         success_count = 0
@@ -345,31 +348,49 @@ class RenderService:
         af = f"aresample=44100,aformat=channel_layouts=stereo,atempo={speed}"
 
         has_audio = RenderService._has_audio_stream(ffprobe, src_path, ctx.probe_cache)
-        cmd = [ffmpeg, "-y", "-i", src_path]
-        if has_audio:
-            cmd.extend(["-vf", vf, "-af", af, "-map", "0:v:0", "-map", "0:a:0"])
-        else:
-            cmd.extend(
-                [
-                    "-f", "lavfi", "-i", "anullsrc=channel_layout=stereo:sample_rate=44100",
-                    "-vf", vf,
-                    "-filter:a", af,
-                    "-map", "0:v:0", "-map", "1:a:0",
-                    "-shortest",
-                ]
-            )
-        cmd.extend(["-c:v", ctx.enc_v, "-preset", "p4" if ctx.use_gpu else "veryfast"])
-        if ctx.use_gpu:
-            cmd.extend(["-cq", "24"])
-        else:
-            cmd.extend(["-crf", "22"])
-        cmd.extend(["-c:a", "aac", "-b:a", "128k", cache_path])
+
+        def _build_cmd(*, use_gpu: bool) -> list[str]:
+            cmd = [ffmpeg, "-y", "-i", src_path]
+            if has_audio:
+                cmd.extend(["-vf", vf, "-af", af, "-map", "0:v:0", "-map", "0:a:0"])
+            else:
+                cmd.extend(
+                    [
+                        "-f", "lavfi", "-i", "anullsrc=channel_layout=stereo:sample_rate=44100",
+                        "-vf", vf,
+                        "-filter:a", af,
+                        "-map", "0:v:0", "-map", "1:a:0",
+                        "-shortest",
+                    ]
+                )
+            cmd.extend(RenderService._video_encode_args(use_gpu=use_gpu))
+            cmd.extend(["-c:a", "aac", "-b:a", "128k", cache_path])
+            return cmd
 
         label = f"缓存 {episode}×{speed}"
-        if not RenderService._run_ffmpeg(
-            cmd, label, should_cancel=should_cancel, register_proc=register_proc
-        ):
+        attempts = [ctx.use_gpu]
+        if ctx.use_gpu:
+            attempts.append(False)  # GPU 失败则回退 CPU
+        last_err = ""
+        for use_gpu in attempts:
+            ok, err = RenderService._run_ffmpeg(
+                _build_cmd(use_gpu=use_gpu),
+                label if use_gpu == ctx.use_gpu else f"{label}(CPU回退)",
+                should_cancel=should_cancel,
+                register_proc=register_proc,
+            )
+            if ok:
+                break
+            last_err = err or "ffmpeg 失败"
+            if os.path.exists(cache_path):
+                try:
+                    os.remove(cache_path)
+                except OSError:
+                    pass
+        else:
+            print(f"❌ {label} 最终失败: {last_err}", flush=True)
             return None
+
         if not RenderService._validate_output(ffprobe, cache_path, ctx.probe_cache):
             print(f"⚠️ 缓存产物无效: {cache_path}", flush=True)
             if os.path.exists(cache_path):
@@ -500,7 +521,8 @@ class RenderService:
         *,
         should_cancel: Callable[[], bool] | None = None,
         register_proc: Callable | None = None,
-    ):
+    ) -> tuple[bool, str]:
+        """执行 ffmpeg。返回 (是否成功, 失败时的 stderr/说明)。"""
         proc = None
         cmd = RenderService._quiet_ffmpeg_cmd(cmd)
         try:
@@ -518,7 +540,7 @@ class RenderService:
                         proc.kill()
                         proc.wait()
                         print(f"⏹ {desc} 已取消", flush=True)
-                        return False
+                        return False, "已取消"
                     time.sleep(0.25)
                 stderr_sink.seek(0)
                 stderr = stderr_sink.read().decode("utf-8", errors="ignore").strip()
@@ -527,10 +549,11 @@ class RenderService:
                         print(f"❌ {desc} 失败: {stderr}", flush=True)
                     else:
                         print(f"❌ {desc} 失败，退出码: {proc.returncode}", flush=True)
-                return proc.returncode == 0
+                    return False, stderr or f"退出码 {proc.returncode}"
+                return True, ""
         except Exception as e:
             print(f"❌ {desc} 异常: {e}", flush=True)
-            return False
+            return False, str(e)
         finally:
             if register_proc:
                 register_proc(None)
@@ -562,16 +585,53 @@ class RenderService:
 
     @staticmethod
     def _has_nvenc(ffmpeg: str) -> bool:
+        """真正试编一帧，避免仅因 ffmpeg 编译进了 nvenc 就误判可用。"""
         try:
-            proc = win_run(
+            listed = win_run(
                 [ffmpeg, "-hide_banner", "-encoders"],
                 capture_output=True,
                 text=True,
                 timeout=30,
             )
-            return "h264_nvenc" in proc.stdout
+            if "h264_nvenc" not in (listed.stdout or ""):
+                return False
+            with tempfile.TemporaryDirectory(prefix="ae_nvenc_") as td:
+                out = os.path.join(td, "probe.mp4")
+                probe = win_run(
+                    [
+                        ffmpeg,
+                        "-hide_banner",
+                        "-loglevel",
+                        "error",
+                        "-y",
+                        "-f",
+                        "lavfi",
+                        "-i",
+                        "color=c=black:s=64x64:d=0.1",
+                        "-frames:v",
+                        "1",
+                        "-c:v",
+                        "h264_nvenc",
+                        "-f",
+                        "mp4",
+                        out,
+                    ],
+                    capture_output=True,
+                    text=True,
+                    timeout=45,
+                )
+                ok = probe.returncode == 0 and os.path.isfile(out) and os.path.getsize(out) > 0
+                if not ok:
+                    print("   ℹ️ NVENC 不可用，将使用 CPU(libx264) 编码", flush=True)
+                return ok
         except Exception:
             return False
+
+    @staticmethod
+    def _video_encode_args(*, use_gpu: bool) -> list[str]:
+        if use_gpu:
+            return ["-c:v", "h264_nvenc", "-preset", "p4", "-cq", "24"]
+        return ["-c:v", "libx264", "-preset", "veryfast", "-crf", "22"]
 
     @staticmethod
     def _build_trim_filters(segment: ClipSegment, speed: float) -> tuple[str, str]:
@@ -689,17 +749,34 @@ class RenderService:
             render_cmd.extend(["-i", p])
         render_cmd.extend(["-i", outro_path])
         render_cmd.extend(["-filter_complex", "".join(filter_parts), "-map", "[v]", "-map", "[a]"])
-        render_cmd.extend(["-c:v", ctx.enc_v, "-preset", "p4" if ctx.use_gpu else "veryfast"])
-        if ctx.use_gpu:
-            render_cmd.extend(["-cq", "24"])
-        else:
-            render_cmd.extend(["-crf", "22"])
+        render_cmd.extend(RenderService._video_encode_args(use_gpu=ctx.use_gpu))
         render_cmd.extend(["-c:a", "aac", "-b:a", "192k", output_path])
 
-        success = RenderService._run_ffmpeg(render_cmd, "合成渲染", **ffmpeg_kwargs)
-        if success and not RenderService._validate_output(ffprobe, output_path, ctx.probe_cache):
+        success, err = RenderService._run_ffmpeg(render_cmd, "合成渲染", **ffmpeg_kwargs)
+        if not success and ctx.use_gpu:
+            if os.path.exists(output_path):
+                try:
+                    os.remove(output_path)
+                except OSError:
+                    pass
+            render_cmd_cpu = [ffmpeg, "-y"]
+            for p in input_paths:
+                render_cmd_cpu.extend(["-i", p])
+            render_cmd_cpu.extend(["-i", outro_path])
+            render_cmd_cpu.extend(
+                ["-filter_complex", "".join(filter_parts), "-map", "[v]", "-map", "[a]"]
+            )
+            render_cmd_cpu.extend(RenderService._video_encode_args(use_gpu=False))
+            render_cmd_cpu.extend(["-c:a", "aac", "-b:a", "192k", output_path])
+            success, err = RenderService._run_ffmpeg(
+                render_cmd_cpu, "合成渲染(CPU回退)", **ffmpeg_kwargs
+            )
+        if not success:
+            print(f"❌ 合成渲染失败: {err}", flush=True)
+            return False
+        if not RenderService._validate_output(ffprobe, output_path, ctx.probe_cache):
             print(f"⚠️ 成片无效（时长需 >= {MIN_CUT_DURATION}s），跳过", flush=True)
             if os.path.exists(output_path):
                 os.remove(output_path)
             return False
-        return success
+        return True

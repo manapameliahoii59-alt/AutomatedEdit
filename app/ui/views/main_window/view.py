@@ -28,7 +28,7 @@ class MainWindow(FluentWindow):
         if sys.platform != "darwin":
             self.setWindowIcon(QIcon(':/resource/images/logo.png'))
             self.setWindowTitle(APP_NAME)
-        self.resize(1200, 800)
+        self.resize(1250, 800)
         
         # Center window
         if self.screen():

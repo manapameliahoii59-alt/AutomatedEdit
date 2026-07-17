@@ -41,6 +41,23 @@ class TestBuildSegments:
         assert RenderService.build_segments(config, 40) == []
 
 
+class TestNvencProbe:
+    def test_has_nvenc_requires_real_encode(self, monkeypatch, tmp_path):
+        calls = {"n": 0}
+
+        def fake_run(cmd, **kwargs):
+            calls["n"] += 1
+            class R:
+                stdout = "h264_nvenc"
+                returncode = 1  # 试编失败 = 无可用 GPU
+                stderr = "no nvenc device"
+            return R()
+
+        monkeypatch.setattr("app.data.services.render_service.win_run", fake_run)
+        assert RenderService._has_nvenc("ffmpeg") is False
+        assert calls["n"] >= 2  # encoders 列表 + 试编
+
+
 class TestTimeMapping:
     def test_map_time_to_cache(self):
         assert RenderService._map_time_to_cache(29, 1.15) == 29 / 1.15
@@ -86,7 +103,7 @@ class TestRunFfmpeg:
         monkeypatch.setattr(subprocess, "Popen", lambda *args, **kwargs: FakeProc())
 
         ok = RenderService._run_ffmpeg(["ffmpeg", "-version"], "测试")
-        assert ok is True
+        assert ok == (True, "")
 
     def test_cancel_kills_running_process(self, monkeypatch):
         proc = MagicMock()
@@ -96,7 +113,7 @@ class TestRunFfmpeg:
 
         cancelled = {"v": False}
 
-        ok = RenderService._run_ffmpeg(
+        ok, _err = RenderService._run_ffmpeg(
             ["ffmpeg"],
             "测试",
             should_cancel=lambda: (cancelled.__setitem__("v", True) or True),

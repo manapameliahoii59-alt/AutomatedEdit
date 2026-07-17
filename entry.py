@@ -58,6 +58,11 @@ install_dist_stdlib_importer()
 # 尽早静默子进程，避免 FunASR/ffmpeg 等弹出 CMD 黑框
 install_silent_subprocess()
 
+# 仅用内置路径改 PATH，禁止在此 import config/Qt（否则会抢在 torch 前加载 PySide6 → WinError 1114）
+from app.common.ffmpeg_paths import ensure_bundled_ffmpeg_on_path  # noqa: E402
+
+ensure_bundled_ffmpeg_on_path()
+
 # 必须在 PySide6 之前导入 torch，否则会因 DLL 加载顺序冲突导致 WinError 1114
 _splash.set_text("正在加载运行环境…")
 import torch  # noqa: E402

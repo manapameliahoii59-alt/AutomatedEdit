@@ -4,8 +4,6 @@ import shutil
 import sys
 from pathlib import Path
 
-from app.common.config import cfg
-
 _FFMPEG_REL = Path("tools") / "ffmpeg" / "win"
 
 
@@ -23,7 +21,27 @@ def _bundled_exe(name: str) -> Path:
     return _app_base_dir() / _FFMPEG_REL / f"{name}.exe"
 
 
+def ensure_bundled_ffmpeg_on_path() -> str | None:
+    """仅用内置 ffmpeg 目录改 PATH，不 import config/Qt（可在 import torch 之前调用）。"""
+    bundled = _bundled_exe("ffmpeg")
+    if not bundled.is_file():
+        return None
+    ff_dir = str(bundled.resolve().parent)
+    path = os.environ.get("PATH", "")
+    parts = path.split(os.pathsep) if path else []
+    if parts and os.path.normcase(parts[0]) == os.path.normcase(ff_dir):
+        return ff_dir
+    rest = [
+        p for p in parts
+        if p and os.path.normcase(p) != os.path.normcase(ff_dir)
+    ]
+    os.environ["PATH"] = os.pathsep.join([ff_dir, *rest])
+    return ff_dir
+
+
 def resolve_ffmpeg() -> str:
+    from app.common.config import cfg
+
     custom = cfg.ffmpeg_path.value
     if custom and os.path.isfile(custom):
         return custom
@@ -42,6 +60,8 @@ def resolve_ffmpeg() -> str:
 
 
 def resolve_ffprobe() -> str:
+    from app.common.config import cfg
+
     custom = cfg.ffprobe_path.value
     if custom and os.path.isfile(custom):
         return custom
@@ -59,7 +79,28 @@ def resolve_ffprobe() -> str:
     )
 
 
+def ensure_ffmpeg_on_path() -> str | None:
+    """将可用 ffmpeg 目录加入 PATH（含用户自定义路径）。可在 torch/Qt 就绪后调用。"""
+    try:
+        ffmpeg = resolve_ffmpeg()
+    except FileNotFoundError:
+        return ensure_bundled_ffmpeg_on_path()
+    ff_dir = str(Path(ffmpeg).resolve().parent)
+    path = os.environ.get("PATH", "")
+    parts = path.split(os.pathsep) if path else []
+    if parts and os.path.normcase(parts[0]) == os.path.normcase(ff_dir):
+        return ff_dir
+    rest = [
+        p for p in parts
+        if p and os.path.normcase(p) != os.path.normcase(ff_dir)
+    ]
+    os.environ["PATH"] = os.pathsep.join([ff_dir, *rest])
+    return ff_dir
+
+
 def effective_ffmpeg_display() -> str:
+    from app.common.config import cfg
+
     try:
         return resolve_ffmpeg()
     except FileNotFoundError:
@@ -67,6 +108,8 @@ def effective_ffmpeg_display() -> str:
 
 
 def effective_ffprobe_display() -> str:
+    from app.common.config import cfg
+
     try:
         return resolve_ffprobe()
     except FileNotFoundError:

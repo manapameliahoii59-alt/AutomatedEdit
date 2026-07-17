@@ -3,6 +3,8 @@ import os
 import re
 import time
 
+from app.common.ffmpeg_paths import ensure_ffmpeg_on_path, resolve_ffmpeg
+from app.common.my_logger import my_logger as logger
 from app.data.models.drama_project import DramaProject
 
 MODEL_ID = "iic/speech_paraformer-large-vad-punc_asr_nat-zh-cn-16k-common-vocab8404-pytorch"
@@ -30,9 +32,18 @@ class TranscriptionService:
         if not torch.cuda.is_available():
             warnings.append("未检测到 CUDA GPU，将使用 CPU 进行识别（速度较慢）")
 
+        # FunASR 解码 MP4 依赖 PATH 上的 ffmpeg
+        ensure_ffmpeg_on_path()
         try:
-            import os
-            cache_dir = os.path.join(os.path.expanduser("~"), ".cache", "modelscope", "hub")
+            resolve_ffmpeg()
+        except FileNotFoundError as e:
+            raise ImportError(str(e)) from e
+
+        try:
+            # ModelScope 实际缓存：~/.cache/modelscope/hub/models/<model_id>
+            cache_dir = os.path.join(
+                os.path.expanduser("~"), ".cache", "modelscope", "hub", "models"
+            )
             for label, model_id in [
                 ("视频识别", MODEL_ID),
                 ("VAD 静音检测", VAD_MODEL),
@@ -40,7 +51,9 @@ class TranscriptionService:
             ]:
                 model_path = os.path.join(cache_dir, model_id)
                 if not os.path.isdir(model_path):
-                    warnings.append(f"{label} 模型未缓存（首次使用需联网自动下载，耗时较长）")
+                    warnings.append(
+                        f"{label} 模型未缓存（首次使用需联网自动下载，耗时较长）"
+                    )
         except Exception:
             warnings.append("无法检查模型缓存状态，首次使用可能需要联网下载")
 
@@ -50,6 +63,7 @@ class TranscriptionService:
     def init_model(cls):
         if cls._model is not None:
             return
+        ensure_ffmpeg_on_path()
         import torch
         from funasr import AutoModel
         cls._torch = torch
@@ -79,6 +93,7 @@ class TranscriptionService:
 
         global_script = []
         start_time = time.time()
+        file_errors: list[str] = []
 
         for file in raw_files:
             file_path = os.path.join(project_path, file)
@@ -91,25 +106,48 @@ class TranscriptionService:
                     sentence_timestamp=True,
                 )
                 if not res:
+                    file_errors.append(f"{file}: 引擎返回空结果")
                     continue
                 data = res[0]
+                got_text = False
                 if "sentence_info" in data:
                     for info in data["sentence_info"]:
                         text = info["text"].replace(" ", "")
                         if text:
+                            got_text = True
                             global_script.append({
                                 "start": round(info["start"] / 1000.0, 3),
                                 "end": round(info["end"] / 1000.0, 3),
                                 "text": text,
                                 "source_file": file,
                             })
+                # 无分句时间戳时，尽量回退到整段文本，避免整剧判空
+                if not got_text:
+                    plain = str(data.get("text") or "").replace(" ", "").strip()
+                    if plain:
+                        global_script.append({
+                            "start": 0.0,
+                            "end": 0.0,
+                            "text": plain,
+                            "source_file": file,
+                        })
+                    else:
+                        file_errors.append(f"{file}: 无可用文本")
                 if torch.cuda.is_available():
                     torch.cuda.empty_cache()
             except Exception as e:
+                msg = f"{file}: {e}"
+                file_errors.append(msg)
                 print(f"   ❌ 识别报错 {file}: {e}")
+                logger.warning("识别报错 {}: {}", file, e)
 
         if not global_script:
-            raise RuntimeError(f"项目 {project.name} 未识别到任何内容")
+            detail = "；".join(file_errors[:5]) if file_errors else "未知原因"
+            if len(file_errors) > 5:
+                detail += f"…（共 {len(file_errors)} 集失败）"
+            raise RuntimeError(
+                f"项目 {project.name} 未识别到任何内容（{detail}）"
+            )
 
         from app.common.crypto import write_encrypted_json
         from app.common.drama_artifact_paths import finalize_written_artifact, prepare_write_path

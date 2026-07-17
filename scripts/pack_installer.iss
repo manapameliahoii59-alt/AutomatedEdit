@@ -46,7 +46,9 @@ Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{
 
 [Files]
 Source: "{#P}\out\entry.dist\{#MyAppExeName}"; DestDir: "{app}"; Flags: ignoreversion
-Source: "{#P}\out\entry.dist\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+; 排除 config.json：升级时保留用户本地配置，首次安装单独写入干净默认文件
+Source: "{#P}\out\entry.dist\*"; DestDir: "{app}"; Excludes: "config.json"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "{#P}\out\entry.dist\config.json"; DestDir: "{app}"; Flags: onlyifdoesntexist
 
 [Icons]
 Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"
@@ -55,6 +57,16 @@ Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: de
 
 [Run]
 Filename: "{app}\{#MyAppExeName}"; Description: "{cm:LaunchProgram,{#StringChange(MyAppName, '&', '&&')}}"; Flags: nowait postinstall skipifsilent
+
+; 运行期生成的文件（config/logs/changdu_data/crash.log 等）不在安装清单内，需显式清理
+[UninstallDelete]
+Type: filesandordirs; Name: "{app}\changdu_data"
+Type: filesandordirs; Name: "{app}\logs"
+Type: filesandordirs; Name: "{app}\__pycache__"
+Type: files; Name: "{app}\config.json"
+Type: files; Name: "{app}\crash.log"
+; 兜底：删除安装目录下剩余全部内容（含 Playwright 运行日志等）
+Type: filesandordirs; Name: "{app}"
 
 [Code]
 function EscapeForPowerShellSingleQuoted(const S: String): String;
@@ -143,7 +155,17 @@ begin
 end;
 
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
+var
+  AppDir: String;
 begin
   if CurUninstallStep = usUninstall then
     CloseAppRelatedProcesses;
+  { 卸载收尾再清一次安装目录，避免运行期新建文件残留 }
+  if CurUninstallStep = usPostUninstall then
+  begin
+    CloseAppRelatedProcesses;
+    AppDir := ExpandConstant('{app}');
+    if (AppDir <> '') and DirExists(AppDir) then
+      DelTree(AppDir, True, True, True);
+  end;
 end;

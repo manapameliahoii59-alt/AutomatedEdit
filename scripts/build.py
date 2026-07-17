@@ -271,13 +271,62 @@ def bundle_playwright_browsers() -> None:
 
 
 def bundle_config() -> None:
-    src = PROJECT_ROOT / "config.json"
+    """写入干净的默认配置，禁止把开发机登录态/密钥打进安装包。"""
+    import json
+
+    clean = {
+        "API": {
+            "access_token": "",
+            "base_url": "",
+            "plan_decrypt_key": "",
+        },
+        "MainWindow": {
+            "auto_login": False,
+            "save_password": True,
+        },
+        "User": {
+            "user": "",
+            "password": "",
+        },
+        "LLM": {
+            "dashscope_api_key": "",
+        },
+        "Tools": {
+            "changdu_email": "",
+            "changdu_password": "",
+            "clip_export_dir": "",
+            "clip_export_name_tag": "",
+            "clip_last_import_dir": "",
+            "deepseek_api_keys": "",
+            "ffmpeg_path": "",
+            "ffprobe_path": "",
+            "video_download_dir": "",
+            "video_download_auto_unzip": True,
+            "video_download_auto_transcribe": True,
+            "video_download_auto_plan": True,
+            "video_download_auto_import_clip": True,
+            "video_download_auto_start_after_add": True,
+        },
+        "Update": {
+            "dismissed_version": "",
+        },
+        "QFluentWidgets": {
+            "FontFamilies": [
+                "Segoe UI",
+                "Microsoft YaHei",
+                "PingFang SC",
+            ],
+            "ThemeColor": "#ff70d5f3",
+            "ThemeMode": "Light",
+        },
+    }
+    DIST_DIR.mkdir(parents=True, exist_ok=True)
     dst = DIST_DIR / "config.json"
-    if src.is_file():
-        shutil.copy2(src, dst)
-        print(f"Bundled config.json")
-    else:
-        print("Warning: config.json not found in project root, skipping")
+    dst.write_text(
+        json.dumps(clean, ensure_ascii=False, indent=4) + "\n",
+        encoding="utf-8",
+    )
+    print("Bundled clean default config.json (no credentials)")
 
 
 def cleanup_dist() -> None:
@@ -489,7 +538,7 @@ def main():
     build_resources()
 
     if not args.quick_test:
-        build_command = "nuitka --standalone --mingw64 --enable-plugin=pyside6 "
+        build_command = f'"{sys.executable}" -m nuitka --standalone --mingw64 --enable-plugin=pyside6 '
         build_command += "--assume-yes-for-downloads "
         build_command += "--windows-console-mode=disable "
         build_command += "--windows-icon-from-ico=resource/images/logo.ico "
