@@ -12,6 +12,11 @@ from qfluentwidgets import qconfig
 from app.common.aes import aes_encrypt, aes_decrypt
 from app.common.config import cfg
 from app.common.plan_crypto import decrypt_plan_payload
+from app.common.plan_settings import (
+    MIN_DURATION_SECONDS,
+    clamp_clip_count,
+    clamp_max_duration_seconds,
+)
 from app.data.api.api import ApiError, get_api
 from app.data.models.drama_project import DramaProject
 
@@ -81,6 +86,11 @@ class RemotePlanService:
             "drama_name": project.name,
             "steps": steps,
             "ordered_files": ordered_files,
+            "target_clips_count": clamp_clip_count(cfg.plan_clip_count.value),
+            "max_duration_seconds": clamp_max_duration_seconds(
+                cfg.plan_max_duration_sec.value
+            ),
+            "min_duration_seconds": MIN_DURATION_SECONDS,
         }
 
     @classmethod

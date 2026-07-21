@@ -71,7 +71,11 @@ class VideoDownloadViewModel(ViewModel):
         self._default_from = 1
         self._default_to = 10
         self._incremental_planned_folders: set[str] = set()
+        # 自动渲染：策划就绪一部就入队，后完成的剧不会因先渲完的剧被漏掉
         self._pending_render_folders: list[str] = []
+        self._render_submitted_folders: set[str] = set()
+        self._render_poll_active = False
+        self._render_poll_attempts = 0
         self.targetsChanged.emit(self._targets)
         self.transcribeDoneForClip.connect(self._on_transcribe_done_for_clip)
         self._load_settings_from_server()
@@ -132,6 +136,9 @@ class VideoDownloadViewModel(ViewModel):
                 return
             vd = data.get("video_download") or {}
             self._apply_video_download_settings(vd)
+            from app.common.plan_settings import apply_plan_settings_dict
+
+            apply_plan_settings_dict(data.get("plan"))
             self.settingsLoaded.emit(vd)
 
         def _on_error(_msg: str):
@@ -513,6 +520,9 @@ class VideoDownloadViewModel(ViewModel):
         self._add_task("正在下载", "视频下载任务进行中，请稍候…")
         self._incremental_planned_folders.clear()
         self._pending_render_folders.clear()
+        self._render_submitted_folders.clear()
+        self._render_poll_active = False
+        self._render_poll_attempts = 0
         self._set_all_status("处理中" if not create_only else "创建任务中")
         targets_payload = self._targets_to_payload()
 
@@ -567,7 +577,7 @@ class VideoDownloadViewModel(ViewModel):
                 )
                 auto_clip = cfg.video_download_auto_import_clip.value
                 if auto_clip and folders:
-                    # 与增量策划目录合并，避免 wait_all 漏掉已识别剧目导致只渲一部
+                    # 与增量策划目录合并，避免漏掉已识别剧目
                     merged = list(
                         dict.fromkeys(
                             [
@@ -576,7 +586,7 @@ class VideoDownloadViewModel(ViewModel):
                             ]
                         )
                     )
-                    self._schedule_batch_render(merged)
+                    self._enqueue_render_watch(merged)
                 elif auto_plan and folders:
                     missed = [
                         f for f in folders if f not in self._incremental_planned_folders
@@ -625,57 +635,95 @@ class VideoDownloadViewModel(ViewModel):
         self._append_log(f"   🎬《{name}》识别完成，开始自动策划…")
         # 下载未全部结束前不切页
         self.clipHandoffRequested.emit([folder], True, False, False)
+        # 开启自动渲染时：策划好一部就入渲，下载未结束也可先渲
+        if cfg.video_download_auto_import_clip.value:
+            self._enqueue_render_watch([folder])
 
-    def _schedule_batch_render(self, folders: list[str]) -> None:
-        """批量下载结束后渲染：等全部策划就绪（或超时）再一次性入队，避免只渲一部。"""
-        # 规范化路径，避免同一剧因路径写法不同被当成两部/漏检策划文件
-        normalized: list[str] = []
-        seen: set[str] = set()
+    @staticmethod
+    def _normalize_folder_key(folder: str) -> str:
+        if not folder:
+            return ""
+        try:
+            return str(Path(folder).resolve())
+        except OSError:
+            return str(Path(folder))
+
+    def _enqueue_render_watch(self, folders: list[str]) -> None:
+        """跟踪待渲染目录：策划文件一出现立即入队，不等「全部策划完」。"""
+        added = 0
         for folder in folders:
-            key = str(Path(folder).resolve()) if folder else ""
-            if not key or key in seen:
+            key = self._normalize_folder_key(folder)
+            if not key:
                 continue
-            seen.add(key)
-            normalized.append(key)
-        self._pending_render_folders = normalized
-        self._render_poll_attempts = 0
-        self._append_log(
-            f"   ⏳ 等待 {len(normalized)} 部剧策划完成后再开始渲染…"
-        )
-        self._try_render_pending_planned()
+            if key in self._render_submitted_folders:
+                continue
+            if key in self._pending_render_folders:
+                continue
+            self._pending_render_folders.append(key)
+            added += 1
+        if not self._pending_render_folders:
+            return
+        if added:
+            # 有新剧加入时重置超时计数，避免早期轮询耗尽导致后完成的剧被跳过
+            self._render_poll_attempts = 0
+            self._append_log(
+                f"   ⏳ 渲染跟进中：策划完成一部即加入队列"
+                f"（待跟进 {len(self._pending_render_folders)} 部）…"
+            )
+        if not self._render_poll_active:
+            self._render_poll_active = True
+            self._try_render_pending_planned()
 
     def _try_render_pending_planned(self) -> None:
         from app.common.drama_artifact_paths import locate_production_plan
 
-        ready = [
-            f for f in self._pending_render_folders if locate_production_plan(f)
-        ]
-        still = [f for f in self._pending_render_folders if f not in ready]
-        self._render_poll_attempts = getattr(self, "_render_poll_attempts", 0) + 1
-        # 2s 一轮，最多约 5 分钟
-        max_attempts = 150
-        wait_for_all = bool(still) and self._render_poll_attempts < max_attempts
-
-        if wait_for_all:
-            if self._render_poll_attempts == 1 or self._render_poll_attempts % 5 == 0:
-                self._append_log(
-                    f"   ⏳ 策划进度 {len(ready)}/{len(self._pending_render_folders)}，"
-                    f"待完成：{'、'.join(Path(f).name for f in still)}"
-                )
-            QTimer.singleShot(2000, self._try_render_pending_planned)
+        if not self._pending_render_folders:
+            self._render_poll_active = False
             return
 
-        if ready:
-            names = "、".join(Path(f).name for f in ready)
+        newly_ready: list[str] = []
+        still: list[str] = []
+        for folder in self._pending_render_folders:
+            if folder in self._render_submitted_folders:
+                continue
+            if locate_production_plan(folder):
+                newly_ready.append(folder)
+            else:
+                still.append(folder)
+
+        if newly_ready:
+            for folder in newly_ready:
+                self._render_submitted_folders.add(folder)
+            names = "、".join(Path(f).name for f in newly_ready)
             self._append_log(
-                f"   🎬 {len(ready)} 部剧策划已就绪，一并加入渲染队列：{names}"
+                f"   🎬 {len(newly_ready)} 部剧策划已就绪，加入渲染队列：{names}"
             )
-            self.clipHandoffRequested.emit(ready, False, True, False)
-        if still:
+            # 只渲就绪的；其余继续等——第一部渲完后第二部策划完仍会入队
+            self.clipHandoffRequested.emit(newly_ready, False, True, False)
+
+        self._pending_render_folders = still
+        if not still:
+            self._render_poll_active = False
+            return
+
+        self._render_poll_attempts += 1
+        # 2s 一轮；从「最后一次加入待跟进」起最多约 5 分钟
+        max_attempts = 150
+        if self._render_poll_attempts >= max_attempts:
             names = "、".join(Path(f).name for f in still)
-            self._append_log(f"   ⚠ 以下剧目策划未完成，已跳过渲染：{names}")
+            self._append_log(f"   ⚠ 等待策划超时，已跳过渲染：{names}")
             self.errorOccurred.emit(f"以下剧目策划未完成，无法自动渲染：\n{names}")
-        self._pending_render_folders = []
+            self._pending_render_folders = []
+            self._render_poll_active = False
+            return
+
+        submitted = len(self._render_submitted_folders)
+        if self._render_poll_attempts == 1 or self._render_poll_attempts % 5 == 0:
+            self._append_log(
+                f"   ⏳ 策划进度：已入渲 {submitted}，待策划 {len(still)}，"
+                f"待完成：{'、'.join(Path(f).name for f in still)}"
+            )
+        QTimer.singleShot(2000, self._try_render_pending_planned)
 
     def set_download_dir(self, path: str) -> None:
         cfg.video_download_dir.value = path.strip()

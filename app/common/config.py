@@ -30,6 +30,9 @@ class Config(MyQConfig):
     # 渲染编码档位（默认：NVENC p5 / x264 superfast）
     encode_nvenc_preset = ConfigItem("Tools", "encode_nvenc_preset", "p5")
     encode_x264_preset = ConfigItem("Tools", "encode_x264_preset", "superfast")
+    # 策划：总条数 5~15；最长时长秒（最短固定 150s）
+    plan_clip_count = ConfigItem("Tools", "plan_clip_count", 15)
+    plan_max_duration_sec = ConfigItem("Tools", "plan_max_duration_sec", 720)
     video_download_dir = ConfigItem("Tools", "video_download_dir", "")
     video_download_auto_unzip = ConfigItem(
         "Tools", "video_download_auto_unzip", True, BoolValidator()

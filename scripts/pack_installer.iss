@@ -65,6 +65,7 @@ Type: filesandordirs; Name: "{app}\logs"
 Type: filesandordirs; Name: "{app}\__pycache__"
 Type: files; Name: "{app}\config.json"
 Type: files; Name: "{app}\crash.log"
+Type: files; Name: "{app}\startup.log"
 ; 兜底：删除安装目录下剩余全部内容（含 Playwright 运行日志等）
 Type: filesandordirs; Name: "{app}"
 

@@ -299,6 +299,8 @@ def bundle_config() -> None:
             "clip_last_import_dir": "",
             "encode_nvenc_preset": "p5",
             "encode_x264_preset": "superfast",
+            "plan_clip_count": 15,
+            "plan_max_duration_sec": 720,
             "deepseek_api_keys": "",
             "ffmpeg_path": "",
             "ffprobe_path": "",

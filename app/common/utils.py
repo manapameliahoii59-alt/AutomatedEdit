@@ -15,6 +15,7 @@ class StyleSheet(StyleSheetBase, Enum):
     WINDOW = "main_window"
     LOGIN = "login_window"
     SETTINGS = "setting_interface"
+    CONTENT = "content_page"
 
     def path(self, theme=Theme.AUTO):
         theme = qconfig.theme if theme == Theme.AUTO else theme

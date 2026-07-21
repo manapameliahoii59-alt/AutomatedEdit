@@ -11,6 +11,7 @@ from qfluentwidgets import Dialog, qconfig
 
 from app.common.config import VERSION, cfg
 from app.common.version_utils import is_version_older
+from app.core.task_manager import task_manager
 from app.data.api.api import ApiError, get_api
 
 
@@ -87,34 +88,51 @@ def show_update_dialog(parent: QWidget | None, info: UpdateInfo) -> None:
         qconfig.set(cfg.update_dismissed_version, info.latest)
 
 
-def check_and_prompt_update(parent: QWidget | None = None, *, manual: bool = False) -> str:
-    """检查更新。返回状态：up_to_date / update_available / error。"""
-    try:
-        info = fetch_update_info()
-    except ApiError as exc:
+def _handle_check_result(
+    parent: QWidget | None,
+    *,
+    manual: bool,
+    status: str,
+    info: UpdateInfo | None,
+    error_message: str | None,
+) -> None:
+    if status == "error":
         if manual:
             from app.common.utils import show_dialog
 
-            show_dialog(parent, f"检查更新失败：{exc}")
-        return "error"
-    except Exception:
-        if manual:
-            from app.common.utils import show_dialog
-
-            show_dialog(parent, "检查更新失败，请稍后重试。")
-        return "error"
+            show_dialog(parent, error_message or "检查更新失败，请稍后重试。")
+        return
 
     if info is None:
         if manual:
             from app.common.utils import show_dialog
 
             show_dialog(parent, f"当前已是最新版本（{VERSION}）。")
-        return "up_to_date"
+        return
 
     if manual or should_prompt_update(info):
         show_update_dialog(parent, info)
-        return "update_available"
-    return "up_to_date"
+
+
+def check_and_prompt_update(parent: QWidget | None = None, *, manual: bool = False) -> None:
+    """异步检查更新；网络在后台，弹窗在主线程。"""
+
+    def _do():
+        try:
+            return ("ok", fetch_update_info(), None)
+        except ApiError as exc:
+            msg = f"检查更新失败：{exc}" if manual else None
+            return ("error", None, msg)
+        except Exception:
+            return ("error", None, None)
+
+    def _on_success(result):
+        status, info, error_message = result
+        _handle_check_result(
+            parent, manual=manual, status=status, info=info, error_message=error_message
+        )
+
+    task_manager.submit_task(_do, on_success=_on_success)
 
 
 def prompt_update_on_startup(parent: QWidget | None = None) -> None:

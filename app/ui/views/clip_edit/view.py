@@ -1,6 +1,7 @@
 import os
 
 from PySide6.QtCore import Qt
+from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QComboBox,
     QDialog,
@@ -10,6 +11,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QHeaderView,
     QLabel,
+    QSpinBox,
     QTableWidgetItem,
     QVBoxLayout,
     QWidget,
@@ -25,12 +27,25 @@ from qfluentwidgets import (
     SubtitleLabel,
     TableWidget,
     FluentIcon as FIF,
+    isDarkTheme,
     qconfig,
 )
 
 from app.common.config import cfg
 from app.common.export_paths import build_clip_export_filename, resolve_clip_export_root
-from app.common.utils import setup_confirm_dialog, show_dialog, show_toast
+from app.common.plan_settings import (
+    DEFAULT_CLIP_COUNT,
+    DEFAULT_MAX_DURATION_SECONDS,
+    MAX_CLIP_COUNT,
+    MIN_CLIP_COUNT,
+    clamp_clip_count,
+    clamp_max_duration_seconds,
+    max_duration_minutes_from_seconds,
+    max_duration_seconds_from_minutes,
+    split_ab_counts,
+)
+from app.common.runtime import is_dev_runtime
+from app.common.utils import StyleSheet, setup_confirm_dialog, show_dialog, show_toast
 from app.data.models.drama_project import DramaProject, DramaStatus
 from app.data.services.changdu_paths import resolve_video_download_root
 from app.data.services.render_service import (
@@ -59,6 +74,7 @@ class ClipEditPage(ScrollArea):
         self._busy = False
         self._init_ui()
         self._bind_view_model()
+        StyleSheet.CONTENT.apply(self)
 
     def _init_ui(self):
         self.scroll_widget = QWidget()
@@ -133,15 +149,26 @@ class ClipEditPage(ScrollArea):
             FIF.FOLDER_ADD, "导入剧目", self.scroll_widget
         )
         self.import_btn.clicked.connect(self._pick_drama_folder)
-        self.encode_settings_btn = PushButton(
-            FIF.SETTING, "编码设置", self.scroll_widget
+        self.encode_settings_btn = None
+        if is_dev_runtime():
+            self.encode_settings_btn = PushButton(
+                FIF.SETTING, "编码设置", self.scroll_widget
+            )
+            self.encode_settings_btn.setToolTip(
+                "设置 GPU / CPU 编码档位（默认 p5 / superfast，可选更快档位）"
+            )
+            self.encode_settings_btn.clicked.connect(self._open_encode_settings)
+        self.plan_settings_btn = PushButton(
+            FIF.EDIT, "策划设置", self.scroll_widget
         )
-        self.encode_settings_btn.setToolTip(
-            "设置 GPU / CPU 编码档位（默认 p5 / superfast，可选更快档位）"
+        self.plan_settings_btn.setToolTip(
+            "设置策划条数（5~15）与最长时长（最低 5 分钟，最高 15，默认 12 分钟）"
         )
-        self.encode_settings_btn.clicked.connect(self._open_encode_settings)
+        self.plan_settings_btn.clicked.connect(self._open_plan_settings)
         batch_row.addWidget(self.import_btn)
-        batch_row.addWidget(self.encode_settings_btn)
+        if self.encode_settings_btn is not None:
+            batch_row.addWidget(self.encode_settings_btn)
+        batch_row.addWidget(self.plan_settings_btn)
         batch_row.addStretch(1)
         layout.addLayout(batch_row)
 
@@ -182,6 +209,7 @@ class ClipEditPage(ScrollArea):
         self.vm.messageReceived.connect(lambda msg: show_toast(self, msg))
         self.vm.errorOccurred.connect(lambda msg: show_dialog(self, msg, "提示"))
         self._refresh_table(self.vm.get_projects())
+        qconfig.themeChanged.connect(lambda *_: self._refresh_table(self.vm.get_projects()))
 
     def _refresh_table(self, projects: list[DramaProject]):
         checked_ids = set(self._get_checked_ids())
@@ -219,9 +247,13 @@ class ClipEditPage(ScrollArea):
                 item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
                 item.setToolTip(label)
                 if s == DramaStatus.DONE:
-                    item.setForeground(Qt.GlobalColor.darkGreen)
+                    item.setForeground(
+                        QColor("#3dd68c") if isDarkTheme() else Qt.GlobalColor.darkGreen
+                    )
                 elif s == DramaStatus.IN_PROGRESS:
-                    item.setForeground(Qt.GlobalColor.darkYellow)
+                    item.setForeground(
+                        QColor("#f2c14e") if isDarkTheme() else Qt.GlobalColor.darkYellow
+                    )
                 self.table.setItem(row, col, item)
 
             cell = QWidget()
@@ -377,6 +409,88 @@ class ClipEditPage(ScrollArea):
             title="编码设置",
         )
 
+    def _open_plan_settings(self):
+        dlg = QDialog(self.window())
+        dlg.setWindowTitle("策划设置")
+        dlg.setMinimumWidth(440)
+        layout = QVBoxLayout(dlg)
+
+        tip = QLabel(
+            "总条数按默认 A:B=6:9 比例自动分配。\n"
+            "单条最短时长固定 2.5 分钟。\n"
+            "「最长时长」可在 5～15 分钟之间选择（不能低于 5 分钟），默认 12 分钟。\n\n"
+            "说明：此处设置的是目标条数与时长范围，实际产出不一定严格等于设定值，"
+            "可能因剧本内容、切点匹配等略有波动（条数可能偏少，单条时长在范围内浮动）。",
+            dlg,
+        )
+        tip.setWordWrap(True)
+        layout.addWidget(tip)
+
+        form = QFormLayout()
+        count_spin = QSpinBox(dlg)
+        count_spin.setRange(MIN_CLIP_COUNT, MAX_CLIP_COUNT)
+        count_spin.setValue(clamp_clip_count(cfg.plan_clip_count.value))
+        count_spin.setSuffix(" 条")
+
+        max_spin = QSpinBox(dlg)
+        max_spin.setRange(5, 15)
+        max_spin.setValue(
+            max_duration_minutes_from_seconds(
+                clamp_max_duration_seconds(cfg.plan_max_duration_sec.value)
+            )
+        )
+        max_spin.setSuffix(" 分钟")
+
+        ab_label = QLabel(dlg)
+
+        def _refresh_ab(_value=None):
+            a, b = split_ab_counts(count_spin.value())
+            ab_label.setText(f"将分配：A 组 {a} 条，B 组 {b} 条（最短 2.5 分钟固定）")
+
+        count_spin.valueChanged.connect(_refresh_ab)
+        _refresh_ab()
+
+        form.addRow("总条数：", count_spin)
+        form.addRow("最长时长：", max_spin)
+        form.addRow("", ab_label)
+        layout.addLayout(form)
+
+        btn_row = QHBoxLayout()
+        reset_btn = PushButton("重置默认", dlg)
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel,
+            parent=dlg,
+        )
+        btn_row.addWidget(reset_btn)
+        btn_row.addStretch(1)
+        btn_row.addWidget(buttons)
+        layout.addLayout(btn_row)
+
+        def _reset():
+            count_spin.setValue(DEFAULT_CLIP_COUNT)
+            max_spin.setValue(
+                max_duration_minutes_from_seconds(DEFAULT_MAX_DURATION_SECONDS)
+            )
+
+        reset_btn.clicked.connect(_reset)
+        buttons.accepted.connect(dlg.accept)
+        buttons.rejected.connect(dlg.reject)
+
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            return
+
+        count = clamp_clip_count(count_spin.value())
+        max_sec = max_duration_seconds_from_minutes(max_spin.value())
+        qconfig.set(cfg.plan_clip_count, count)
+        qconfig.set(cfg.plan_max_duration_sec, max_sec)
+        self.vm.save_plan_settings(count, max_sec)
+        a, b = split_ab_counts(count)
+        show_toast(
+            self,
+            f"已保存：{count} 条（A{a}/B{b}），最长 {max_spin.value()} 分钟",
+            title="策划设置",
+        )
+
     def _batch_all(self):
         if not self.vm.get_projects():
             show_dialog(self, "暂未导入任何剧目", "提示")
@@ -468,12 +582,14 @@ class ClipEditPage(ScrollArea):
             else:
                 item.setText(text)
             item.setToolTip(text)
-            item.setForeground(Qt.GlobalColor.darkYellow)
+            item.setForeground(
+                QColor("#f2c14e") if isDarkTheme() else Qt.GlobalColor.darkYellow
+            )
             break
 
     def _handle_loading(self, loading: bool, title: str, content: str):
         self._busy = loading
-        for w in (
+        widgets = [
             self.export_browse_btn,
             self.export_open_btn,
             self.export_name_tag_input,
@@ -482,9 +598,12 @@ class ClipEditPage(ScrollArea):
             self.batch_plan_btn,
             self.batch_render_btn,
             self.import_btn,
-            self.encode_settings_btn,
+            self.plan_settings_btn,
             self.table,
-        ):
+        ]
+        if self.encode_settings_btn is not None:
+            widgets.append(self.encode_settings_btn)
+        for w in widgets:
             w.setEnabled(not loading)
         if loading:
             if self.loading_bar is None or not isValid(self.loading_bar):

@@ -153,6 +153,9 @@ def _run_job(job_id: str, payload: dict[str, Any], plan_key: str, api_keys_raw: 
             api_url=settings.deepseek_api_url,
             model_name=settings.deepseek_model,
             progress_callback=on_progress,
+            target_clips_count=payload.get("target_clips_count"),
+            max_duration_seconds=payload.get("max_duration_seconds"),
+            min_duration_seconds=payload.get("min_duration_seconds"),
         )
         encrypted = encrypt_plan_payload(plan_key, plans)
         _persist_job(
@@ -181,7 +184,15 @@ def create_plan_job(db: Session, user_id: int, payload: dict[str, Any]) -> PlanJ
     row_secret = ensure_user_secret(db, user_id)
     plan_key = row_secret.plan_decrypt_key
     job_id = uuid.uuid4().hex
-    progress = {"phase": "plan", "current": 0, "total": 15, "detail": "排队中…"}
+    from app.services.plan_director import clamp_clip_count
+
+    target_total = clamp_clip_count(payload.get("target_clips_count") or 15)
+    progress = {
+        "phase": "plan",
+        "current": 0,
+        "total": target_total,
+        "detail": "排队中…",
+    }
     now = _utc_now()
     row = PlanJob(
         id=job_id,

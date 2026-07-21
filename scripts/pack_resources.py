@@ -14,7 +14,14 @@ site_packages_path = site.getsitepackages()[-1]
 lr = 'lrelease.exe' if os.name == 'nt' else 'lrelease'
 lrelease_path = os.path.join(site_packages_path, 'PySide6', lr)
 os.system(f'{lrelease_path} -verbose resource/i18n/zh.ts -qm resource/i18n/zh.qm')  # 编译翻译文件
-os.system("pyside6-rcc resource/resource.qrc -o resource_rc.py")  # 编译资源文件
+
+# 必须用 -g python；直接跑 rcc.exe 默认会生成 C++，导致 resource_rc.py 语法错误
+from pathlib import Path as _Path
+import subprocess
+import PySide6
+
+_rcc = _Path(PySide6.__file__).parent / ("rcc.exe" if os.name == "nt" else "rcc")
+subprocess.check_call([str(_rcc), "-g", "python", "resource/resource.qrc", "-o", "resource_rc.py"])
 
 # Compile UI files in app/ui/generated
 ui_dir = 'app/ui/generated'

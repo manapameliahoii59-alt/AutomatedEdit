@@ -1,0 +1,43 @@
+VideoDownloadPage, ClipEditPage,
+#videoDownloadScrollWidget, #clipEditScrollWidget {
+    background-color: rgb(249, 249, 249);
+}
+
+QScrollArea {
+    background-color: rgb(249, 249, 249);
+    border: none;
+}
+
+QPlainTextEdit {
+    background-color: rgb(255, 255, 255);
+    color: rgb(25, 25, 25);
+    border: 1px solid rgb(229, 229, 229);
+    border-radius: 6px;
+    padding: 8px;
+    selection-background-color: rgba(0, 0, 0, 30);
+}
+
+QScrollBar {
+    background: transparent;
+    width: 4px;
+    margin-top: 0;
+    margin-bottom: 0;
+    padding-right: 2px;
+}
+
+QScrollBar::sub-line,
+QScrollBar::add-line {
+    background: transparent;
+}
+
+QScrollBar::handle {
+    background: rgb(122, 122, 122);
+    border: 2px solid rgb(128, 128, 128);
+    border-radius: 1px;
+    min-height: 32px;
+}
+
+QScrollBar::add-page:vertical,
+QScrollBar::sub-page:vertical {
+    background: none;
+}

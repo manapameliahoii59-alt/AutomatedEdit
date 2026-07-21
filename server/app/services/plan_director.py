@@ -13,16 +13,51 @@ import httpx
 from fuzzywuzzy import process
 
 MIN_DURATION_SECONDS = 150
-MAX_DURATION_SECONDS = 720
+DEFAULT_MAX_DURATION_SECONDS = 720
+MIN_MAX_DURATION_SECONDS = 300
+MAX_MAX_DURATION_SECONDS = 900
 SEARCH_EPISODES = 15
-TARGET_CLIPS_COUNT = 15
-GROUP_A_COUNT = 6
+DEFAULT_TARGET_CLIPS_COUNT = 15
+MIN_TARGET_CLIPS_COUNT = 5
+MAX_TARGET_CLIPS_COUNT = 15
+GROUP_A_RATIO_NUM = 6  # 默认 A:B = 6:9
 GROUP_A_BUFFER = 2
 GROUP_B_BUFFER = 3
 MAX_GROUP_LOOPS = 5
 MAX_OUTPUT_TOKENS = 7000
 
+# 兼容旧引用
+TARGET_CLIPS_COUNT = DEFAULT_TARGET_CLIPS_COUNT
+MAX_DURATION_SECONDS = DEFAULT_MAX_DURATION_SECONDS
+GROUP_A_COUNT = GROUP_A_RATIO_NUM
+
 ProgressCallback = Callable[[dict[str, Any]], None]
+
+
+def clamp_clip_count(value: Any) -> int:
+    try:
+        n = int(value)
+    except (TypeError, ValueError):
+        n = DEFAULT_TARGET_CLIPS_COUNT
+    return max(MIN_TARGET_CLIPS_COUNT, min(MAX_TARGET_CLIPS_COUNT, n))
+
+
+def clamp_max_duration_seconds(value: Any) -> int:
+    try:
+        n = int(round(float(value)))
+    except (TypeError, ValueError):
+        n = DEFAULT_MAX_DURATION_SECONDS
+    return max(MIN_MAX_DURATION_SECONDS, min(MAX_MAX_DURATION_SECONDS, n))
+
+
+def split_ab_counts(total: int) -> tuple[int, int]:
+    """按默认 6:9 比例分配；总条数≥2 时保证 A/B 至少各 1。"""
+    total = clamp_clip_count(total)
+    if total <= 1:
+        return total, 0
+    a = int(round(total * GROUP_A_RATIO_NUM / DEFAULT_TARGET_CLIPS_COUNT))
+    a = min(max(a, 1), total - 1)
+    return a, total - a
 
 
 def _parse_clips_response(raw_res: str) -> list:
@@ -79,20 +114,23 @@ def _call_deepseek(
     count: int,
     group_type: str,
     key_pool: queue.Queue,
+    min_duration_seconds: int,
+    max_duration_seconds: int,
 ) -> tuple[str | None, float, str | None]:
     api_key = key_pool.get()
     t0 = time.perf_counter()
     try:
         if group_type == "A":
             scope_rule = (
-                "A组从第1集切入：可在第1集内剪一段（se与le均为1.mp4，st到切点须达150~720秒），"
+                "A组从第1集切入：可在第1集内剪一段（se与le均为1.mp4，"
+                f"st到切点须达{min_duration_seconds}~{max_duration_seconds}秒），"
                 "也可跨多集（le须晚于se）。"
             )
         else:
             scope_rule = "B组必须跨多集：le 须晚于 se，通常跨越 4~8 集。"
         system_prompt = (
             f"你是一个短剧广告投放导演。任务：策划 {count} 个高转化引流剪辑计划。\n"
-            f"硬性要求：每条剪辑总时长必须在 {MIN_DURATION_SECONDS}~{MAX_DURATION_SECONDS} 秒之间。\n"
+            f"硬性要求：每条剪辑总时长必须在 {min_duration_seconds}~{max_duration_seconds} 秒之间。\n"
             f"{scope_rule}\n"
             "各方案切点须有明显差异，避免重复。ct 必须取自 le 对应集数的剧本原文。\n"
             '输出纯 JSON: {"clips":[{"se":"1.mp4","st":0,"le":"6.mp4","ct":"台词","hook":"引流标题"}]}\n'
@@ -140,9 +178,33 @@ def run_plan(
     api_url: str,
     model_name: str,
     progress_callback: ProgressCallback | None = None,
+    target_clips_count: int | None = None,
+    max_duration_seconds: int | None = None,
+    min_duration_seconds: int | None = None,
 ) -> list[dict]:
     if not api_keys_raw.strip():
         raise ValueError("服务端未配置策划 API 密钥")
+
+    target_total = (
+        clamp_clip_count(target_clips_count)
+        if target_clips_count is not None
+        else DEFAULT_TARGET_CLIPS_COUNT
+    )
+    min_dur = MIN_DURATION_SECONDS
+    if min_duration_seconds is not None:
+        try:
+            min_dur = max(MIN_DURATION_SECONDS, int(min_duration_seconds))
+        except (TypeError, ValueError):
+            min_dur = MIN_DURATION_SECONDS
+    max_dur = (
+        clamp_max_duration_seconds(max_duration_seconds)
+        if max_duration_seconds is not None
+        else DEFAULT_MAX_DURATION_SECONDS
+    )
+    if max_dur <= min_dur:
+        max_dur = min(MAX_MAX_DURATION_SECONDS, min_dur + 30)
+
+    group_a_count, group_b_count = split_ab_counts(target_total)
 
     target_episodes = ordered_files[:SEARCH_EPISODES]
     compressed_script = "".join(
@@ -166,7 +228,7 @@ def run_plan(
     used_fingerprints: set[str] = set()
     date_str = datetime.now().strftime("%m%d")
     step_texts = [s.get("text", "") for s in steps]
-    task_groups = [("A", GROUP_A_COUNT), ("B", TARGET_CLIPS_COUNT - GROUP_A_COUNT)]
+    task_groups = [("A", group_a_count), ("B", group_b_count)]
 
     def _emit(detail: str = "") -> None:
         if progress_callback:
@@ -174,7 +236,7 @@ def run_plan(
                 {
                     "phase": "plan",
                     "current": len(final_plans),
-                    "total": TARGET_CLIPS_COUNT,
+                    "total": target_total,
                     "detail": detail,
                 }
             )
@@ -182,6 +244,8 @@ def run_plan(
     _emit("准备剧本…")
 
     for g_type, total_count in task_groups:
+        if total_count <= 0:
+            continue
         completed_in_group = 0
         loop_count = 0
         group_buffer = GROUP_A_BUFFER if g_type == "A" else GROUP_B_BUFFER
@@ -199,6 +263,8 @@ def run_plan(
                 count=request_count,
                 group_type=g_type,
                 key_pool=key_pool,
+                min_duration_seconds=min_dur,
+                max_duration_seconds=max_dur,
             )
             if api_error or not raw_res:
                 continue
@@ -240,7 +306,7 @@ def run_plan(
                     total_dur = _compute_clip_duration(
                         s_idx, l_idx, start_time, cut_point, ordered_files, episode_end_times
                     )
-                    if total_dur < MIN_DURATION_SECONDS or total_dur > MAX_DURATION_SECONDS:
+                    if total_dur < min_dur or total_dur > max_dur:
                         continue
 
                     fp = f"{s_ep}_{l_ep}_{round(phys_end)}_{round(start_time)}"
@@ -263,11 +329,17 @@ def run_plan(
                         }
                     )
                     batch_ok += 1
+                    if len(final_plans) >= target_total:
+                        break
 
                 completed_in_group += batch_ok
-                _emit(f"{g_type}组 · 已通过 {len(final_plans)}/{TARGET_CLIPS_COUNT} 条")
+                _emit(f"{g_type}组 · 已通过 {len(final_plans)}/{target_total} 条")
+                if len(final_plans) >= target_total:
+                    break
             except Exception:
                 continue
+        if len(final_plans) >= target_total:
+            break
 
     if not final_plans:
         raise RuntimeError(f"《{project_name}》策划未产出有效方案")
@@ -280,4 +352,6 @@ def run_plan(
             continue
         seen.add(cfg_key)
         unique_plans.append(plan)
+        if len(unique_plans) >= target_total:
+            break
     return unique_plans

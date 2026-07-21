@@ -20,6 +20,9 @@ class TaskRunnable(QRunnable):
 
     def run(self):
         try:
+            # 误封后的探活放在 worker，避免 submit_task 阻塞 UI
+            if access_control.is_blocked():
+                access_control.refresh()
             access_control.ensure_allowed()
             result = self.func(*self.args, **self.kwargs)
             self.signals.finished.emit(result)
@@ -57,15 +60,6 @@ class TaskManager(QObject):
         """
         if kwargs is None:
             kwargs = {}
-
-        if access_control.is_blocked():
-            # 若此前因网络抖动被误封，再探活一次；仍封禁才拒绝
-            access_control.refresh()
-        if access_control.is_blocked():
-            message = access_control.random_error()
-            if on_error:
-                on_error(message)
-            return
 
         task = TaskRunnable(func, args, kwargs)
         signals = task.signals

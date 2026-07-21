@@ -35,6 +35,10 @@ class PlanJobCreateRequest(BaseModel):
     drama_name: str = Field(min_length=1, max_length=256)
     steps: list[dict[str, Any]]
     ordered_files: list[str] = Field(min_length=1)
+    # 可选：客户端策划设置（缺省则服务端用默认 15 条 / 720s）
+    target_clips_count: int | None = Field(default=None, ge=5, le=15)
+    max_duration_seconds: int | None = Field(default=None, ge=300, le=900)
+    min_duration_seconds: int | None = Field(default=None, ge=150, le=900)
 
 
 class PlanJobCreateResponse(BaseModel):
@@ -155,10 +159,33 @@ class VideoDownloadSettingsPatch(BaseModel):
     model_config = {"extra": "allow"}
 
 
+class PlanSettings(BaseModel):
+    """自动化剪辑「策划设置」（条数 / 最长时长）。"""
+
+    clip_count: int = Field(default=15, ge=5, le=15)
+    max_duration_sec: int = Field(default=720, ge=300, le=900)
+
+    model_config = {"extra": "allow"}
+
+    @model_validator(mode="after")
+    def _clamp(self) -> "PlanSettings":
+        self.clip_count = max(5, min(15, int(self.clip_count)))
+        self.max_duration_sec = max(300, min(900, int(self.max_duration_sec)))
+        return self
+
+
+class PlanSettingsPatch(BaseModel):
+    clip_count: int | None = Field(default=None, ge=5, le=15)
+    max_duration_sec: int | None = Field(default=None, ge=300, le=900)
+
+    model_config = {"extra": "allow"}
+
+
 class UserSettingsPatch(BaseModel):
     """部分更新用户配置；未出现的命名空间保持不变，命名空间内仅更新提供的字段。"""
 
     video_download: VideoDownloadSettingsPatch | None = None
+    plan: PlanSettingsPatch | None = None
 
     model_config = {"extra": "allow"}
 
@@ -167,6 +194,7 @@ class UserSettingsOut(BaseModel):
     """用户配置响应；已知命名空间带默认值，其余命名空间原样透传。"""
 
     video_download: VideoDownloadSettings = Field(default_factory=VideoDownloadSettings)
+    plan: PlanSettings = Field(default_factory=PlanSettings)
     updated_at: datetime | None = None
 
     model_config = {"extra": "allow"}

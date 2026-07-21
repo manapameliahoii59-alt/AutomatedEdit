@@ -1,6 +1,7 @@
 import os
 
 from PySide6.QtCore import Qt
+from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QFileDialog,
     QHBoxLayout,
@@ -21,12 +22,13 @@ from qfluentwidgets import (
     ScrollArea,
     TableWidget,
     FluentIcon as FIF,
+    isDarkTheme,
     qconfig,
 )
 
 from app.common.config import cfg
 
-from app.common.utils import open_changdu_account_dialog, show_dialog, show_toast
+from app.common.utils import StyleSheet, open_changdu_account_dialog, show_dialog, show_toast
 from app.data.services.changdu_login_service import is_auth_file_present
 from app.data.services.changdu_paths import resolve_video_download_root
 from app.data.services.drama_folder_service import list_drama_folders_under
@@ -37,7 +39,11 @@ from .view_model import MAX_DOWNLOAD_EPISODE, VideoDownloadViewModel
 
 def _style_status_item(item: QTableWidgetItem, status: str) -> None:
     if status == "已完成":
-        item.setForeground(Qt.GlobalColor.darkGreen)
+        item.setForeground(QColor("#3dd68c") if isDarkTheme() else Qt.GlobalColor.darkGreen)
+    elif status in ("失败", "已取消"):
+        item.setForeground(QColor("#f1707b") if isDarkTheme() else Qt.GlobalColor.darkRed)
+    elif status.startswith("下载") or status in ("处理中", "转码中", "创建任务中"):
+        item.setForeground(QColor("#f2c14e") if isDarkTheme() else Qt.GlobalColor.darkYellow)
 
 
 class VideoDownloadPage(ScrollArea):
@@ -52,6 +58,7 @@ class VideoDownloadPage(ScrollArea):
         self._busy = False
         self._init_ui()
         self._bind_view_model()
+        StyleSheet.CONTENT.apply(self)
 
     def _init_ui(self):
         self.scroll_widget = QWidget()
@@ -184,6 +191,7 @@ class VideoDownloadPage(ScrollArea):
         self.vm.clipHandoffRequested.connect(self._on_clip_handoff)
         self.vm.settingsLoaded.connect(self._on_settings_loaded)
         self.vm.refresh_auth_status()
+        qconfig.themeChanged.connect(lambda *_: self._refresh_table(self.vm.get_targets()))
 
     def _on_settings_loaded(self, vd: dict) -> None:
         if vd.get("episode_from") is not None:
@@ -407,17 +415,31 @@ class VideoDownloadPage(ScrollArea):
         name_input.setPlaceholderText("如：某剧名\n…")
         name_input.setMaximumBlockCount(500)
         name_input.setFixedSize(360, 140)
-        name_input.setStyleSheet(
-            "QPlainTextEdit {"
-            "  border: 1px solid #c8c8c8;"
-            "  border-radius: 6px;"
-            "  padding: 8px;"
-            "  background-color: #ffffff;"
-            "}"
-            "QPlainTextEdit:focus {"
-            "  border: 1px solid #009faa;"
-            "}"
-        )
+        if isDarkTheme():
+            name_input.setStyleSheet(
+                "QPlainTextEdit {"
+                "  border: 1px solid #5a5a5a;"
+                "  border-radius: 6px;"
+                "  padding: 8px;"
+                "  background-color: #272727;"
+                "  color: #f0f0f0;"
+                "}"
+                "QPlainTextEdit:focus {"
+                "  border: 1px solid #009faa;"
+                "}"
+            )
+        else:
+            name_input.setStyleSheet(
+                "QPlainTextEdit {"
+                "  border: 1px solid #c8c8c8;"
+                "  border-radius: 6px;"
+                "  padding: 8px;"
+                "  background-color: #ffffff;"
+                "}"
+                "QPlainTextEdit:focus {"
+                "  border: 1px solid #009faa;"
+                "}"
+            )
         dialog.textLayout.setContentsMargins(24, 16, 24, 8)
         dialog.textLayout.addWidget(name_input)
 

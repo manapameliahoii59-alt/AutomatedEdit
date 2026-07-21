@@ -75,6 +75,9 @@ def create_plan_job_endpoint(
         "project_name": body.project_name,
         "steps": body.steps,
         "ordered_files": body.ordered_files,
+        "target_clips_count": body.target_clips_count,
+        "max_duration_seconds": body.max_duration_seconds,
+        "min_duration_seconds": body.min_duration_seconds,
     }
     try:
         job = create_plan_job(db, user.id, payload)

@@ -7,9 +7,11 @@ from PySide6.QtCore import Signal
 from app.common.clip_progress import format_plan_progress, format_render_progress
 from app.common.export_paths import resolve_clip_export_root
 from app.common.my_logger import my_logger as logger
+from app.common.plan_settings import apply_plan_settings_dict, plan_settings_patch
 from app.core.render_queue import CANCEL_MESSAGE, render_queue
 from app.core.task_manager import task_manager
 from app.core.view_model import ViewModel
+from app.data.api.api import get_api
 from app.data.models.drama_project import DramaProject, DramaStatus
 from app.data.services.drama_folder_service import DramaFolderError, scan_drama_folder
 from app.data.services.transcription_service import TranscriptionService
@@ -36,6 +38,36 @@ class ClipEditViewModel(ViewModel):
         self._loading_project_id: str | None = None
         self._loading_base_content = ""
         self.projectsChanged.emit(self._projects)
+        self._load_plan_settings_from_server()
+
+    def _load_plan_settings_from_server(self) -> None:
+        def _do():
+            api = get_api()
+            if not api._token:
+                return None
+            return api.get_settings()
+
+        def _on_success(data):
+            if data:
+                apply_plan_settings_dict(data.get("plan"))
+
+        task_manager.submit_task(_do, on_success=_on_success, on_error=lambda _m: None)
+
+    def save_plan_settings(self, clip_count: int, max_duration_sec: int) -> None:
+        """本地已写入 cfg 后，后台同步到服务端用户设置。"""
+        api = get_api()
+        if not api._token:
+            return
+        patch = plan_settings_patch(clip_count, max_duration_sec)
+
+        def _do():
+            get_api().update_settings(patch)
+            return True
+
+        def _on_error(msg: str):
+            self.errorOccurred.emit(f"策划设置同步失败：{msg}")
+
+        task_manager.submit_task(_do, on_success=lambda _ok: None, on_error=_on_error)
 
     def get_stage_progress(self, project_id: str, step: str) -> str:
         return self._progress_labels.get(project_id, {}).get(step, "")

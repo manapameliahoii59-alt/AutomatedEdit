@@ -4,12 +4,12 @@ from __future__ import annotations
 
 from typing import Any
 
-TARGET_CLIPS_COUNT = 15
+from app.common.plan_settings import DEFAULT_CLIP_COUNT
 
 
 def format_plan_progress(info: dict[str, Any]) -> str:
     current = int(info.get("current") or 0)
-    total = int(info.get("total") or TARGET_CLIPS_COUNT)
+    total = int(info.get("total") or DEFAULT_CLIP_COUNT)
     return f"策划中 {current}/{total} 条"
 
 
