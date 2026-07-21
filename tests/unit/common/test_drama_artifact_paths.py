@@ -63,3 +63,24 @@ class TestDramaArtifactPaths:
         attrs = ctypes.windll.kernel32.GetFileAttributesW(str(target))
         assert attrs != -1
         assert attrs & 0x02
+
+    @pytest.mark.skipif(os.name != "nt", reason="Windows hidden attribute")
+    def test_prepare_write_clears_hidden_so_overwrite_works(self, monkeypatch, tmp_path):
+        monkeypatch.setattr(paths, "is_dev_runtime", lambda: False)
+        project = str(tmp_path)
+        out = paths.prepare_write_path(project, script=True)
+        with open(out, "w", encoding="utf-8") as f:
+            f.write('{"v":1}')
+        paths.finalize_written_artifact(out)
+
+        import ctypes
+
+        attrs = ctypes.windll.kernel32.GetFileAttributesW(out)
+        assert attrs & 0x02
+
+        # 再次准备写入应能覆盖隐藏文件
+        out2 = paths.prepare_write_path(project, script=True)
+        assert out2 == out
+        with open(out2, "w", encoding="utf-8") as f:
+            f.write('{"v":2}')
+        assert '"v":2' in open(out2, encoding="utf-8").read()

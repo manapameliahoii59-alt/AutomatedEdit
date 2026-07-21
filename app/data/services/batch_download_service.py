@@ -270,6 +270,15 @@ def _mark_done(key: str) -> None:
         f.write(f"{key}\n")
 
 
+def clear_download_done_records() -> int:
+    """清空「已下载」记录，返回清除条数。下次可重新下载相同剧目。"""
+    ensure_changdu_dirs()
+    count = len(_load_done_set())
+    if DONE_FILE.is_file():
+        DONE_FILE.unlink()
+    return count
+
+
 def _append_log(entry: dict[str, Any]) -> None:
     if not is_dev_runtime():
         return

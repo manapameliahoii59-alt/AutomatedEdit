@@ -32,7 +32,11 @@ def read_json(filepath: str) -> dict | list:
 
 
 def write_encrypted_json(filepath: str, data):
+    from app.common.drama_artifact_paths import ensure_path_writable
+
+    ensure_path_writable(filepath)
     with open(filepath, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
     if _is_bundled():
+        ensure_path_writable(filepath)
         encrypt_file(filepath)

@@ -120,6 +120,12 @@ class VideoDownloadPage(ScrollArea):
         self.add_btn = PushButton(FIF.ADD, "添加剧目", self.scroll_widget)
         self.add_btn.clicked.connect(self._open_add_drama_dialog)
         range_row.addWidget(self.add_btn)
+        self.reset_done_btn = PushButton("重置下载记录", self.scroll_widget)
+        self.reset_done_btn.setToolTip(
+            "清空已下载记录，之后可再次下载相同剧目（不会删除已下载的视频文件）"
+        )
+        self.reset_done_btn.clicked.connect(self._reset_download_records)
+        range_row.addWidget(self.reset_done_btn)
         self.more_btn = PushButton("⁝", self.scroll_widget)
         self.more_btn.setFixedSize(36, 36)
         self.more_btn.setToolTip("下载设置")
@@ -256,6 +262,7 @@ class VideoDownloadPage(ScrollArea):
             self.from_input,
             self.to_input,
             self.add_btn,
+            self.reset_done_btn,
             self.more_btn,
             self.start_btn,
             self.import_all_btn,
@@ -350,8 +357,20 @@ class VideoDownloadPage(ScrollArea):
                 "episode_from": from_ep,
                 "episode_to": to_ep,
             }
-        })
+        }, show_loading=False, notify_success=False)
         return True
+
+    def _reset_download_records(self):
+        dialog = Dialog(
+            "重置下载记录",
+            "确定清空已下载记录吗？清空后可再次下载相同剧目。\n"
+            "（不会删除本地已下载的视频文件）",
+            self.window(),
+        )
+        dialog.yesButton.setText("确定重置")
+        dialog.cancelButton.setText("取消")
+        if dialog.exec():
+            self.vm.reset_download_records()
 
     def _open_add_drama_dialog(self):
         if not self._apply_episode_range():

@@ -2,9 +2,14 @@ import os
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
+    QComboBox,
+    QDialog,
+    QDialogButtonBox,
     QFileDialog,
+    QFormLayout,
     QHBoxLayout,
     QHeaderView,
+    QLabel,
     QTableWidgetItem,
     QVBoxLayout,
     QWidget,
@@ -28,6 +33,11 @@ from app.common.export_paths import build_clip_export_filename, resolve_clip_exp
 from app.common.utils import setup_confirm_dialog, show_dialog, show_toast
 from app.data.models.drama_project import DramaProject, DramaStatus
 from app.data.services.changdu_paths import resolve_video_download_root
+from app.data.services.render_service import (
+    NVENC_PRESET_CHOICES,
+    X264_PRESET_CHOICES,
+    RenderService,
+)
 from app.ui.components.bar import ProgressInfoBar
 
 from .view_model import ClipEditViewModel
@@ -123,7 +133,15 @@ class ClipEditPage(ScrollArea):
             FIF.FOLDER_ADD, "导入剧目", self.scroll_widget
         )
         self.import_btn.clicked.connect(self._pick_drama_folder)
+        self.encode_settings_btn = PushButton(
+            FIF.SETTING, "编码设置", self.scroll_widget
+        )
+        self.encode_settings_btn.setToolTip(
+            "设置 GPU / CPU 编码档位（默认 p5 / superfast，可选更快档位）"
+        )
+        self.encode_settings_btn.clicked.connect(self._open_encode_settings)
         batch_row.addWidget(self.import_btn)
+        batch_row.addWidget(self.encode_settings_btn)
         batch_row.addStretch(1)
         layout.addLayout(batch_row)
 
@@ -301,6 +319,64 @@ class ClipEditPage(ScrollArea):
             return
         self.vm.batch_render(ids)
 
+    def _open_encode_settings(self):
+        dlg = QDialog(self.window())
+        dlg.setWindowTitle("编码设置")
+        dlg.setMinimumWidth(420)
+        layout = QVBoxLayout(dlg)
+
+        tip = QLabel(
+            "档位越快通常画质略降。默认：GPU p5、CPU superfast。\n"
+            "更改后新渲染会按新档位重建缓存；旧缓存不会自动删除。",
+            dlg,
+        )
+        tip.setWordWrap(True)
+        layout.addWidget(tip)
+
+        form = QFormLayout()
+        gpu_combo = QComboBox(dlg)
+        for value, label in NVENC_PRESET_CHOICES:
+            gpu_combo.addItem(label, value)
+        cur_gpu = RenderService.normalize_nvenc_preset(
+            str(cfg.encode_nvenc_preset.value)
+        )
+        gpu_idx = gpu_combo.findData(cur_gpu)
+        if gpu_idx >= 0:
+            gpu_combo.setCurrentIndex(gpu_idx)
+
+        cpu_combo = QComboBox(dlg)
+        for value, label in X264_PRESET_CHOICES:
+            cpu_combo.addItem(label, value)
+        cur_cpu = RenderService.normalize_x264_preset(
+            str(cfg.encode_x264_preset.value)
+        )
+        cpu_idx = cpu_combo.findData(cur_cpu)
+        if cpu_idx >= 0:
+            cpu_combo.setCurrentIndex(cpu_idx)
+
+        form.addRow("GPU 编码档位 (NVENC)：", gpu_combo)
+        form.addRow("CPU 编码档位 (libx264)：", cpu_combo)
+        layout.addLayout(form)
+
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel,
+            parent=dlg,
+        )
+        buttons.accepted.connect(dlg.accept)
+        buttons.rejected.connect(dlg.reject)
+        layout.addWidget(buttons)
+
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            return
+
+        qconfig.set(cfg.encode_nvenc_preset, str(gpu_combo.currentData()))
+        qconfig.set(cfg.encode_x264_preset, str(cpu_combo.currentData()))
+        show_toast(
+            self,
+            f"已保存：GPU {gpu_combo.currentData()} / CPU {cpu_combo.currentData()}",
+            title="编码设置",
+        )
+
     def _batch_all(self):
         if not self.vm.get_projects():
             show_dialog(self, "暂未导入任何剧目", "提示")
@@ -406,6 +482,7 @@ class ClipEditPage(ScrollArea):
             self.batch_plan_btn,
             self.batch_render_btn,
             self.import_btn,
+            self.encode_settings_btn,
             self.table,
         ):
             w.setEnabled(not loading)

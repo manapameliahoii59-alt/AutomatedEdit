@@ -58,24 +58,76 @@ class TestNvencProbe:
         assert calls["n"] >= 2  # encoders 列表 + 试编
 
 
-class TestTimeMapping:
-    def test_map_time_to_cache(self):
-        assert RenderService._map_time_to_cache(29, 1.15) == 29 / 1.15
+class TestPreferGpuEnv:
+    def test_force_cpu(self, monkeypatch):
+        monkeypatch.setenv("AE_FORCE_CPU_ENCODE", "1")
+        monkeypatch.delenv("AE_FORCE_GPU_ENCODE", raising=False)
+        monkeypatch.setattr(
+            RenderService, "_has_nvenc", staticmethod(lambda _ff: True)
+        )
+        assert RenderService._prefer_gpu("ffmpeg") is False
+
+    def test_force_gpu(self, monkeypatch):
+        monkeypatch.delenv("AE_FORCE_CPU_ENCODE", raising=False)
+        monkeypatch.setenv("AE_FORCE_GPU_ENCODE", "1")
+        monkeypatch.setattr(
+            RenderService, "_has_nvenc", staticmethod(lambda _ff: False)
+        )
+        assert RenderService._prefer_gpu("ffmpeg") is True
+
+
+class TestEncodePresets:
+    def test_normalize_defaults_and_invalid(self):
+        assert RenderService.normalize_nvenc_preset(None) == "p5"
+        assert RenderService.normalize_nvenc_preset("P7") == "p7"
+        assert RenderService.normalize_nvenc_preset("nope") == "p5"
+        assert RenderService.normalize_x264_preset("") == "superfast"
+        assert RenderService.normalize_x264_preset("ultrafast") == "ultrafast"
+        assert RenderService.normalize_x264_preset("slow") == "superfast"
+
+    def test_video_encode_args_use_config(self, monkeypatch):
+        monkeypatch.setattr(
+            RenderService, "_configured_nvenc_preset", staticmethod(lambda: "p7")
+        )
+        monkeypatch.setattr(
+            RenderService, "_configured_x264_preset", staticmethod(lambda: "ultrafast")
+        )
+        assert RenderService._video_encode_args(use_gpu=True) == [
+            "-c:v", "h264_nvenc", "-preset", "p7", "-cq", "24",
+        ]
+        assert RenderService._video_encode_args(use_gpu=False) == [
+            "-c:v", "libx264", "-preset", "ultrafast", "-crf", "22",
+        ]
 
 
 class TestSceneCache:
-    def test_reuses_detect_result(self, monkeypatch):
-        calls = {"n": 0}
+    def test_scan_window_around_cut(self):
+        start, end = RenderService._scene_scan_window(10.0, radius=3.0)
+        assert start == 7.0
+        assert end == 13.0
+        start0, end0 = RenderService._scene_scan_window(1.0, radius=3.0)
+        assert start0 == 0.0
+        assert end0 == 4.0
 
-        def fake_detect(path, detector):
-            calls["n"] += 1
+    def test_windowed_detect_and_reuse(self, monkeypatch):
+        calls: list[dict] = []
+
+        def fake_detect(path, detector, **kwargs):
+            calls.append({"path": path, **kwargs})
             return []
 
         monkeypatch.setattr("app.data.services.render_service.detect", fake_detect)
-        cache: dict[str, list] = {}
+        cache: dict = {}
         RenderService._optimize_cut("a.mp4", 10.0, cache)
-        RenderService._optimize_cut("a.mp4", 12.0, cache)
-        assert calls["n"] == 1
+        RenderService._optimize_cut("a.mp4", 10.0, cache)  # 同窗口复用
+        assert len(calls) == 1
+        assert calls[0]["start_time"] == 7.0
+        assert calls[0]["end_time"] == 13.0
+
+        RenderService._optimize_cut("a.mp4", 30.0, cache)  # 不同切点新窗口
+        assert len(calls) == 2
+        assert calls[1]["start_time"] == 27.0
+        assert calls[1]["end_time"] == 33.0
 
 
 class TestRunFfmpeg:

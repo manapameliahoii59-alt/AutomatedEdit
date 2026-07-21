@@ -51,7 +51,8 @@ class MainWindow(FluentWindow):
         self.settingInterface.logout.connect(self.logout)
 
         self._access_timer = QTimer(self)
-        self._access_timer.setInterval(60_000)
+        # 会话探活：不必太勤，降低网络抖动时的刷屏与无效请求
+        self._access_timer.setInterval(180_000)  # 3 分钟
         self._access_timer.timeout.connect(self._check_access)
         self._access_timer.start()
 

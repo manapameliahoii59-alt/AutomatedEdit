@@ -27,6 +27,9 @@ class Config(MyQConfig):
     clip_export_name_tag = ConfigItem("Tools", "clip_export_name_tag", "")
     # 自动化剪辑「导入剧目」对话框上次打开的目录
     clip_last_import_dir = ConfigItem("Tools", "clip_last_import_dir", "")
+    # 渲染编码档位（默认：NVENC p5 / x264 superfast）
+    encode_nvenc_preset = ConfigItem("Tools", "encode_nvenc_preset", "p5")
+    encode_x264_preset = ConfigItem("Tools", "encode_x264_preset", "superfast")
     video_download_dir = ConfigItem("Tools", "video_download_dir", "")
     video_download_auto_unzip = ConfigItem(
         "Tools", "video_download_auto_unzip", True, BoolValidator()

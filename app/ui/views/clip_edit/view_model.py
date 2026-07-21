@@ -407,6 +407,44 @@ class ClipEditViewModel(ViewModel):
 
         self._submit_render(project, on_success=_on_success, on_error=_on_error)
 
+    def benchmark_encode_speed(self, project_id: str, *, cpu_only: bool = False) -> None:
+        """测试所选剧目渲染速度；默认 CPU/GPU 对比，cpu_only 时只测 CPU。"""
+        project = next((p for p in self._projects if p.id == project_id), None)
+        if not project:
+            self.errorOccurred.emit("未找到该剧目")
+            return
+        st = self._ensure_status(project_id)
+        if st.get("plan") != DramaStatus.DONE:
+            self.messageReceived.emit("请先完成策划后再测试渲染速度")
+            return
+
+        title = "测试CPU渲染速度" if cpu_only else "测试编码速度"
+        self._show_progress(title, project.name, project_id=project_id)
+        self._add_task()
+
+        def _do():
+            return RenderService.benchmark_encode_speed(
+                project,
+                cpu_only=cpu_only,
+                progress_callback=self._make_render_progress_handler(project_id),
+                should_cancel=render_queue.is_cancelled,
+            )
+
+        def _on_success(result):
+            self._remove_task()
+            self.messageReceived.emit(result.message)
+            self._finish_loading_if_idle()
+
+        def _on_error(msg):
+            self._remove_task()
+            if self._is_render_cancelled(msg):
+                self.messageReceived.emit("编码速度测试已取消")
+            else:
+                self.errorOccurred.emit(f"编码速度测试失败：{msg}")
+            self._finish_loading_if_idle()
+
+        task_manager.submit_task(_do, on_success=_on_success, on_error=_on_error)
+
     def batch_transcribe(self, project_ids: list[str]):
         valid = []
         skipped = 0

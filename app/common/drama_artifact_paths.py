@@ -84,11 +84,38 @@ def ensure_artifact_dir(project_path: str) -> None:
 
 
 def prepare_write_path(project_path: str, *, script: bool) -> str:
-    """返回写入路径并确保父目录存在。"""
+    """返回写入路径并确保父目录存在；正式环境会先解除旧产物的隐藏属性以便覆盖写入。"""
     ensure_artifact_dir(project_path)
     if script:
-        return script_data_write_path(project_path)
-    return production_plan_write_path(project_path)
+        path = script_data_write_path(project_path)
+    else:
+        path = production_plan_write_path(project_path)
+    # Windows 上对已设 Hidden 的文件直接 open(..., "w") 常报 Errno 13
+    ensure_path_writable(path)
+    return path
+
+
+def ensure_path_writable(path: str) -> None:
+    """写入前清除 Hidden/ReadOnly，避免覆盖正式环境隐藏产物时 Permission denied。"""
+    if not path or not os.path.exists(path):
+        return
+    if sys.platform != "win32":
+        # 非 Windows：尽量去掉只读位
+        try:
+            mode = os.stat(path).st_mode
+            os.chmod(path, mode | 0o200)
+        except OSError:
+            pass
+        return
+    try:
+        import ctypes
+
+        FILE_ATTRIBUTE_NORMAL = 0x80
+        ctypes.windll.kernel32.SetFileAttributesW(
+            os.path.normpath(path), FILE_ATTRIBUTE_NORMAL
+        )
+    except Exception:
+        pass
 
 
 def finalize_written_artifact(filepath: str) -> None:

@@ -11,9 +11,10 @@ from app.common.config import cfg
 from app.core.playwright_worker import playwright_worker
 from app.core.task_manager import task_manager
 from app.core.view_model import ViewModel
-from app.data.api.api import ApiError, get_api
+from app.data.api.api import get_api
 from app.data.services.batch_download_service import (
     BatchDownloadOptions,
+    clear_download_done_records,
     format_download_progress,
     run_batch_download,
 )
@@ -93,15 +94,7 @@ class VideoDownloadViewModel(ViewModel):
             self._default_from, min(to_ep, MAX_DOWNLOAD_EPISODE)
         )
 
-    def _load_settings_from_server(self) -> None:
-        api = get_api()
-        if not api._token:
-            return
-        try:
-            data = api.get_settings()
-        except ApiError:
-            return
-        vd = data.get("video_download") or {}
+    def _apply_video_download_settings(self, vd: dict) -> None:
         if vd.get("episode_from") is not None:
             self._default_from = max(1, min(int(vd["episode_from"]), MAX_DOWNLOAD_EPISODE))
         if vd.get("episode_to") is not None:
@@ -124,16 +117,60 @@ class VideoDownloadViewModel(ViewModel):
             qconfig.set(cfg.changdu_email, vd["changdu_email"])
         if vd.get("changdu_password"):
             qconfig.set(cfg.changdu_password, aes_encrypt(vd["changdu_password"]))
-        self.settingsLoaded.emit(vd)
 
-    def save_to_server(self, patch: dict) -> None:
+    def _load_settings_from_server(self) -> None:
+        """后台拉取服务端设置，避免初始化时卡住界面。"""
+
+        def _do():
+            api = get_api()
+            if not api._token:
+                return None
+            return api.get_settings()
+
+        def _on_success(data):
+            if not data:
+                return
+            vd = data.get("video_download") or {}
+            self._apply_video_download_settings(vd)
+            self.settingsLoaded.emit(vd)
+
+        def _on_error(_msg: str):
+            # 进页同步失败不打扰用户，沿用本地 config
+            pass
+
+        task_manager.submit_task(_do, on_success=_on_success, on_error=_on_error)
+
+    def save_to_server(
+        self,
+        patch: dict,
+        *,
+        show_loading: bool = True,
+        notify_success: bool = True,
+    ) -> None:
+        """本地已改完后，后台同步到服务端。"""
         api = get_api()
         if not api._token:
             return
-        try:
-            api.update_settings(patch)
-        except ApiError:
-            pass
+
+        if show_loading:
+            self._add_task("正在保存设置", "正在同步到服务器，请稍候…")
+
+        def _do():
+            get_api().update_settings(patch)
+            return True
+
+        def _on_success(_ok):
+            if show_loading:
+                self._remove_task()
+            if notify_success:
+                self.messageReceived.emit("设置已保存")
+
+        def _on_error(msg: str):
+            if show_loading:
+                self._remove_task()
+            self.errorOccurred.emit(f"设置保存失败：{msg}")
+
+        task_manager.submit_task(_do, on_success=_on_success, on_error=_on_error)
 
     def _refresh_auth_status(self) -> None:
         if is_auth_file_present():
@@ -244,6 +281,17 @@ class VideoDownloadViewModel(ViewModel):
             return
         self.refresh_auth_status()
         self.messageReceived.emit("登录态已删除")
+
+    def reset_download_records(self) -> None:
+        """清空已下载记录，允许再次下载相同剧目。"""
+        if self._active_tasks > 0:
+            self.messageReceived.emit("当前有任务进行中，请稍候")
+            return
+        count = clear_download_done_records()
+        if count <= 0:
+            self.messageReceived.emit("当前没有可重置的下载记录")
+            return
+        self.messageReceived.emit(f"已重置下载记录（{count} 条），可重新下载相同剧目")
 
     def add_target(self, name: str, from_ep: int | None = None, to_ep: int | None = None) -> None:
         name = name.strip()

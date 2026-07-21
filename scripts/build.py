@@ -297,6 +297,8 @@ def bundle_config() -> None:
             "clip_export_dir": "",
             "clip_export_name_tag": "",
             "clip_last_import_dir": "",
+            "encode_nvenc_preset": "p5",
+            "encode_x264_preset": "superfast",
             "deepseek_api_keys": "",
             "ffmpeg_path": "",
             "ffprobe_path": "",
