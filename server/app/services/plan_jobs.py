@@ -156,6 +156,7 @@ def _run_job(job_id: str, payload: dict[str, Any], plan_key: str, api_keys_raw: 
             target_clips_count=payload.get("target_clips_count"),
             max_duration_seconds=payload.get("max_duration_seconds"),
             min_duration_seconds=payload.get("min_duration_seconds"),
+            split_ab=payload.get("split_ab"),
         )
         encrypted = encrypt_plan_payload(plan_key, plans)
         _persist_job(

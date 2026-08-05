@@ -1099,14 +1099,14 @@ class RenderService:
             )
             return False
 
-        title_f = (
-            f"drawtext=fontfile={FONT_FILENAME}:text='《{project_name}》':"
-            f"x=30:y=h-70:fontsize=22:fontcolor=white@0.8"
+        from app.common.overlay_text_settings import build_overlay_drawtext_filters
+
+        is_horizontal = ctx.target_w >= ctx.target_h
+        overlay_filters = build_overlay_drawtext_filters(
+            project_name, horizontal=is_horizontal
         )
-        disclaim_f = (
-            f"drawtext=fontfile={FONT_FILENAME}:text='内容纯属虚构 请勿带入现实':"
-            f"x=30:y=h-40:fontsize=14:fontcolor=white@0.6"
-        )
+        overlay_suffix = ("," + ",".join(overlay_filters)) if overlay_filters else ""
+
         v_outro = (
             f"scale={ctx.target_w}:{ctx.target_h}:force_original_aspect_ratio=decrease,"
             f"pad={ctx.target_w}:{ctx.target_h}:(ow-iw)/2:(oh-ih)/2:black,"
@@ -1119,7 +1119,7 @@ class RenderService:
         for i, segment in enumerate(segments):
             v_trim, a_trim = RenderService._build_trim_filters(segment, speed)
             filter_parts.append(
-                f"[{i}:v]{v_trim},{title_f},{disclaim_f}[v{i}];[{i}:a]{a_trim}[a{i}];"
+                f"[{i}:v]{v_trim}{overlay_suffix}[v{i}];[{i}:a]{a_trim}[a{i}];"
             )
         outro_idx = n_main
         filter_parts.append(f"[{outro_idx}:v]{v_outro}[v{outro_idx}];")

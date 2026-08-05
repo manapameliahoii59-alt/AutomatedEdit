@@ -8,6 +8,10 @@ from app.common.clip_progress import format_plan_progress, format_render_progres
 from app.common.export_paths import resolve_clip_export_root
 from app.common.my_logger import my_logger as logger
 from app.common.plan_settings import apply_plan_settings_dict, plan_settings_patch
+from app.common.overlay_text_settings import (
+    apply_overlay_from_clip_edit_dict,
+    clip_edit_settings_patch,
+)
 from app.core.render_queue import CANCEL_MESSAGE, render_queue
 from app.core.task_manager import task_manager
 from app.core.view_model import ViewModel
@@ -28,6 +32,7 @@ class ClipEditViewModel(ViewModel):
     stageProgressChanged = Signal(str, str, str)  # project_id, step, text
     messageReceived = Signal(str)
     errorOccurred = Signal(str)
+    settingsLoaded = Signal(dict)  # clip_edit namespace from server
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -38,9 +43,9 @@ class ClipEditViewModel(ViewModel):
         self._loading_project_id: str | None = None
         self._loading_base_content = ""
         self.projectsChanged.emit(self._projects)
-        self._load_plan_settings_from_server()
+        self._load_settings_from_server()
 
-    def _load_plan_settings_from_server(self) -> None:
+    def _load_settings_from_server(self) -> None:
         def _do():
             api = get_api()
             if not api._token:
@@ -48,17 +53,77 @@ class ClipEditViewModel(ViewModel):
             return api.get_settings()
 
         def _on_success(data):
-            if data:
-                apply_plan_settings_dict(data.get("plan"))
+            if not data:
+                return
+            apply_plan_settings_dict(data.get("plan"))
+            clip_edit = data.get("clip_edit") or {}
+            apply_overlay_from_clip_edit_dict(clip_edit)
+            self.settingsLoaded.emit(clip_edit)
 
         task_manager.submit_task(_do, on_success=_on_success, on_error=lambda _m: None)
 
-    def save_plan_settings(self, clip_count: int, max_duration_sec: int) -> None:
+    def save_export_name_tag(self, tag: str) -> None:
+        """本地已写入 cfg 后，后台同步文件名标识到服务端。"""
+        api = get_api()
+        if not api._token:
+            return
+        patch = clip_edit_settings_patch(export_name_tag=tag)
+
+        def _do():
+            get_api().update_settings(patch)
+            return True
+
+        def _on_error(msg: str):
+            self.errorOccurred.emit(f"文件名标识同步失败：{msg}")
+
+        task_manager.submit_task(_do, on_success=lambda _ok: None, on_error=_on_error)
+
+    def save_overlay_text_settings(
+        self,
+        *,
+        overlay_title: dict,
+        overlay_disclaimer: dict,
+    ) -> None:
+        """本地已写入 cfg 后，后台同步画面叠字到服务端。"""
+        api = get_api()
+        if not api._token:
+            return
+        patch = clip_edit_settings_patch(
+            overlay_title=overlay_title,
+            overlay_disclaimer=overlay_disclaimer,
+        )
+
+        def _do():
+            get_api().update_settings(patch)
+            return True
+
+        def _on_error(msg: str):
+            self.errorOccurred.emit(f"画面文字设置同步失败：{msg}")
+
+        task_manager.submit_task(_do, on_success=lambda _ok: None, on_error=_on_error)
+
+    def save_plan_settings(
+        self,
+        *,
+        mode: str | None = None,
+        clip_count: int | None = None,
+        max_duration_sec: int | None = None,
+        short_clip_count: int | None = None,
+        short_max_duration_sec: int | None = None,
+    ) -> None:
         """本地已写入 cfg 后，后台同步到服务端用户设置。"""
         api = get_api()
         if not api._token:
             return
-        patch = plan_settings_patch(clip_count, max_duration_sec)
+        patch = plan_settings_patch(
+            mode=mode,
+            clip_count=clip_count,
+            max_duration_sec=max_duration_sec,
+            short_clip_count=short_clip_count,
+            short_max_duration_sec=short_max_duration_sec,
+        )
+        if not patch.get("plan"):
+            return
 
         def _do():
             get_api().update_settings(patch)

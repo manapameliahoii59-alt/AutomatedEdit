@@ -139,6 +139,10 @@ class VideoDownloadViewModel(ViewModel):
             from app.common.plan_settings import apply_plan_settings_dict
 
             apply_plan_settings_dict(data.get("plan"))
+            from app.common.overlay_text_settings import apply_overlay_from_clip_edit_dict
+
+            clip_edit = data.get("clip_edit") or {}
+            apply_overlay_from_clip_edit_dict(clip_edit)
             self.settingsLoaded.emit(vd)
 
         def _on_error(_msg: str):

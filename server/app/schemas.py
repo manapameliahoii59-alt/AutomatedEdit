@@ -35,10 +35,11 @@ class PlanJobCreateRequest(BaseModel):
     drama_name: str = Field(min_length=1, max_length=256)
     steps: list[dict[str, Any]]
     ordered_files: list[str] = Field(min_length=1)
-    # 可选：客户端策划设置（缺省则服务端用默认 15 条 / 720s）
+    # 可选：客户端策划设置（缺省则服务端用默认 15 条 / 720s / 分 A/B）
     target_clips_count: int | None = Field(default=None, ge=5, le=15)
-    max_duration_seconds: int | None = Field(default=None, ge=300, le=900)
-    min_duration_seconds: int | None = Field(default=None, ge=150, le=900)
+    max_duration_seconds: int | None = Field(default=None, ge=120, le=900)
+    min_duration_seconds: int | None = Field(default=None, ge=120, le=900)
+    split_ab: bool | None = None
 
 
 class PlanJobCreateResponse(BaseModel):
@@ -160,25 +161,171 @@ class VideoDownloadSettingsPatch(BaseModel):
 
 
 class PlanSettings(BaseModel):
-    """自动化剪辑「策划设置」（条数 / 最长时长）。"""
+    """自动化剪辑「策划设置」（短片/长片模式 + 条数 / 最长时长）。"""
 
+    mode: str = Field(default="long")
     clip_count: int = Field(default=15, ge=5, le=15)
     max_duration_sec: int = Field(default=720, ge=300, le=900)
+    short_clip_count: int = Field(default=15, ge=5, le=15)
+    short_max_duration_sec: int = Field(default=300, ge=120, le=300)
 
     model_config = {"extra": "allow"}
 
     @model_validator(mode="after")
     def _clamp(self) -> "PlanSettings":
+        self.mode = "short" if str(self.mode or "").strip().lower() == "short" else "long"
         self.clip_count = max(5, min(15, int(self.clip_count)))
         self.max_duration_sec = max(300, min(900, int(self.max_duration_sec)))
+        self.short_clip_count = max(5, min(15, int(self.short_clip_count)))
+        self.short_max_duration_sec = max(120, min(300, int(self.short_max_duration_sec)))
         return self
 
 
 class PlanSettingsPatch(BaseModel):
+    mode: str | None = None
     clip_count: int | None = Field(default=None, ge=5, le=15)
     max_duration_sec: int | None = Field(default=None, ge=300, le=900)
+    short_clip_count: int | None = Field(default=None, ge=5, le=15)
+    short_max_duration_sec: int | None = Field(default=None, ge=120, le=300)
 
     model_config = {"extra": "allow"}
+
+
+class OverlayPosSettings(BaseModel):
+    x_pct: float = Field(default=0.0, ge=0.0, le=100.0)
+    y_pct: float = Field(default=0.0, ge=0.0, le=100.0)
+
+    model_config = {"extra": "allow"}
+
+    @model_validator(mode="after")
+    def _clamp(self) -> "OverlayPosSettings":
+        self.x_pct = max(0.0, min(100.0, float(self.x_pct)))
+        self.y_pct = max(0.0, min(100.0, float(self.y_pct)))
+        return self
+
+
+class OverlayTextStyleSettings(BaseModel):
+    """画面叠字样式（剧名 / 提示共用结构；横竖各自位置）。"""
+
+    text: str = ""
+    font: str = "msyh"
+    fontsize: int = Field(default=16, ge=8, le=200)
+    color: str = "#FFFFFF"
+    opacity: float = Field(default=1.0, ge=0.0, le=1.0)
+    layout: str = Field(default="horizontal")
+    # 兼容旧扁平字段
+    x_pct: float | None = Field(default=None, ge=0.0, le=100.0)
+    y_pct: float | None = Field(default=None, ge=0.0, le=100.0)
+    portrait: OverlayPosSettings | None = None
+    landscape: OverlayPosSettings | None = None
+
+    model_config = {"extra": "allow"}
+
+    @model_validator(mode="after")
+    def _clamp(self) -> "OverlayTextStyleSettings":
+        self.text = str(self.text) if self.text is not None else ""
+        font = str(self.font or "msyh").strip().lower()
+        allowed = {"msyh", "simhei", "simsun", "simkai", "msyhbd"}
+        self.font = font if font in allowed else "msyh"
+        self.fontsize = max(8, min(200, int(self.fontsize)))
+        color = str(self.color or "#FFFFFF").strip()
+        if color.startswith("#"):
+            color = color[1:]
+        if len(color) == 3 and all(c in "0123456789abcdefABCDEF" for c in color):
+            color = "".join(c * 2 for c in color)
+        if len(color) == 6 and all(c in "0123456789abcdefABCDEF" for c in color):
+            self.color = f"#{color.upper()}"
+        else:
+            self.color = "#FFFFFF"
+        self.opacity = max(0.0, min(1.0, float(self.opacity)))
+        self.layout = (
+            "vertical"
+            if str(self.layout or "").strip().lower() == "vertical"
+            else "horizontal"
+        )
+
+        if self.portrait is None:
+            if self.x_pct is not None or self.y_pct is not None:
+                self.portrait = OverlayPosSettings(
+                    x_pct=float(self.x_pct if self.x_pct is not None else 0.0),
+                    y_pct=float(self.y_pct if self.y_pct is not None else 0.0),
+                )
+            else:
+                self.portrait = OverlayPosSettings(x_pct=4.0, y_pct=94.5)
+        if self.landscape is None:
+            self.landscape = OverlayPosSettings(
+                x_pct=float(self.portrait.x_pct),
+                y_pct=float(self.portrait.y_pct),
+            )
+        # 清理扁平字段，统一以 portrait/landscape 为准
+        self.x_pct = None
+        self.y_pct = None
+        return self
+
+
+def _default_overlay_title() -> OverlayTextStyleSettings:
+    return OverlayTextStyleSettings(
+        text="《{name}》",
+        font="msyh",
+        fontsize=22,
+        color="#FFFFFF",
+        opacity=0.8,
+        layout="horizontal",
+        portrait=OverlayPosSettings(x_pct=4.0, y_pct=94.5),
+        landscape=OverlayPosSettings(x_pct=2.5, y_pct=90.0),
+    )
+
+
+def _default_overlay_disclaimer() -> OverlayTextStyleSettings:
+    return OverlayTextStyleSettings(
+        text="内容纯属虚构 请勿带入现实",
+        font="msyh",
+        fontsize=14,
+        color="#FFFFFF",
+        opacity=0.6,
+        layout="horizontal",
+        portrait=OverlayPosSettings(x_pct=4.0, y_pct=96.9),
+        landscape=OverlayPosSettings(x_pct=2.5, y_pct=94.0),
+    )
+
+
+class ClipEditSettings(BaseModel):
+    """自动化剪辑页配置（文件名标识 + 画面叠字）。"""
+
+    export_name_tag: str = Field(default="", max_length=64)
+    overlay_title: OverlayTextStyleSettings = Field(
+        default_factory=_default_overlay_title
+    )
+    overlay_disclaimer: OverlayTextStyleSettings = Field(
+        default_factory=_default_overlay_disclaimer
+    )
+
+    model_config = {"extra": "allow"}
+
+    @model_validator(mode="after")
+    def _clamp(self) -> "ClipEditSettings":
+        self.export_name_tag = str(self.export_name_tag or "").strip()[:64]
+        return self
+
+
+class ClipEditSettingsPatch(BaseModel):
+    export_name_tag: str | None = Field(default=None, max_length=64)
+    overlay_title: OverlayTextStyleSettings | dict[str, Any] | None = None
+    overlay_disclaimer: OverlayTextStyleSettings | dict[str, Any] | None = None
+
+    model_config = {"extra": "allow"}
+
+    @model_validator(mode="after")
+    def _normalize_overlays(self) -> "ClipEditSettingsPatch":
+        if isinstance(self.overlay_title, dict):
+            self.overlay_title = OverlayTextStyleSettings.model_validate(
+                self.overlay_title
+            )
+        if isinstance(self.overlay_disclaimer, dict):
+            self.overlay_disclaimer = OverlayTextStyleSettings.model_validate(
+                self.overlay_disclaimer
+            )
+        return self
 
 
 class UserSettingsPatch(BaseModel):
@@ -186,6 +333,7 @@ class UserSettingsPatch(BaseModel):
 
     video_download: VideoDownloadSettingsPatch | None = None
     plan: PlanSettingsPatch | None = None
+    clip_edit: ClipEditSettingsPatch | None = None
 
     model_config = {"extra": "allow"}
 
@@ -195,6 +343,7 @@ class UserSettingsOut(BaseModel):
 
     video_download: VideoDownloadSettings = Field(default_factory=VideoDownloadSettings)
     plan: PlanSettings = Field(default_factory=PlanSettings)
+    clip_edit: ClipEditSettings = Field(default_factory=ClipEditSettings)
     updated_at: datetime | None = None
 
     model_config = {"extra": "allow"}

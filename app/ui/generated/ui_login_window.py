@@ -3,7 +3,7 @@
 ################################################################################
 ## Form generated from reading UI file 'login_window.ui'
 ##
-## Created by: Qt User Interface Compiler version 6.7.0
+## Created by: Qt User Interface Compiler version 6.11.1
 ##
 ## WARNING! All changes made in this file will be lost when recompiling UI file!
 ################################################################################
@@ -30,7 +30,7 @@ class Ui_Dialog(object):
             Dialog.setObjectName(u"Dialog")
         Dialog.resize(750, 500)
         icon = QIcon()
-        icon.addFile(u":/resource/images/logo.png", QSize(), QIcon.Normal, QIcon.Off)
+        icon.addFile(u":/resource/images/logo.png", QSize(), QIcon.Mode.Normal, QIcon.State.Off)
         Dialog.setWindowIcon(icon)
         Dialog.setStyleSheet(u"")
         self.horizontalLayout = QHBoxLayout(Dialog)

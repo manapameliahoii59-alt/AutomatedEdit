@@ -78,6 +78,7 @@ def create_plan_job_endpoint(
         "target_clips_count": body.target_clips_count,
         "max_duration_seconds": body.max_duration_seconds,
         "min_duration_seconds": body.min_duration_seconds,
+        "split_ab": body.split_ab,
     }
     try:
         job = create_plan_job(db, user.id, payload)

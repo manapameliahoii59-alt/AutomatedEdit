@@ -16,6 +16,7 @@ MIN_DURATION_SECONDS = 150
 DEFAULT_MAX_DURATION_SECONDS = 720
 MIN_MAX_DURATION_SECONDS = 300
 MAX_MAX_DURATION_SECONDS = 900
+ABS_MIN_DURATION_SECONDS = 120  # 短片最短下限
 SEARCH_EPISODES = 15
 DEFAULT_TARGET_CLIPS_COUNT = 15
 MIN_TARGET_CLIPS_COUNT = 5
@@ -23,6 +24,7 @@ MAX_TARGET_CLIPS_COUNT = 15
 GROUP_A_RATIO_NUM = 6  # 默认 A:B = 6:9
 GROUP_A_BUFFER = 2
 GROUP_B_BUFFER = 3
+GROUP_U_BUFFER = 3
 MAX_GROUP_LOOPS = 5
 MAX_OUTPUT_TOKENS = 7000
 
@@ -43,11 +45,21 @@ def clamp_clip_count(value: Any) -> int:
 
 
 def clamp_max_duration_seconds(value: Any) -> int:
+    """长片默认 clamp（300~900）；兼容旧调用。"""
     try:
         n = int(round(float(value)))
     except (TypeError, ValueError):
         n = DEFAULT_MAX_DURATION_SECONDS
     return max(MIN_MAX_DURATION_SECONDS, min(MAX_MAX_DURATION_SECONDS, n))
+
+
+def clamp_plan_duration_seconds(value: Any, *, default: int) -> int:
+    """策划请求时长：允许短片 120s 起，最高 900s。"""
+    try:
+        n = int(round(float(value)))
+    except (TypeError, ValueError):
+        n = default
+    return max(ABS_MIN_DURATION_SECONDS, min(MAX_MAX_DURATION_SECONDS, n))
 
 
 def split_ab_counts(total: int) -> tuple[int, int]:
@@ -126,8 +138,13 @@ def _call_deepseek(
                 f"st到切点须达{min_duration_seconds}~{max_duration_seconds}秒），"
                 "也可跨多集（le须晚于se）。"
             )
+        elif group_type == "B":
+            scope_rule = "B组必须跨多集：le 须晚于 se，通常跨越 2 集及以上即可。"
         else:
-            scope_rule = "B组必须跨多集：le 须晚于 se，通常跨越 4~8 集。"
+            scope_rule = (
+                "可在单集内剪一段（se与le相同），也可跨多集（le须晚于se）；"
+                "起始集不限，切点须有明显差异。"
+            )
         system_prompt = (
             f"你是一个短剧广告投放导演。任务：策划 {count} 个高转化引流剪辑计划。\n"
             f"硬性要求：每条剪辑总时长必须在 {min_duration_seconds}~{max_duration_seconds} 秒之间。\n"
@@ -181,30 +198,39 @@ def run_plan(
     target_clips_count: int | None = None,
     max_duration_seconds: int | None = None,
     min_duration_seconds: int | None = None,
+    split_ab: bool | None = None,
 ) -> list[dict]:
     if not api_keys_raw.strip():
         raise ValueError("服务端未配置策划 API 密钥")
+
+    use_ab = True if split_ab is None else bool(split_ab)
 
     target_total = (
         clamp_clip_count(target_clips_count)
         if target_clips_count is not None
         else DEFAULT_TARGET_CLIPS_COUNT
     )
-    min_dur = MIN_DURATION_SECONDS
+    default_min = MIN_DURATION_SECONDS if use_ab else ABS_MIN_DURATION_SECONDS
     if min_duration_seconds is not None:
-        try:
-            min_dur = max(MIN_DURATION_SECONDS, int(min_duration_seconds))
-        except (TypeError, ValueError):
-            min_dur = MIN_DURATION_SECONDS
-    max_dur = (
-        clamp_max_duration_seconds(max_duration_seconds)
-        if max_duration_seconds is not None
-        else DEFAULT_MAX_DURATION_SECONDS
-    )
+        min_dur = clamp_plan_duration_seconds(
+            min_duration_seconds, default=default_min
+        )
+    else:
+        min_dur = default_min
+    if max_duration_seconds is not None:
+        max_dur = clamp_plan_duration_seconds(
+            max_duration_seconds, default=DEFAULT_MAX_DURATION_SECONDS
+        )
+    else:
+        max_dur = DEFAULT_MAX_DURATION_SECONDS
     if max_dur <= min_dur:
         max_dur = min(MAX_MAX_DURATION_SECONDS, min_dur + 30)
 
-    group_a_count, group_b_count = split_ab_counts(target_total)
+    if use_ab:
+        group_a_count, group_b_count = split_ab_counts(target_total)
+        task_groups = [("A", group_a_count), ("B", group_b_count)]
+    else:
+        task_groups = [("U", target_total)]
 
     target_episodes = ordered_files[:SEARCH_EPISODES]
     compressed_script = "".join(
@@ -228,7 +254,6 @@ def run_plan(
     used_fingerprints: set[str] = set()
     date_str = datetime.now().strftime("%m%d")
     step_texts = [s.get("text", "") for s in steps]
-    task_groups = [("A", group_a_count), ("B", group_b_count)]
 
     def _emit(detail: str = "") -> None:
         if progress_callback:
@@ -248,13 +273,21 @@ def run_plan(
             continue
         completed_in_group = 0
         loop_count = 0
-        group_buffer = GROUP_A_BUFFER if g_type == "A" else GROUP_B_BUFFER
+        if g_type == "A":
+            group_buffer = GROUP_A_BUFFER
+        elif g_type == "B":
+            group_buffer = GROUP_B_BUFFER
+        else:
+            group_buffer = GROUP_U_BUFFER
 
         while completed_in_group < total_count and loop_count < MAX_GROUP_LOOPS:
             loop_count += 1
             remaining = total_count - completed_in_group
             request_count = remaining + group_buffer
-            _emit(f"{g_type}组 {completed_in_group}/{total_count} · 正在生成方案…")
+            if g_type == "U":
+                _emit(f"策划 {completed_in_group}/{total_count} · 正在生成方案…")
+            else:
+                _emit(f"{g_type}组 {completed_in_group}/{total_count} · 正在生成方案…")
 
             raw_res, _elapsed, api_error = _call_deepseek(
                 api_url=api_url,
@@ -333,7 +366,10 @@ def run_plan(
                         break
 
                 completed_in_group += batch_ok
-                _emit(f"{g_type}组 · 已通过 {len(final_plans)}/{target_total} 条")
+                if g_type == "U":
+                    _emit(f"已通过 {len(final_plans)}/{target_total} 条")
+                else:
+                    _emit(f"{g_type}组 · 已通过 {len(final_plans)}/{target_total} 条")
                 if len(final_plans) >= target_total:
                     break
             except Exception:

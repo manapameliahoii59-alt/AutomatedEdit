@@ -40,6 +40,13 @@ def test_build_settings_out_defaults():
     assert out.video_download.episode_from == 1
     assert out.video_download.episode_to == 10
     assert out.video_download.auto_unzip is True
+    assert out.clip_edit.export_name_tag == ""
+    assert out.clip_edit.overlay_title.text == "《{name}》"
+    assert out.clip_edit.overlay_title.portrait is not None
+    assert out.clip_edit.overlay_title.portrait.y_pct == 94.5
+    assert out.clip_edit.overlay_title.landscape is not None
+    assert out.clip_edit.overlay_title.landscape.y_pct == 90.0
+    assert out.clip_edit.overlay_disclaimer.text == "内容纯属虚构 请勿带入现实"
     assert out.updated_at is None
 
 
@@ -47,12 +54,14 @@ def test_build_settings_out_preserves_unknown_namespace():
     out = build_settings_out(
         {
             "video_download": {"episode_from": 2, "episode_to": 5},
-            "clip_edit": {"export_tag": "demo"},
+            "clip_edit": {"export_name_tag": "demo"},
+            "custom_ns": {"foo": 1},
         },
         None,
     )
     assert out.video_download.episode_from == 2
-    assert out.model_dump()["clip_edit"] == {"export_tag": "demo"}
+    assert out.clip_edit.export_name_tag == "demo"
+    assert out.model_dump()["custom_ns"] == {"foo": 1}
 
 
 def test_patch_user_settings_merge(monkeypatch):
@@ -78,14 +87,14 @@ def test_patch_user_settings_merge(monkeypatch):
                 "episode_from": 3,
                 "auto_unzip": False,
             },
-            "clip_edit": {"foo": "bar"},
+            "clip_edit": {"export_name_tag": "阿飞"},
         },
     )
     assert isinstance(result, UserSettingsOut)
     assert result.video_download.episode_from == 3
     assert result.video_download.episode_to == 10
     assert result.video_download.auto_unzip is False
-    assert result.model_dump()["clip_edit"] == {"foo": "bar"}
+    assert result.clip_edit.export_name_tag == "阿飞"
 
     result2 = patch_user_settings(db, 7, {"video_download": {"episode_to": 8}})
     assert result2.video_download.episode_from == 3

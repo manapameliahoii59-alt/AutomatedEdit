@@ -9,9 +9,9 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.models import UserSettings
-from app.schemas import PlanSettings, UserSettingsOut, VideoDownloadSettings
+from app.schemas import ClipEditSettings, PlanSettings, UserSettingsOut, VideoDownloadSettings
 
-_KNOWN_NAMESPACES = frozenset({"video_download", "plan"})
+_KNOWN_NAMESPACES = frozenset({"video_download", "plan", "clip_edit"})
 
 
 def _load_data(raw: str) -> dict[str, Any]:
@@ -49,6 +49,9 @@ def _validate_namespaces(data: dict[str, Any]) -> dict[str, Any]:
     if "plan" in data:
         validated = PlanSettings.model_validate(data["plan"])
         data["plan"] = validated.model_dump()
+    if "clip_edit" in data:
+        validated = ClipEditSettings.model_validate(data["clip_edit"])
+        data["clip_edit"] = validated.model_dump()
     return data
 
 
@@ -88,6 +91,8 @@ def build_settings_out(data: dict[str, Any], updated_at) -> UserSettingsOut:
     payload["video_download"] = VideoDownloadSettings.model_validate(vd)
     plan = data.get("plan", {})
     payload["plan"] = PlanSettings.model_validate(plan)
+    clip_edit = data.get("clip_edit", {})
+    payload["clip_edit"] = ClipEditSettings.model_validate(clip_edit)
     for key, value in data.items():
         if key not in _KNOWN_NAMESPACES:
             payload[key] = value

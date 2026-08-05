@@ -27,12 +27,21 @@ class Config(MyQConfig):
     clip_export_name_tag = ConfigItem("Tools", "clip_export_name_tag", "")
     # 自动化剪辑「导入剧目」对话框上次打开的目录
     clip_last_import_dir = ConfigItem("Tools", "clip_last_import_dir", "")
+    # 画面叠字（剧名 / 提示）JSON
+    overlay_title_json = ConfigItem("Tools", "overlay_title_json", "")
+    overlay_disclaimer_json = ConfigItem("Tools", "overlay_disclaimer_json", "")
     # 渲染编码档位（默认：NVENC p5 / x264 superfast）
     encode_nvenc_preset = ConfigItem("Tools", "encode_nvenc_preset", "p5")
     encode_x264_preset = ConfigItem("Tools", "encode_x264_preset", "superfast")
-    # 策划：总条数 5~15；最长时长秒（最短固定 150s）
+    # 策划：短片/长片模式；长片条数与最长时长（最短固定 150s）
+    plan_mode = ConfigItem("Tools", "plan_mode", "long")
     plan_clip_count = ConfigItem("Tools", "plan_clip_count", 15)
     plan_max_duration_sec = ConfigItem("Tools", "plan_max_duration_sec", 720)
+    # 短片：条数 5~15；最长时长秒（最短固定 120s，最长 120~300）
+    plan_short_clip_count = ConfigItem("Tools", "plan_short_clip_count", 15)
+    plan_short_max_duration_sec = ConfigItem(
+        "Tools", "plan_short_max_duration_sec", 300
+    )
     video_download_dir = ConfigItem("Tools", "video_download_dir", "")
     video_download_auto_unzip = ConfigItem(
         "Tools", "video_download_auto_unzip", True, BoolValidator()
