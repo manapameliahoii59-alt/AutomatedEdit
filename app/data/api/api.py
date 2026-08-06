@@ -72,7 +72,12 @@ class RemoteApi:
                 detail = resp.json().get('detail', detail)
             except Exception:
                 pass
-            raise ApiError(str(detail), status_code=resp.status_code)
+            if isinstance(detail, list):
+                detail = str(detail)
+            msg = str(detail or "").strip()
+            if not msg:
+                msg = f"服务器错误 HTTP {resp.status_code}"
+            raise ApiError(msg, status_code=resp.status_code)
         if resp.content:
             return resp.json()
         return None

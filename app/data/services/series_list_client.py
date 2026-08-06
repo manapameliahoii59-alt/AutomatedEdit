@@ -423,9 +423,10 @@ class SeriesListClient:
     def fetch_episodes_in_range(self, book_id: str, from_ep: int, to_ep: int) -> dict[str, Any]:
         if from_ep < 1 or to_ep < from_ep:
             raise ValueError(f"无效集数范围: {from_ep}-{to_ep}")
+        # 拉取至 to_ep，再由调用方按 from_ep 切片（page 从第 1 集起算）
         return self.fetch_episode_info(
             book_id,
-            {"page_index": "0", "page_size": str(to_ep - from_ep + 1)},
+            {"page_index": "0", "page_size": str(to_ep)},
         )
 
     def create_batch_download_task(
@@ -461,7 +462,14 @@ class SeriesListClient:
         episodes = (ep_json.get("data") or {}).get("data") or []
         if not episodes:
             raise RuntimeError("未获取到集数信息")
-        item_ids = [ep["item_id"] for ep in episodes]
+        sliced = episodes[from_ep - 1 : to_ep]
+        need = to_ep - from_ep + 1
+        if len(sliced) != need:
+            raise RuntimeError(
+                f"集数不足：需要第 {from_ep}-{to_ep} 集（共 {need} 集），"
+                f"实际仅拿到 {len(sliced)} 集（列表共 {len(episodes)} 集）"
+            )
+        item_ids = [ep["item_id"] for ep in sliced]
         return self.create_batch_download_task(
             book_id=book_id,
             book_name=book_name,

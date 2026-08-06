@@ -27,9 +27,11 @@ class Config(MyQConfig):
     clip_export_name_tag = ConfigItem("Tools", "clip_export_name_tag", "")
     # 自动化剪辑「导入剧目」对话框上次打开的目录
     clip_last_import_dir = ConfigItem("Tools", "clip_last_import_dir", "")
-    # 画面叠字（剧名 / 提示）JSON
+    # 画面叠字（剧名 / 提示）JSON —— 旧单套，仍作兼容读写
     overlay_title_json = ConfigItem("Tools", "overlay_title_json", "")
     overlay_disclaimer_json = ConfigItem("Tools", "overlay_disclaimer_json", "")
+    # 画面文字组库：{selected_id, groups:[{id,name,title,disclaimer}]}
+    overlay_text_library_json = ConfigItem("Tools", "overlay_text_library_json", "")
     # 渲染编码档位（默认：NVENC p5 / x264 superfast）
     encode_nvenc_preset = ConfigItem("Tools", "encode_nvenc_preset", "p5")
     encode_x264_preset = ConfigItem("Tools", "encode_x264_preset", "superfast")
@@ -42,6 +44,8 @@ class Config(MyQConfig):
     plan_short_max_duration_sec = ConfigItem(
         "Tools", "plan_short_max_duration_sec", 300
     )
+    # 成片全局倍速（默认 1.15）
+    plan_global_speed = ConfigItem("Tools", "plan_global_speed", 1.15)
     video_download_dir = ConfigItem("Tools", "video_download_dir", "")
     video_download_auto_unzip = ConfigItem(
         "Tools", "video_download_auto_unzip", True, BoolValidator()

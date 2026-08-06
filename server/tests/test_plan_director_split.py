@@ -88,6 +88,15 @@ def test_run_plan_split_ab_true_uses_ab_groups():
     assert "U" not in calls
 
 
+def test_clamp_global_speed():
+    from app.services.plan_director import clamp_global_speed
+
+    assert clamp_global_speed(1.15) == 1.15
+    assert clamp_global_speed(None) == 1.15
+    assert clamp_global_speed(0.8) == 1.0
+    assert clamp_global_speed(2.0) == 1.5
+
+
 def test_clamp_plan_duration_allows_short():
     from app.services.plan_director import clamp_plan_duration_seconds
 

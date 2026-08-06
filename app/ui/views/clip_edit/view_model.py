@@ -25,6 +25,22 @@ from app.data.services.usage_service import UsageService
 from app.data.services.quota_service import QuotaService
 
 
+def _format_plan_result_message(project_name: str, result: dict | None = None) -> str:
+    """策划完成文案；条数不足时明确提示。"""
+    if not isinstance(result, dict):
+        return f"《{project_name}》策划完成"
+    count = int(result.get("count") or 0)
+    target = int(result.get("target") or 0)
+    if result.get("underfilled") and target > 0 and count < target:
+        return (
+            f"《{project_name}》策划完成：仅通过 {count}/{target} 条。"
+            "部分候选因时长不在范围内或切点台词未匹配剧本被过滤，可重试策划。"
+        )
+    if target > 0:
+        return f"《{project_name}》策划完成：{count}/{target} 条"
+    return f"《{project_name}》策划完成"
+
+
 class ClipEditViewModel(ViewModel):
     projectsChanged = Signal(list)
     loadingChanged = Signal(bool, str, str)  # loading, title, content
@@ -102,6 +118,22 @@ class ClipEditViewModel(ViewModel):
 
         task_manager.submit_task(_do, on_success=lambda _ok: None, on_error=_on_error)
 
+    def save_overlay_text_library(self, library: dict) -> None:
+        """同步整份画面文字组库到服务端。"""
+        api = get_api()
+        if not api._token:
+            return
+        patch = clip_edit_settings_patch(overlay_text_library=library)
+
+        def _do():
+            get_api().update_settings(patch)
+            return True
+
+        def _on_error(msg: str):
+            self.errorOccurred.emit(f"画面文字组同步失败：{msg}")
+
+        task_manager.submit_task(_do, on_success=lambda _ok: None, on_error=_on_error)
+
     def save_plan_settings(
         self,
         *,
@@ -110,6 +142,7 @@ class ClipEditViewModel(ViewModel):
         max_duration_sec: int | None = None,
         short_clip_count: int | None = None,
         short_max_duration_sec: int | None = None,
+        global_speed: float | None = None,
     ) -> None:
         """本地已写入 cfg 后，后台同步到服务端用户设置。"""
         api = get_api()
@@ -121,6 +154,7 @@ class ClipEditViewModel(ViewModel):
             max_duration_sec=max_duration_sec,
             short_clip_count=short_clip_count,
             short_max_duration_sec=short_max_duration_sec,
+            global_speed=global_speed,
         )
         if not patch.get("plan"):
             return
@@ -451,15 +485,14 @@ class ClipEditViewModel(ViewModel):
         plan_handler = self._make_plan_progress_handler(project_id)
 
         def _do():
-            AIDirectorService.plan(project, progress_callback=plan_handler)
-            return True
+            return AIDirectorService.plan(project, progress_callback=plan_handler)
 
-        def _on_success(_ok):
+        def _on_success(result):
             self._remove_task()
             self._update_status(project_id, "plan", DramaStatus.DONE)
             UsageService.report("plan")
             self._report_plan_done(project.name)
-            self.messageReceived.emit(f"《{project.name}》策划完成")
+            self.messageReceived.emit(_format_plan_result_message(project.name, result))
 
         def _on_error(msg):
             self._remove_task()
@@ -629,12 +662,13 @@ class ClipEditViewModel(ViewModel):
             pname = project.name
             plan_handler = self._make_plan_progress_handler(pid)
 
-            def _on_success(_ok, pid=pid, pname=pname):
+            def _on_success(result, pid=pid, pname=pname):
                 self._remove_task()
                 self._update_status(pid, "plan", DramaStatus.DONE)
                 UsageService.report("plan")
                 self._report_plan_done(pname)
                 results["success"] += 1
+                self.messageReceived.emit(_format_plan_result_message(pname, result))
                 if self._active_tasks == 0:
                     self._emit_batch_summary("批量策划完成", results, skipped)
 
@@ -819,19 +853,18 @@ class ClipEditViewModel(ViewModel):
             return
 
         def step2():
-            AIDirectorService.plan(
+            return AIDirectorService.plan(
                 project,
                 progress_callback=self._make_plan_progress_handler(pid),
             )
-            return True
 
-        def step2_done(_ok):
+        def step2_done(result):
             self._update_status(pid, "plan", DramaStatus.DONE)
             UsageService.report("batch_all_plan")
             self._report_plan_done(pname)
             if not run_render:
                 self._remove_task()
-                self.messageReceived.emit(f"《{pname}》策划完成")
+                self.messageReceived.emit(_format_plan_result_message(pname, result))
                 return
             if not self._ensure_can_clip(pname):
                 self._remove_task()
@@ -957,18 +990,18 @@ class ClipEditViewModel(ViewModel):
             UsageService.report("batch_all_transcribe")
 
             def step2():
-                AIDirectorService.plan(
+                return AIDirectorService.plan(
                     project,
                     progress_callback=self._make_plan_progress_handler(pid),
                 )
-                return True
 
-            def step2_done(_ok):
+            def step2_done(result):
                 self._update_status(pid, "plan", DramaStatus.DONE)
                 UsageService.report("batch_all_plan")
                 self._report_plan_done(pname)
                 if not self._ensure_can_clip(pname):
                     self._remove_task()
+                    self.messageReceived.emit(_format_plan_result_message(pname, result))
                     return
 
                 def step3_done(result: RenderResult):

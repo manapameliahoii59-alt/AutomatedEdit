@@ -79,6 +79,7 @@ def create_plan_job_endpoint(
         "max_duration_seconds": body.max_duration_seconds,
         "min_duration_seconds": body.min_duration_seconds,
         "split_ab": body.split_ab,
+        "global_speed": body.global_speed,
     }
     try:
         job = create_plan_job(db, user.id, payload)

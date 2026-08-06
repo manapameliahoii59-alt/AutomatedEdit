@@ -4,6 +4,7 @@ from app.common.plan_settings import (
     SHORT_MIN_DURATION_SECONDS,
     MIN_DURATION_SECONDS,
     clamp_clip_count,
+    clamp_global_speed,
     clamp_max_duration_seconds,
     clamp_plan_mode,
     clamp_short_max_duration_seconds,
@@ -59,6 +60,16 @@ def test_split_ab_ratio():
         assert a >= 1 and b >= 1
 
 
+def test_clamp_global_speed():
+    assert clamp_global_speed(1.15) == 1.15
+    assert clamp_global_speed(1.0) == 1.0
+    assert clamp_global_speed(1.5) == 1.5
+    assert clamp_global_speed(0.5) == 1.0
+    assert clamp_global_speed(2.0) == 1.5
+    assert clamp_global_speed(None) == 1.15
+    assert clamp_global_speed("bad") == 1.15
+
+
 def test_resolve_active_plan_params_long(monkeypatch):
     from app.common import config as config_mod
 
@@ -71,6 +82,7 @@ def test_resolve_active_plan_params_long(monkeypatch):
     monkeypatch.setattr(config_mod.cfg, "plan_max_duration_sec", _Item(600))
     monkeypatch.setattr(config_mod.cfg, "plan_short_clip_count", _Item(8))
     monkeypatch.setattr(config_mod.cfg, "plan_short_max_duration_sec", _Item(180))
+    monkeypatch.setattr(config_mod.cfg, "plan_global_speed", _Item(1.2))
 
     params = resolve_active_plan_params()
     assert params["mode"] == PLAN_MODE_LONG
@@ -78,6 +90,7 @@ def test_resolve_active_plan_params_long(monkeypatch):
     assert params["min_duration_sec"] == MIN_DURATION_SECONDS
     assert params["max_duration_sec"] == 600
     assert params["split_ab"] is True
+    assert params["global_speed"] == 1.2
 
 
 def test_resolve_active_plan_params_short(monkeypatch):
@@ -92,6 +105,7 @@ def test_resolve_active_plan_params_short(monkeypatch):
     monkeypatch.setattr(config_mod.cfg, "plan_max_duration_sec", _Item(600))
     monkeypatch.setattr(config_mod.cfg, "plan_short_clip_count", _Item(8))
     monkeypatch.setattr(config_mod.cfg, "plan_short_max_duration_sec", _Item(180))
+    monkeypatch.setattr(config_mod.cfg, "plan_global_speed", _Item(1.0))
 
     params = resolve_active_plan_params()
     assert params["mode"] == PLAN_MODE_SHORT
@@ -99,3 +113,4 @@ def test_resolve_active_plan_params_short(monkeypatch):
     assert params["min_duration_sec"] == SHORT_MIN_DURATION_SECONDS
     assert params["max_duration_sec"] == 180
     assert params["split_ab"] is False
+    assert params["global_speed"] == 1.0

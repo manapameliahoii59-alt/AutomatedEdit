@@ -28,7 +28,7 @@ from app.data.services.changdu_paths import resolve_video_download_root
 from app.data.services.series_list_client import SeriesListClient
 from app.data.services.usage_service import UsageService
 
-MAX_DOWNLOAD_EPISODE = 10
+MAX_DOWNLOAD_EPISODE = 15
 
 
 def _format_changdu_precheck_error(detail: str) -> str:
@@ -69,7 +69,7 @@ class VideoDownloadViewModel(ViewModel):
         self._active_tasks = 0
         self._cancel_requested = False
         self._default_from = 1
-        self._default_to = 10
+        self._default_to = MAX_DOWNLOAD_EPISODE
         self._incremental_planned_folders: set[str] = set()
         # 自动渲染：策划就绪一部就入队，后完成的剧不会因先渲完的剧被漏掉
         self._pending_render_folders: list[str] = []

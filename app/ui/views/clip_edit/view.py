@@ -40,13 +40,16 @@ from app.common.config import cfg
 from app.common.export_paths import build_clip_export_filename, resolve_clip_export_root
 from app.common.plan_settings import (
     DEFAULT_CLIP_COUNT,
+    DEFAULT_GLOBAL_SPEED,
     DEFAULT_MAX_DURATION_SECONDS,
     DEFAULT_SHORT_MAX_DURATION_SECONDS,
+    GLOBAL_SPEED_CHOICES,
     MAX_CLIP_COUNT,
     MIN_CLIP_COUNT,
     PLAN_MODE_LONG,
     PLAN_MODE_SHORT,
     clamp_clip_count,
+    clamp_global_speed,
     clamp_max_duration_seconds,
     clamp_plan_mode,
     clamp_short_max_duration_seconds,
@@ -55,17 +58,8 @@ from app.common.plan_settings import (
     short_max_duration_minutes_from_seconds,
     short_max_duration_seconds_from_minutes,
 )
-from app.common.overlay_text_settings import (
-    FONT_CHOICES,
-    default_overlay_disclaimer,
-    default_overlay_title,
-    load_overlay_disclaimer_from_cfg,
-    load_overlay_title_from_cfg,
-    position_for_orientation,
-    save_overlay_styles_to_cfg,
-    set_position_for_orientation,
-)
-from app.ui.components.overlay_text_preview import OverlayTextPreview
+from app.ui.components.outro_settings_dialog import OutroSettingsDialog
+from app.ui.components.overlay_text_groups_dialog import OverlayTextGroupsDialog
 from app.common.runtime import is_dev_runtime
 from app.common.utils import StyleSheet, setup_confirm_dialog, show_dialog, show_toast
 from app.data.models.drama_project import DramaProject, DramaStatus
@@ -141,7 +135,10 @@ class ClipEditPage(ScrollArea):
         name_tag_row.addWidget(BodyLabel("文件名标识：", self.scroll_widget))
         self.export_name_tag_input = LineEdit(self.scroll_widget)
         self.export_name_tag_input.setPlaceholderText("如：阿飞")
-        self.export_name_tag_input.setText(cfg.clip_export_name_tag.value)
+        self.export_name_tag_input.setMaxLength(20)
+        self.export_name_tag_input.setText(
+            str(cfg.clip_export_name_tag.value or "")[:20]
+        )
         self.export_name_tag_input.setClearButtonEnabled(True)
         self.export_name_tag_input.setFixedWidth(140)
         self.export_name_tag_input.editingFinished.connect(self._save_export_name_tag)
@@ -150,6 +147,11 @@ class ClipEditPage(ScrollArea):
         self.export_name_preview_label = BodyLabel("", self.scroll_widget)
         self.export_name_preview_label.setWordWrap(True)
         name_tag_row.addWidget(self.export_name_preview_label, 1)
+        self.import_btn = PrimaryPushButton(
+            FIF.FOLDER_ADD, "导入剧目", self.scroll_widget
+        )
+        self.import_btn.clicked.connect(self._pick_drama_folder)
+        name_tag_row.addWidget(self.import_btn)
         layout.addLayout(name_tag_row)
         self._update_export_name_preview()
 
@@ -167,10 +169,6 @@ class ClipEditPage(ScrollArea):
         batch_row.addWidget(self.batch_transcribe_btn)
         batch_row.addWidget(self.batch_plan_btn)
         batch_row.addWidget(self.batch_render_btn)
-        self.import_btn = PrimaryPushButton(
-            FIF.FOLDER_ADD, "导入剧目", self.scroll_widget
-        )
-        self.import_btn.clicked.connect(self._pick_drama_folder)
         self.encode_settings_btn = None
         if is_dev_runtime():
             self.encode_settings_btn = PushButton(
@@ -184,7 +182,7 @@ class ClipEditPage(ScrollArea):
             FIF.EDIT, "策划设置", self.scroll_widget
         )
         self.plan_settings_btn.setToolTip(
-            "选择短片/长片模式，并设置条数（5~15）与对应最长时长"
+            "选择短片/长片模式、条数、最长时长，以及成片倍速"
         )
         self.plan_settings_btn.clicked.connect(self._open_plan_settings)
         self.overlay_text_btn = PushButton(
@@ -194,11 +192,16 @@ class ClipEditPage(ScrollArea):
             "自定义渲染画面上的剧名与提示文字（字体、颜色、位置等）"
         )
         self.overlay_text_btn.clicked.connect(self._open_overlay_text_settings)
-        batch_row.addWidget(self.import_btn)
+        self.outro_btn = PushButton(FIF.VIDEO, "片尾设置", self.scroll_widget)
+        self.outro_btn.setToolTip(
+            "上传多个横屏/竖屏片尾，勾选启用；未勾选自定义时用内置默认"
+        )
+        self.outro_btn.clicked.connect(self._open_outro_settings)
         if self.encode_settings_btn is not None:
             batch_row.addWidget(self.encode_settings_btn)
         batch_row.addWidget(self.plan_settings_btn)
         batch_row.addWidget(self.overlay_text_btn)
+        batch_row.addWidget(self.outro_btn)
         batch_row.addStretch(1)
         layout.addLayout(batch_row)
 
@@ -243,7 +246,7 @@ class ClipEditPage(ScrollArea):
         qconfig.themeChanged.connect(lambda *_: self._refresh_table(self.vm.get_projects()))
 
     def _on_settings_loaded(self, _clip_edit: dict):
-        tag = cfg.clip_export_name_tag.value
+        tag = str(cfg.clip_export_name_tag.value or "")[:20]
         if self.export_name_tag_input.text() != tag:
             self.export_name_tag_input.blockSignals(True)
             self.export_name_tag_input.setText(tag)
@@ -451,8 +454,9 @@ class ClipEditPage(ScrollArea):
     def _open_plan_settings(self):
         dlg = QDialog(self.window())
         dlg.setWindowTitle("策划设置")
-        dlg.setMinimumWidth(440)
+        dlg.setMinimumWidth(480)
         layout = QVBoxLayout(dlg)
+        layout.setSpacing(12)
 
         mode_row = QHBoxLayout()
         short_radio = QRadioButton("短片模式", dlg)
@@ -470,18 +474,33 @@ class ClipEditPage(ScrollArea):
         mode_row.addStretch(1)
         layout.addLayout(mode_row)
 
-        tip = QLabel(dlg)
+        tip = BodyLabel(dlg)
         tip.setWordWrap(True)
         layout.addWidget(tip)
 
         form = QFormLayout()
-        count_spin = QSpinBox(dlg)
-        count_spin.setRange(MIN_CLIP_COUNT, MAX_CLIP_COUNT)
-        count_spin.setSuffix(" 条")
-        max_spin = QSpinBox(dlg)
-        max_spin.setSuffix(" 分钟")
-        form.addRow("总条数：", count_spin)
-        form.addRow("最长时长：", max_spin)
+        form.setSpacing(10)
+        form.setLabelAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+
+        count_combo = QComboBox(dlg)
+        count_combo.setMinimumWidth(200)
+        for n in range(MIN_CLIP_COUNT, MAX_CLIP_COUNT + 1):
+            count_combo.addItem(f"{n} 条", n)
+
+        max_combo = QComboBox(dlg)
+        max_combo.setMinimumWidth(200)
+
+        speed_combo = QComboBox(dlg)
+        speed_combo.setMinimumWidth(200)
+        for spd in GLOBAL_SPEED_CHOICES:
+            label = "原速（不加速）" if abs(spd - 1.0) < 1e-6 else f"{spd:.2f} 倍"
+            if abs(spd - DEFAULT_GLOBAL_SPEED) < 1e-6:
+                label += "（默认）"
+            speed_combo.addItem(label, spd)
+
+        form.addRow("总条数", count_combo)
+        form.addRow("最长时长", max_combo)
+        form.addRow("成片倍速", speed_combo)
         layout.addLayout(form)
 
         # 两套参数各自缓存，切换模式时互不覆盖
@@ -502,35 +521,66 @@ class ClipEditPage(ScrollArea):
             },
         }
         current_mode = {"value": initial_mode}
+        initial_speed = clamp_global_speed(cfg.plan_global_speed.value)
+
+        def _set_combo_value(combo: QComboBox, value) -> None:
+            idx = combo.findData(value)
+            if idx < 0:
+                # 浮点倍速：按近似匹配
+                for i in range(combo.count()):
+                    data = combo.itemData(i)
+                    try:
+                        if abs(float(data) - float(value)) < 1e-6:
+                            idx = i
+                            break
+                    except (TypeError, ValueError):
+                        continue
+            combo.setCurrentIndex(idx if idx >= 0 else 0)
+
+        def _combo_int(combo: QComboBox) -> int:
+            data = combo.currentData()
+            return int(data) if data is not None else MIN_CLIP_COUNT
+
+        def _combo_speed(combo: QComboBox) -> float:
+            data = combo.currentData()
+            return clamp_global_speed(data if data is not None else DEFAULT_GLOBAL_SPEED)
+
+        def _refill_max_combo(mode: str) -> None:
+            max_combo.blockSignals(True)
+            max_combo.clear()
+            if mode == PLAN_MODE_SHORT:
+                for m in range(2, 6):
+                    max_combo.addItem(f"{m} 分钟", m)
+            else:
+                for m in range(5, 16):
+                    max_combo.addItem(f"{m} 分钟", m)
+            max_combo.blockSignals(False)
 
         def _active_mode() -> str:
             return PLAN_MODE_SHORT if short_radio.isChecked() else PLAN_MODE_LONG
 
-        def _persist_current_spins():
+        def _persist_current():
             mode = current_mode["value"]
-            values[mode]["count"] = count_spin.value()
-            values[mode]["max_min"] = max_spin.value()
+            values[mode]["count"] = _combo_int(count_combo)
+            values[mode]["max_min"] = _combo_int(max_combo)
 
         def _apply_mode(mode: str):
             current_mode["value"] = mode
             if mode == PLAN_MODE_SHORT:
                 tip.setText(
-                    "短片模式：单条最短时长固定 2 分钟。\n"
-                    "「最长时长」可在 2～5 分钟之间选择，默认 5 分钟。\n\n"
-                    "说明：此处设置的是目标条数与时长范围，实际产出不一定严格等于设定值，"
-                    "可能因剧本内容、切点匹配等略有波动（条数可能偏少，单条时长在范围内浮动）。"
+                    "短片：最短固定 2 分钟；最长可选 2～5 分钟（默认 5）。\n"
+                    "成片倍速对短片/长片共用；大于 1 会加速成片。"
+                    "条数与时长为策划目标，实际产出可能略有浮动。"
                 )
-                max_spin.setRange(2, 5)
             else:
                 tip.setText(
-                    "长片模式：单条最短时长固定 2.5 分钟。\n"
-                    "「最长时长」可在 5～15 分钟之间选择，默认 12 分钟。\n\n"
-                    "说明：此处设置的是目标条数与时长范围，实际产出不一定严格等于设定值，"
-                    "可能因剧本内容、切点匹配等略有波动（条数可能偏少，单条时长在范围内浮动）。"
+                    "长片：最短固定 2.5 分钟；最长可选 5～15 分钟（默认 12）。\n"
+                    "成片倍速对短片/长片共用；大于 1 会加速成片。"
+                    "条数与时长为策划目标，实际产出可能略有浮动。"
                 )
-                max_spin.setRange(5, 15)
-            count_spin.setValue(values[mode]["count"])
-            max_spin.setValue(values[mode]["max_min"])
+            _refill_max_combo(mode)
+            _set_combo_value(count_combo, values[mode]["count"])
+            _set_combo_value(max_combo, values[mode]["max_min"])
 
         def _on_mode_toggled(_checked=False):
             if not short_radio.isChecked() and not long_radio.isChecked():
@@ -538,12 +588,13 @@ class ClipEditPage(ScrollArea):
             new_mode = _active_mode()
             if new_mode == current_mode["value"]:
                 return
-            _persist_current_spins()
+            _persist_current()
             _apply_mode(new_mode)
 
         short_radio.toggled.connect(_on_mode_toggled)
         long_radio.toggled.connect(_on_mode_toggled)
         _apply_mode(initial_mode)
+        _set_combo_value(speed_combo, initial_speed)
 
         btn_row = QHBoxLayout()
         reset_btn = PushButton("重置默认", dlg)
@@ -559,18 +610,18 @@ class ClipEditPage(ScrollArea):
         def _reset():
             mode = _active_mode()
             if mode == PLAN_MODE_SHORT:
-                count_spin.setValue(DEFAULT_CLIP_COUNT)
-                max_spin.setValue(
-                    short_max_duration_minutes_from_seconds(
-                        DEFAULT_SHORT_MAX_DURATION_SECONDS
-                    )
+                values[mode]["count"] = DEFAULT_CLIP_COUNT
+                values[mode]["max_min"] = short_max_duration_minutes_from_seconds(
+                    DEFAULT_SHORT_MAX_DURATION_SECONDS
                 )
             else:
-                count_spin.setValue(DEFAULT_CLIP_COUNT)
-                max_spin.setValue(
-                    max_duration_minutes_from_seconds(DEFAULT_MAX_DURATION_SECONDS)
+                values[mode]["count"] = DEFAULT_CLIP_COUNT
+                values[mode]["max_min"] = max_duration_minutes_from_seconds(
+                    DEFAULT_MAX_DURATION_SECONDS
                 )
-            _persist_current_spins()
+            _set_combo_value(count_combo, values[mode]["count"])
+            _set_combo_value(max_combo, values[mode]["max_min"])
+            _set_combo_value(speed_combo, DEFAULT_GLOBAL_SPEED)
 
         reset_btn.clicked.connect(_reset)
         buttons.accepted.connect(dlg.accept)
@@ -579,8 +630,9 @@ class ClipEditPage(ScrollArea):
         if dlg.exec() != QDialog.DialogCode.Accepted:
             return
 
-        _persist_current_spins()
+        _persist_current()
         mode = _active_mode()
+        global_speed = _combo_speed(speed_combo)
         short_count = clamp_clip_count(values[PLAN_MODE_SHORT]["count"])
         short_max_sec = short_max_duration_seconds_from_minutes(
             values[PLAN_MODE_SHORT]["max_min"]
@@ -595,12 +647,14 @@ class ClipEditPage(ScrollArea):
         qconfig.set(cfg.plan_short_max_duration_sec, short_max_sec)
         qconfig.set(cfg.plan_clip_count, long_count)
         qconfig.set(cfg.plan_max_duration_sec, long_max_sec)
+        qconfig.set(cfg.plan_global_speed, global_speed)
         self.vm.save_plan_settings(
             mode=mode,
             clip_count=long_count,
             max_duration_sec=long_max_sec,
             short_clip_count=short_count,
             short_max_duration_sec=short_max_sec,
+            global_speed=global_speed,
         )
         active_count = short_count if mode == PLAN_MODE_SHORT else long_count
         active_max_min = (
@@ -609,277 +663,29 @@ class ClipEditPage(ScrollArea):
             else values[PLAN_MODE_LONG]["max_min"]
         )
         mode_label = "短片" if mode == PLAN_MODE_SHORT else "长片"
+        speed_label = (
+            "原速" if abs(global_speed - 1.0) < 1e-6 else f"{global_speed:.2f}x"
+        )
         show_toast(
             self,
-            f"已保存：{mode_label}模式，{active_count} 条，最长 {active_max_min} 分钟",
+            f"已保存：{mode_label}模式，{active_count} 条，最长 {active_max_min} 分钟，{speed_label}",
             title="策划设置",
         )
 
     def _open_overlay_text_settings(self):
-        dlg = QDialog(self.window())
-        dlg.setWindowTitle("画面文字")
-        dlg.setMinimumSize(900, 560)
-        root = QHBoxLayout(dlg)
-        root.setSpacing(12)
-
-        # ---- 左侧预览 ----
-        preview = OverlayTextPreview(dlg)
-        preview.set_project_name(self._preview_project_name())
-        preview.setMinimumWidth(360)
-        root.addWidget(preview, 3)
-
-        # ---- 右侧参数 ----
-        right = QVBoxLayout()
-        tip = QLabel(
-            "左侧可拖动文字设置位置。剧名模板可用 {name}；文案为空则不烧录。\n"
-            "排布可选横向或竖向。横屏/竖屏各自保存一套位置，渲染时按成片方向自动选用。",
-            dlg,
+        dlg = OverlayTextGroupsDialog(
+            self.window(),
+            project_name=self._preview_project_name(),
         )
-        tip.setWordWrap(True)
-        right.addWidget(tip)
-
-        orient_row = QHBoxLayout()
-        portrait_radio = QRadioButton("竖屏", dlg)
-        landscape_radio = QRadioButton("横屏", dlg)
-        orient_group = QButtonGroup(dlg)
-        orient_group.addButton(portrait_radio)
-        orient_group.addButton(landscape_radio)
-        portrait_radio.setChecked(True)
-        orient_row.addWidget(portrait_radio)
-        orient_row.addWidget(landscape_radio)
-        orient_row.addStretch(1)
-        right.addLayout(orient_row)
-
-        title_style = dict(load_overlay_title_from_cfg())
-        disc_style = dict(load_overlay_disclaimer_from_cfg())
-        state = {
-            "title": title_style,
-            "disclaimer": disc_style,
-            "orientation": "portrait",
-            "syncing": False,
-        }
-
-        def _build_section(title: str, key: str) -> dict:
-            box = QGroupBox(title, dlg)
-            form = QFormLayout(box)
-
-            text_edit = LineEdit(box)
-            text_edit.setClearButtonEnabled(True)
-
-            font_combo = QComboBox(box)
-            for font_key, label, _filename in FONT_CHOICES:
-                font_combo.addItem(label, font_key)
-
-            size_spin = QSpinBox(box)
-            size_spin.setRange(8, 200)
-
-            color_row = QHBoxLayout()
-            color_edit = LineEdit(box)
-            color_btn = PushButton("选色", box)
-            color_btn.setFixedWidth(56)
-
-            def _pick_color(_checked=False, edit=color_edit):
-                current = QColor(edit.text().strip() or "#FFFFFF")
-                chosen = QColorDialog.getColor(current, dlg, "选择颜色")
-                if chosen.isValid():
-                    edit.setText(chosen.name().upper())
-
-            color_btn.clicked.connect(_pick_color)
-            color_row.addWidget(color_edit)
-            color_row.addWidget(color_btn)
-
-            opacity_spin = QDoubleSpinBox(box)
-            opacity_spin.setRange(0.0, 1.0)
-            opacity_spin.setSingleStep(0.05)
-            opacity_spin.setDecimals(2)
-
-            layout_row = QHBoxLayout()
-            h_radio = QRadioButton("横向", box)
-            v_radio = QRadioButton("竖向", box)
-            layout_group = QButtonGroup(box)
-            layout_group.addButton(h_radio)
-            layout_group.addButton(v_radio)
-            h_radio.setChecked(True)
-            layout_row.addWidget(h_radio)
-            layout_row.addWidget(v_radio)
-            layout_row.addStretch(1)
-
-            x_spin = QDoubleSpinBox(box)
-            x_spin.setRange(0.0, 100.0)
-            x_spin.setSingleStep(0.5)
-            x_spin.setDecimals(1)
-            x_spin.setSuffix(" %")
-
-            y_spin = QDoubleSpinBox(box)
-            y_spin.setRange(0.0, 100.0)
-            y_spin.setSingleStep(0.5)
-            y_spin.setDecimals(1)
-            y_spin.setSuffix(" %")
-
-            form.addRow("文案：", text_edit)
-            form.addRow("排布：", layout_row)
-            form.addRow("字体：", font_combo)
-            form.addRow("字号：", size_spin)
-            form.addRow("颜色：", color_row)
-            form.addRow("透明度：", opacity_spin)
-            form.addRow("位置 X：", x_spin)
-            form.addRow("位置 Y：", y_spin)
-            right.addWidget(box)
-            return {
-                "box": box,
-                "text": text_edit,
-                "layout_h": h_radio,
-                "layout_v": v_radio,
-                "font": font_combo,
-                "fontsize": size_spin,
-                "color": color_edit,
-                "opacity": opacity_spin,
-                "x_pct": x_spin,
-                "y_pct": y_spin,
-                "key": key,
-            }
-
-        title_w = _build_section("剧名文字", "title")
-        disc_w = _build_section("提示文字", "disclaimer")
-
-        def _fill_section(widgets: dict, style: dict):
-            state["syncing"] = True
-            try:
-                widgets["text"].setText(style.get("text", ""))
-                if str(style.get("layout") or "horizontal") == "vertical":
-                    widgets["layout_v"].setChecked(True)
-                else:
-                    widgets["layout_h"].setChecked(True)
-                idx = widgets["font"].findData(style.get("font"))
-                widgets["font"].setCurrentIndex(idx if idx >= 0 else 0)
-                widgets["fontsize"].setValue(int(style.get("fontsize") or 16))
-                widgets["color"].setText(style.get("color") or "#FFFFFF")
-                widgets["opacity"].setValue(float(style.get("opacity") or 1.0))
-                pos = position_for_orientation(style, state["orientation"])
-                widgets["x_pct"].setValue(float(pos["x_pct"]))
-                widgets["y_pct"].setValue(float(pos["y_pct"]))
-            finally:
-                state["syncing"] = False
-
-        def _read_shared(widgets: dict, style: dict) -> dict:
-            out = dict(style)
-            out["text"] = widgets["text"].text()
-            out["layout"] = (
-                "vertical" if widgets["layout_v"].isChecked() else "horizontal"
-            )
-            out["font"] = widgets["font"].currentData()
-            out["fontsize"] = widgets["fontsize"].value()
-            out["color"] = widgets["color"].text().strip()
-            out["opacity"] = widgets["opacity"].value()
-            out = set_position_for_orientation(
-                out,
-                state["orientation"],
-                widgets["x_pct"].value(),
-                widgets["y_pct"].value(),
-            )
-            return out
-
-        def _refresh_preview():
-            preview.set_orientation(state["orientation"])
-            preview.set_styles(state["title"], state["disclaimer"])
-
-        def _on_param_changed(_value=None):
-            if state["syncing"]:
-                return
-            state["title"] = _read_shared(title_w, state["title"])
-            state["disclaimer"] = _read_shared(disc_w, state["disclaimer"])
-            _refresh_preview()
-
-        def _wire(widgets: dict):
-            widgets["text"].textChanged.connect(_on_param_changed)
-            widgets["layout_h"].toggled.connect(_on_param_changed)
-            widgets["layout_v"].toggled.connect(_on_param_changed)
-            widgets["font"].currentIndexChanged.connect(_on_param_changed)
-            widgets["fontsize"].valueChanged.connect(_on_param_changed)
-            widgets["color"].textChanged.connect(_on_param_changed)
-            widgets["opacity"].valueChanged.connect(_on_param_changed)
-            widgets["x_pct"].valueChanged.connect(_on_param_changed)
-            widgets["y_pct"].valueChanged.connect(_on_param_changed)
-
-        _wire(title_w)
-        _wire(disc_w)
-
-        def _on_orientation_toggled(_checked=False):
-            if not portrait_radio.isChecked() and not landscape_radio.isChecked():
-                return
-            # 先把当前方向的坐标写回
-            if not state["syncing"]:
-                state["title"] = _read_shared(title_w, state["title"])
-                state["disclaimer"] = _read_shared(disc_w, state["disclaimer"])
-            state["orientation"] = (
-                "landscape" if landscape_radio.isChecked() else "portrait"
-            )
-            _fill_section(title_w, state["title"])
-            _fill_section(disc_w, state["disclaimer"])
-            _refresh_preview()
-
-        portrait_radio.toggled.connect(_on_orientation_toggled)
-        landscape_radio.toggled.connect(_on_orientation_toggled)
-
-        def _on_preview_pos(which: str, x_pct: float, y_pct: float):
-            key = "title" if which == "title" else "disclaimer"
-            state[key] = set_position_for_orientation(
-                state[key], state["orientation"], x_pct, y_pct
-            )
-            widgets = title_w if key == "title" else disc_w
-            state["syncing"] = True
-            try:
-                widgets["x_pct"].setValue(x_pct)
-                widgets["y_pct"].setValue(y_pct)
-            finally:
-                state["syncing"] = False
-
-        def _on_preview_selected(which: str):
-            # 轻微高亮对应分组标题区（通过选中框已在预览体现）
-            pass
-
-        preview.positionChanged.connect(_on_preview_pos)
-        preview.itemSelected.connect(_on_preview_selected)
-
-        btn_row = QHBoxLayout()
-        reset_btn = PushButton("重置默认", dlg)
-        buttons = QDialogButtonBox(
-            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel,
-            parent=dlg,
-        )
-        btn_row.addWidget(reset_btn)
-        btn_row.addStretch(1)
-        btn_row.addWidget(buttons)
-        right.addLayout(btn_row)
-        right.addStretch(1)
-        root.addLayout(right, 2)
-
-        def _reset():
-            state["title"] = dict(default_overlay_title())
-            state["disclaimer"] = dict(default_overlay_disclaimer())
-            _fill_section(title_w, state["title"])
-            _fill_section(disc_w, state["disclaimer"])
-            _refresh_preview()
-
-        reset_btn.clicked.connect(_reset)
-        buttons.accepted.connect(dlg.accept)
-        buttons.rejected.connect(dlg.reject)
-
-        _fill_section(title_w, state["title"])
-        _fill_section(disc_w, state["disclaimer"])
-        _refresh_preview()
-
         if dlg.exec() != QDialog.DialogCode.Accepted:
             return
+        lib = dlg.result_library()
+        self.vm.save_overlay_text_library(lib)
+        show_toast(self, "画面文字组已保存", title="画面文字")
 
-        state["title"] = _read_shared(title_w, state["title"])
-        state["disclaimer"] = _read_shared(disc_w, state["disclaimer"])
-        title_c, disc_c = save_overlay_styles_to_cfg(state["title"], state["disclaimer"])
-        self.vm.save_overlay_text_settings(
-            overlay_title=dict(title_c),
-            overlay_disclaimer=dict(disc_c),
-        )
-        show_toast(self, "画面文字设置已保存", title="画面文字")
+    def _open_outro_settings(self):
+        dlg = OutroSettingsDialog(self.window())
+        dlg.exec()
 
     def _batch_all(self):
         if not self.vm.get_projects():
@@ -916,7 +722,11 @@ class ClipEditPage(ScrollArea):
             self.vm.remove_project(project_id)
 
     def _save_export_name_tag(self):
-        tag = self.export_name_tag_input.text().strip()
+        tag = self.export_name_tag_input.text().strip()[:20]
+        if self.export_name_tag_input.text() != tag:
+            self.export_name_tag_input.blockSignals(True)
+            self.export_name_tag_input.setText(tag)
+            self.export_name_tag_input.blockSignals(False)
         qconfig.set(cfg.clip_export_name_tag, tag)
         self._update_export_name_preview()
         self.vm.save_export_name_tag(tag)
@@ -992,6 +802,7 @@ class ClipEditPage(ScrollArea):
             self.import_btn,
             self.plan_settings_btn,
             self.overlay_text_btn,
+            self.outro_btn,
             self.table,
         ]
         if self.encode_settings_btn is not None:

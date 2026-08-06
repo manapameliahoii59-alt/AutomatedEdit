@@ -894,6 +894,32 @@ class RenderService:
                 register_proc(None)
 
     @staticmethod
+    def _run_ffmpeg_with_filter_complex(
+        base_cmd: list[str],
+        filter_graph: str,
+        tail_cmd: list[str],
+        desc: str,
+        **ffmpeg_kwargs,
+    ) -> tuple[bool, str]:
+        """通过临时脚本传入 filter_complex，避免 Windows 命令行过长 (WinError 206)。"""
+        fd, script_path = tempfile.mkstemp(prefix="ae_fc_", suffix=".ffscript")
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as f:
+                f.write(filter_graph)
+            cmd = [
+                *base_cmd,
+                "-filter_complex_script",
+                script_path,
+                *tail_cmd,
+            ]
+            return RenderService._run_ffmpeg(cmd, desc, **ffmpeg_kwargs)
+        finally:
+            try:
+                os.remove(script_path)
+            except OSError:
+                pass
+
+    @staticmethod
     def _has_audio_stream(ffprobe, path, probe_cache: dict | None = None) -> bool:
         cache_key = f"has_a:{path}"
         if probe_cache is not None and cache_key in probe_cache:
@@ -1105,7 +1131,6 @@ class RenderService:
         overlay_filters = build_overlay_drawtext_filters(
             project_name, horizontal=is_horizontal
         )
-        overlay_suffix = ("," + ",".join(overlay_filters)) if overlay_filters else ""
 
         v_outro = (
             f"scale={ctx.target_w}:{ctx.target_h}:force_original_aspect_ratio=decrease,"
@@ -1118,42 +1143,75 @@ class RenderService:
         n_main = len(segments)
         for i, segment in enumerate(segments):
             v_trim, a_trim = RenderService._build_trim_filters(segment, speed)
+            # 叠字不在每段重复挂载（发光层很多时会撑爆 Windows 命令行）
             filter_parts.append(
-                f"[{i}:v]{v_trim}{overlay_suffix}[v{i}];[{i}:a]{a_trim}[a{i}];"
+                f"[{i}:v]{v_trim}[v{i}];[{i}:a]{a_trim}[a{i}];"
             )
         outro_idx = n_main
-        filter_parts.append(f"[{outro_idx}:v]{v_outro}[v{outro_idx}];")
-        filter_parts.append(f"[{outro_idx}:a]{a_outro}[a{outro_idx}];")
-        concat_inputs = "".join(f"[v{i}][a{i}]" for i in range(n_main))
-        concat_inputs += f"[v{outro_idx}][a{outro_idx}]"
-        filter_parts.append(f"{concat_inputs}concat=n={n_main + 1}:v=1:a=1[v][a]")
+        filter_parts.append(f"[{outro_idx}:v]{v_outro}[vo];")
+        filter_parts.append(f"[{outro_idx}:a]{a_outro}[ao];")
 
-        render_cmd = [ffmpeg, "-y"]
+        main_va = "".join(f"[v{i}][a{i}]" for i in range(n_main))
+        if overlay_filters:
+            overlay_chain = ",".join(overlay_filters)
+            if n_main == 1:
+                filter_parts.append(f"[v0]{overlay_chain}[vm];")
+                filter_parts.append("[vm][a0][vo][ao]concat=n=2:v=1:a=1[v][a]")
+            else:
+                filter_parts.append(
+                    f"{main_va}concat=n={n_main}:v=1:a=1[vm0][am];"
+                )
+                filter_parts.append(f"[vm0]{overlay_chain}[vm];")
+                filter_parts.append(
+                    "[vm][am][vo][ao]concat=n=2:v=1:a=1[v][a]"
+                )
+        else:
+            filter_parts.append(
+                f"{main_va}[vo][ao]concat=n={n_main + 1}:v=1:a=1[v][a]"
+            )
+        filter_graph = "".join(filter_parts)
+
+        base_cmd = [ffmpeg, "-y"]
         for p in input_paths:
-            render_cmd.extend(["-i", p])
-        render_cmd.extend(["-i", outro_path])
-        render_cmd.extend(["-filter_complex", "".join(filter_parts), "-map", "[v]", "-map", "[a]"])
-        render_cmd.extend(RenderService._video_encode_args(use_gpu=ctx.use_gpu))
-        render_cmd.extend(["-c:a", "aac", "-b:a", "192k", output_path])
+            base_cmd.extend(["-i", p])
+        base_cmd.extend(["-i", outro_path])
+        map_tail = ["-map", "[v]", "-map", "[a]"]
 
-        success, err = RenderService._run_ffmpeg(render_cmd, "合成渲染", **ffmpeg_kwargs)
+        success, err = RenderService._run_ffmpeg_with_filter_complex(
+            base_cmd,
+            filter_graph,
+            [
+                *map_tail,
+                *RenderService._video_encode_args(use_gpu=ctx.use_gpu),
+                "-c:a",
+                "aac",
+                "-b:a",
+                "192k",
+                output_path,
+            ],
+            "合成渲染",
+            **ffmpeg_kwargs,
+        )
         if not success and ctx.use_gpu:
             if os.path.exists(output_path):
                 try:
                     os.remove(output_path)
                 except OSError:
                     pass
-            render_cmd_cpu = [ffmpeg, "-y"]
-            for p in input_paths:
-                render_cmd_cpu.extend(["-i", p])
-            render_cmd_cpu.extend(["-i", outro_path])
-            render_cmd_cpu.extend(
-                ["-filter_complex", "".join(filter_parts), "-map", "[v]", "-map", "[a]"]
-            )
-            render_cmd_cpu.extend(RenderService._video_encode_args(use_gpu=False))
-            render_cmd_cpu.extend(["-c:a", "aac", "-b:a", "192k", output_path])
-            success, err = RenderService._run_ffmpeg(
-                render_cmd_cpu, "合成渲染(CPU回退)", **ffmpeg_kwargs
+            success, err = RenderService._run_ffmpeg_with_filter_complex(
+                base_cmd,
+                filter_graph,
+                [
+                    *map_tail,
+                    *RenderService._video_encode_args(use_gpu=False),
+                    "-c:a",
+                    "aac",
+                    "-b:a",
+                    "192k",
+                    output_path,
+                ],
+                "合成渲染(CPU回退)",
+                **ffmpeg_kwargs,
             )
         if not success:
             print(f"❌ 合成渲染失败: {err}", flush=True)

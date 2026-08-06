@@ -18,12 +18,16 @@ from app.data.models.drama_project import DramaProject
 
 
 def _is_transient_api_error(exc: BaseException) -> bool:
-    """连接超时、断连等可重试的网络错误。"""
+    """连接超时、断连、服务端短暂不可用等可重试错误。"""
     if not isinstance(exc, ApiError):
         return False
+    # 重启 / 反代短暂失败常见空 body 的 502/503/504
+    if exc.status_code in (408, 425, 429, 500, 502, 503, 504):
+        return True
     msg = str(exc).lower()
     needles = (
         "无法连接服务器",
+        "服务器错误 http",
         "connecttimeout",
         "connectionerror",
         "readtimeout",
@@ -31,6 +35,9 @@ def _is_transient_api_error(exc: BaseException) -> bool:
         "max retries exceeded",
         "connection aborted",
         "connection reset",
+        "bad gateway",
+        "service unavailable",
+        "gateway timeout",
     )
     return any(n in msg for n in needles)
 
@@ -87,6 +94,7 @@ class RemotePlanService:
             "max_duration_seconds": params["max_duration_sec"],
             "min_duration_seconds": params["min_duration_sec"],
             "split_ab": params["split_ab"],
+            "global_speed": params["global_speed"],
         }
 
     @classmethod
@@ -109,14 +117,16 @@ class RemotePlanService:
         project: DramaProject,
         *,
         progress_callback: Callable[[dict[str, Any]], None] | None = None,
-    ) -> str:
+    ) -> dict[str, Any]:
         from app.common.drama_artifact_paths import finalize_written_artifact, prepare_write_path
         from app.common.crypto import write_encrypted_json
+        from app.common.plan_settings import resolve_active_plan_params
 
         api = cls._require_api()
         plan_key = cls._require_plan_key()
         payload = cls._build_payload(project)
         plan_output = prepare_write_path(project.folder_path, script=False)
+        target_count = int(resolve_active_plan_params()["clip_count"])
 
         job = cls._call_with_retry(lambda: api.create_plan_job(payload))
         job_id = job.get("job_id") or job.get("id")
@@ -141,9 +151,18 @@ class RemotePlanService:
                 )
                 write_encrypted_json(plan_output, plans)
                 finalize_written_artifact(plan_output)
-                return plan_output
+                return {
+                    "path": plan_output,
+                    "count": len(plans) if isinstance(plans, list) else 0,
+                    "target": target_count,
+                    "underfilled": bool(progress.get("underfilled"))
+                    or (
+                        isinstance(plans, list) and len(plans) < target_count
+                    ),
+                }
             if state == "failed":
-                raise RuntimeError(status.get("error") or "策划失败")
+                err = (status.get("error") or "").strip()
+                raise RuntimeError(err or "策划失败（服务端未返回原因，请重试或查看服务端日志）")
 
             time.sleep(cls.POLL_INTERVAL_SEC)
 

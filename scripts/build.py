@@ -306,6 +306,7 @@ def bundle_config() -> None:
             "plan_max_duration_sec": 720,
             "plan_short_clip_count": 15,
             "plan_short_max_duration_sec": 300,
+            "plan_global_speed": 1.15,
             "deepseek_api_keys": "",
             "ffmpeg_path": "",
             "ffprobe_path": "",

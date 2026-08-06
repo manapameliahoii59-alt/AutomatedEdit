@@ -27,8 +27,9 @@ class TaskRunnable(QRunnable):
             result = self.func(*self.args, **self.kwargs)
             self.signals.finished.emit(result)
         except Exception as e:
-            logger.debug("后台任务异常: {}", e, exc_info=True)
-            self.signals.error.emit(str(e))
+            msg = str(e).strip() or f"{type(e).__name__}（无详细信息）"
+            logger.debug("后台任务异常: {}", msg, exc_info=True)
+            self.signals.error.emit(msg)
 
 
 class TaskManager(QObject):

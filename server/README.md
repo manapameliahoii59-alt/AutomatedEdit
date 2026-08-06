@@ -123,7 +123,7 @@ DEEPSEEK_MODEL=deepseek-v4-flash
 {
   "video_download": {
     "episode_from": 1,
-    "episode_to": 10,
+    "episode_to": 15,
     "download_dir": "",
     "auto_unzip": true,
     "auto_transcribe": true,

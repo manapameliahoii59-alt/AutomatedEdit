@@ -157,8 +157,19 @@ def _run_job(job_id: str, payload: dict[str, Any], plan_key: str, api_keys_raw: 
             max_duration_seconds=payload.get("max_duration_seconds"),
             min_duration_seconds=payload.get("min_duration_seconds"),
             split_ab=payload.get("split_ab"),
+            global_speed=payload.get("global_speed"),
         )
+        from app.services.plan_director import clamp_clip_count
+
+        target_total = clamp_clip_count(payload.get("target_clips_count") or 15)
+        underfilled = len(plans) < target_total
         encrypted = encrypt_plan_payload(plan_key, plans)
+        detail = "完成"
+        if underfilled:
+            detail = (
+                f"仅通过 {len(plans)}/{target_total} 条"
+                "（多数候选因时长或台词未匹配被过滤）"
+            )
         _persist_job(
             job_id,
             status="done",
@@ -166,8 +177,9 @@ def _run_job(job_id: str, payload: dict[str, Any], plan_key: str, api_keys_raw: 
             progress={
                 "phase": "plan",
                 "current": len(plans),
-                "total": len(plans),
-                "detail": "完成",
+                "total": target_total,
+                "detail": detail,
+                "underfilled": underfilled,
             },
             error="",
         )

@@ -25,6 +25,23 @@ DEFAULT_SHORT_MAX_DURATION_SECONDS = 300
 MIN_SHORT_MAX_DURATION_SECONDS = 120
 MAX_SHORT_MAX_DURATION_SECONDS = 300
 
+# 成片全局倍速（写入策划方案 global_speed，渲染时加速）
+DEFAULT_GLOBAL_SPEED = 1.15
+MIN_GLOBAL_SPEED = 1.0
+MAX_GLOBAL_SPEED = 1.5
+# 策划设置下拉可选倍速
+GLOBAL_SPEED_CHOICES: tuple[float, ...] = (
+    1.0,
+    1.05,
+    1.1,
+    1.15,
+    1.2,
+    1.25,
+    1.3,
+    1.4,
+    1.5,
+)
+
 # 默认 A:B = 6:9（仅长片）
 _DEFAULT_A = 6
 _DEFAULT_TOTAL = 15
@@ -36,6 +53,7 @@ class ActivePlanParams(TypedDict):
     min_duration_sec: int
     max_duration_sec: int
     split_ab: bool
+    global_speed: float
 
 
 def clamp_clip_count(value: int | float | str | None) -> int:
@@ -50,6 +68,17 @@ def clamp_plan_mode(value: Any) -> PlanMode:
     if str(value or "").strip().lower() == PLAN_MODE_SHORT:
         return PLAN_MODE_SHORT
     return PLAN_MODE_LONG
+
+
+def clamp_global_speed(value: Any) -> float:
+    """成片倍速 clamp（1.0~1.5）；非法值回落默认 1.15。"""
+    try:
+        n = float(value)
+    except (TypeError, ValueError):
+        return DEFAULT_GLOBAL_SPEED
+    if n != n:  # NaN
+        return DEFAULT_GLOBAL_SPEED
+    return max(MIN_GLOBAL_SPEED, min(MAX_GLOBAL_SPEED, round(n, 2)))
 
 
 def clamp_max_duration_seconds(value: int | float | str | None) -> int:
@@ -117,6 +146,7 @@ def resolve_active_plan_params() -> ActivePlanParams:
     from app.common.config import cfg
 
     mode = clamp_plan_mode(cfg.plan_mode.value)
+    speed = clamp_global_speed(cfg.plan_global_speed.value)
     if mode == PLAN_MODE_SHORT:
         return {
             "mode": PLAN_MODE_SHORT,
@@ -126,6 +156,7 @@ def resolve_active_plan_params() -> ActivePlanParams:
                 cfg.plan_short_max_duration_sec.value
             ),
             "split_ab": False,
+            "global_speed": speed,
         }
     return {
         "mode": PLAN_MODE_LONG,
@@ -133,6 +164,7 @@ def resolve_active_plan_params() -> ActivePlanParams:
         "min_duration_sec": MIN_DURATION_SECONDS,
         "max_duration_sec": clamp_max_duration_seconds(cfg.plan_max_duration_sec.value),
         "split_ab": True,
+        "global_speed": speed,
     }
 
 
@@ -162,6 +194,8 @@ def apply_plan_settings_dict(data: dict | None) -> None:
             cfg.plan_short_max_duration_sec,
             clamp_short_max_duration_seconds(data["short_max_duration_sec"]),
         )
+    if data.get("global_speed") is not None:
+        qconfig.set(cfg.plan_global_speed, clamp_global_speed(data["global_speed"]))
 
 
 def plan_settings_patch(
@@ -171,6 +205,7 @@ def plan_settings_patch(
     max_duration_sec: int | None = None,
     short_clip_count: int | None = None,
     short_max_duration_sec: int | None = None,
+    global_speed: float | None = None,
 ) -> dict:
     plan: dict[str, Any] = {}
     if mode is not None:
@@ -185,4 +220,6 @@ def plan_settings_patch(
         plan["short_max_duration_sec"] = clamp_short_max_duration_seconds(
             short_max_duration_sec
         )
+    if global_speed is not None:
+        plan["global_speed"] = clamp_global_speed(global_speed)
     return {"plan": plan}

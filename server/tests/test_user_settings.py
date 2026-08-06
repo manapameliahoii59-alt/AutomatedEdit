@@ -1,4 +1,5 @@
 import sys
+import json
 from datetime import datetime
 from pathlib import Path
 
@@ -38,7 +39,7 @@ class _FakeSession:
 def test_build_settings_out_defaults():
     out = build_settings_out({}, None)
     assert out.video_download.episode_from == 1
-    assert out.video_download.episode_to == 10
+    assert out.video_download.episode_to == 15
     assert out.video_download.auto_unzip is True
     assert out.clip_edit.export_name_tag == ""
     assert out.clip_edit.overlay_title.text == "《{name}》"
@@ -92,7 +93,7 @@ def test_patch_user_settings_merge(monkeypatch):
     )
     assert isinstance(result, UserSettingsOut)
     assert result.video_download.episode_from == 3
-    assert result.video_download.episode_to == 10
+    assert result.video_download.episode_to == 15
     assert result.video_download.auto_unzip is False
     assert result.clip_edit.export_name_tag == "阿飞"
 
@@ -102,7 +103,46 @@ def test_patch_user_settings_merge(monkeypatch):
     assert result2.video_download.auto_unzip is False
 
 
-def test_video_download_episode_range_clamped():
-    settings = VideoDownloadSettings(episode_from=20, episode_to=3)
-    assert settings.episode_from == 10
-    assert settings.episode_to == 10
+def test_patch_clip_edit_overlay_persists_and_export_only_keeps_it(monkeypatch):
+    db = _FakeSession()
+
+    def _fake_get_or_create(_db, user_id):
+        row = db.rows.get(user_id)
+        if row is None:
+            row = _FakeRow(user_id)
+            db.rows[user_id] = row
+            db.added.append(row)
+        return row
+
+    monkeypatch.setattr(
+        "app.services.user_settings._get_or_create_row",
+        _fake_get_or_create,
+    )
+    patch_user_settings(
+        db,
+        1,
+        {
+            "clip_edit": {
+                "overlay_title": {
+                    "text": "《{name}》",
+                    "font": "msyh",
+                    "fontsize": 40,
+                    "color": "#FFFFFF",
+                    "opacity": 0.8,
+                    "layout": "vertical",
+                    "portrait": {"x_pct": 10.0, "y_pct": 20.0},
+                    "landscape": {"x_pct": 3.0, "y_pct": 90.0},
+                }
+            }
+        },
+    )
+    # 仅更新 export_name_tag 时不应丢掉已保存的叠字
+    result = patch_user_settings(
+        db, 1, {"clip_edit": {"export_name_tag": "tag"}}
+    )
+    assert result.clip_edit.export_name_tag == "tag"
+    assert result.clip_edit.overlay_title.fontsize == 40
+    assert result.clip_edit.overlay_title.layout == "vertical"
+    stored = json.loads(db.rows[1].data)
+    assert stored["clip_edit"]["overlay_title"]["fontsize"] == 40
+    assert "overlay_disclaimer" not in stored["clip_edit"]

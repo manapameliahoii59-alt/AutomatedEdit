@@ -14,5 +14,5 @@ class AIDirectorService:
         project: DramaProject,
         *,
         progress_callback: Callable[[dict[str, Any]], None] | None = None,
-    ) -> str:
+    ) -> dict[str, Any]:
         return RemotePlanService.plan(project, progress_callback=progress_callback)

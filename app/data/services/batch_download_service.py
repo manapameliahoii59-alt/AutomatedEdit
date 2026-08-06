@@ -28,7 +28,7 @@ from app.data.services.transcription_service import TranscriptionService
 from app.data.models.drama_project import DramaProject
 
 DEFAULT_FROM_EP = 1
-DEFAULT_TO_EP = 10
+DEFAULT_TO_EP = 15
 DEFAULT_CONCURRENT_DOWNLOADS = 3
 DEFAULT_DOWNLOAD_TIMEOUT_MIN = 10
 DEFAULT_DOWNLOAD_RETRIES = 2

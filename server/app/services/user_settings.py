@@ -50,8 +50,17 @@ def _validate_namespaces(data: dict[str, Any]) -> dict[str, Any]:
         validated = PlanSettings.model_validate(data["plan"])
         data["plan"] = validated.model_dump()
     if "clip_edit" in data:
-        validated = ClipEditSettings.model_validate(data["clip_edit"])
-        data["clip_edit"] = validated.model_dump()
+        raw_clip = data["clip_edit"] if isinstance(data["clip_edit"], dict) else {}
+        validated = ClipEditSettings.model_validate(raw_clip)
+        dumped = validated.model_dump(exclude_none=True)
+        # 未显式写入过的叠字不要用默认值落库，否则 GET 会一直像「已配置默认」
+        if "overlay_title" not in raw_clip:
+            dumped.pop("overlay_title", None)
+        if "overlay_disclaimer" not in raw_clip:
+            dumped.pop("overlay_disclaimer", None)
+        if "overlay_text_library" not in raw_clip:
+            dumped.pop("overlay_text_library", None)
+        data["clip_edit"] = dumped
     return data
 
 
