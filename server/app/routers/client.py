@@ -1,6 +1,6 @@
 from datetime import date
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.orm import Session
 
 from app.database import get_db
@@ -32,9 +32,9 @@ router = APIRouter(prefix="/api/client", tags=["client"])
 
 
 @router.get("/version", response_model=ClientVersionOut)
-def get_client_version():
-    """桌面端检查更新（无需登录）。"""
-    return build_client_version_out()
+def get_client_version(request: Request):
+    """桌面端检查更新（无需登录）。优先读 release/version.json。"""
+    return build_client_version_out(request)
 
 
 def _quota_to_schema(quota) -> DailyQuotaOut:

@@ -4619,6 +4619,7 @@ source = { virtual = "." }
 dependencies = [
     { name = "funasr" },
     { name = "fuzzywuzzy" },
+    { name = "httpx" },
     { name = "imageio" },
     { name = "loguru" },
     { name = "nuitka" },
@@ -4648,6 +4649,7 @@ dev = [
 requires-dist = [
     { name = "funasr", specifier = ">=1.0.0" },
     { name = "fuzzywuzzy", specifier = ">=0.18.0" },
+    { name = "httpx", specifier = ">=0.27.0" },
     { name = "imageio", specifier = ">=2.37.2" },
     { name = "loguru", specifier = ">=0.7.3" },
     { name = "nuitka", specifier = ">=2.8.9" },

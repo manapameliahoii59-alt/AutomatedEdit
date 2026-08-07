@@ -1,6 +1,6 @@
 import os
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QRect, Qt, Signal
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QButtonGroup,
@@ -17,6 +17,8 @@ from PySide6.QtWidgets import (
     QLabel,
     QRadioButton,
     QSpinBox,
+    QStyle,
+    QStyleOptionButton,
     QTableWidgetItem,
     QVBoxLayout,
     QWidget,
@@ -78,6 +80,75 @@ STATUS_LABELS = {
     DramaStatus.IN_PROGRESS: "处理中",
     DramaStatus.DONE: "已完成",
 }
+
+
+class _SelectAllHeader(QHeaderView):
+    """首列表头绘制勾选框，点击可全选/取消全选。"""
+
+    selectAllClicked = Signal(bool)
+
+    def __init__(self, orientation, parent=None):
+        super().__init__(orientation, parent)
+        self._state = Qt.CheckState.Unchecked
+        self.setSectionsClickable(True)
+        self.setHighlightSections(False)
+
+    def set_select_state(self, state: Qt.CheckState) -> None:
+        if self._state == state:
+            return
+        self._state = state
+        self.viewport().update()
+
+    def select_state(self) -> Qt.CheckState:
+        return self._state
+
+    def _checkbox_rect(self, section_rect):
+        opt = QStyleOptionButton()
+        style = self.style()
+        size = style.subElementRect(
+            QStyle.SubElement.SE_CheckBoxIndicator, opt, self
+        ).size()
+        if not size.isValid() or size.width() <= 0:
+            size = style.sizeFromContents(
+                QStyle.ContentsType.CT_CheckBox, opt, size, self
+            )
+        if not size.isValid() or size.width() <= 0:
+            size.setWidth(16)
+            size.setHeight(16)
+        x = section_rect.x() + (section_rect.width() - size.width()) // 2
+        y = section_rect.y() + (section_rect.height() - size.height()) // 2
+        return QRect(x, y, size.width(), size.height())
+
+    def paintSection(self, painter, rect, logicalIndex):
+        painter.save()
+        super().paintSection(painter, rect, logicalIndex)
+        painter.restore()
+        if logicalIndex != 0:
+            return
+        opt = QStyleOptionButton()
+        opt.rect = self._checkbox_rect(rect)
+        opt.state = QStyle.StateFlag.State_Enabled
+        if self._state == Qt.CheckState.Checked:
+            opt.state |= QStyle.StateFlag.State_On
+        elif self._state == Qt.CheckState.PartiallyChecked:
+            opt.state |= QStyle.StateFlag.State_NoChange
+        else:
+            opt.state |= QStyle.StateFlag.State_Off
+        self.style().drawControl(QStyle.ControlElement.CE_CheckBox, opt, painter, self)
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            idx = self.logicalIndexAt(event.position().toPoint())
+            if idx == 0:
+                # 半选或未选 → 全选；已全选 → 取消
+                checked = self._state != Qt.CheckState.Checked
+                self.set_select_state(
+                    Qt.CheckState.Checked if checked else Qt.CheckState.Unchecked
+                )
+                self.selectAllClicked.emit(checked)
+                event.accept()
+                return
+        super().mousePressEvent(event)
 
 
 class ClipEditPage(ScrollArea):
@@ -207,15 +278,22 @@ class ClipEditPage(ScrollArea):
 
         self.table = TableWidget(self.scroll_widget)
         self.table.setColumnCount(7)
-        self.table.setHorizontalHeaderLabels(
-            ["", "剧名", "集数", "识别", "策划", "渲染", "操作"]
-        )
         self.table.verticalHeader().setVisible(False)
         self.table.verticalHeader().setDefaultSectionSize(44)
         self.table.setEditTriggers(TableWidget.EditTrigger.NoEditTriggers)
         self.table.setSelectionBehavior(TableWidget.SelectionBehavior.SelectRows)
         self.table.setSelectionMode(TableWidget.SelectionMode.SingleSelection)
-        table_header = self.table.horizontalHeader()
+        self._select_all_header = _SelectAllHeader(
+            Qt.Orientation.Horizontal, self.table
+        )
+        self.table.setHorizontalHeader(self._select_all_header)
+        self.table.setHorizontalHeaderLabels(
+            ["", "剧名", "集数", "识别", "策划", "渲染", "操作"]
+        )
+        table_header = self._select_all_header
+        table_header.setToolTip("全选")
+        # 仅首列点击用于全选；避免误触其它列表头
+        table_header.setSectionsClickable(True)
         table_header.setSectionResizeMode(0, QHeaderView.ResizeMode.Fixed)
         table_header.setSectionResizeMode(1, QHeaderView.ResizeMode.Fixed)
         table_header.setSectionResizeMode(2, QHeaderView.ResizeMode.Fixed)
@@ -223,13 +301,15 @@ class ClipEditPage(ScrollArea):
         table_header.setSectionResizeMode(4, QHeaderView.ResizeMode.Fixed)
         table_header.setSectionResizeMode(5, QHeaderView.ResizeMode.Fixed)
         table_header.setSectionResizeMode(6, QHeaderView.ResizeMode.Fixed)
-        self.table.setColumnWidth(0, 40)
+        self.table.setColumnWidth(0, 44)
         self.table.setColumnWidth(1, 180)
         self.table.setColumnWidth(2, 72)
         self.table.setColumnWidth(3, 96)
         self.table.setColumnWidth(4, 180)
         self.table.setColumnWidth(5, 180)
         self.table.setColumnWidth(6, 280)
+        self._select_all_header.selectAllClicked.connect(self._set_all_rows_checked)
+        self.table.itemChanged.connect(self._on_table_item_changed)
         layout.addWidget(self.table, 1)
 
         self.setViewportMargins(0, 0, 0, 0)
@@ -255,6 +335,7 @@ class ClipEditPage(ScrollArea):
 
     def _refresh_table(self, projects: list[DramaProject]):
         checked_ids = set(self._get_checked_ids())
+        self.table.blockSignals(True)
         self.table.setRowCount(len(projects))
         for row, project in enumerate(projects):
             st = self.vm._status.get(project.id, {})
@@ -340,7 +421,31 @@ class ClipEditPage(ScrollArea):
             cell_layout.addWidget(del_btn)
             self.table.setCellWidget(row, 6, cell)
 
+        self.table.blockSignals(False)
+        self._sync_select_all_checkbox()
         self._update_export_name_preview()
+
+    def _on_table_item_changed(self, item: QTableWidgetItem) -> None:
+        if item is None or item.column() != 0:
+            return
+        self._sync_select_all_checkbox()
+
+    def _sync_select_all_checkbox(self) -> None:
+        header = getattr(self, "_select_all_header", None)
+        if header is None or not isValid(header):
+            return
+        n = self.table.rowCount()
+        checked = 0
+        for row in range(n):
+            item = self.table.item(row, 0)
+            if item and item.checkState() == Qt.CheckState.Checked:
+                checked += 1
+        if n == 0 or checked == 0:
+            header.set_select_state(Qt.CheckState.Unchecked)
+        elif checked == n:
+            header.set_select_state(Qt.CheckState.Checked)
+        else:
+            header.set_select_state(Qt.CheckState.PartiallyChecked)
 
     def _preview_project_name(self) -> str:
         projects = self.vm.get_projects()
@@ -367,10 +472,13 @@ class ClipEditPage(ScrollArea):
 
     def _set_all_rows_checked(self, checked: bool) -> None:
         state = Qt.CheckState.Checked if checked else Qt.CheckState.Unchecked
+        self.table.blockSignals(True)
         for row in range(self.table.rowCount()):
             item = self.table.item(row, 0)
             if item:
                 item.setCheckState(state)
+        self.table.blockSignals(False)
+        self._sync_select_all_checkbox()
 
     def _batch_transcribe(self):
         ids = self._get_checked_ids()
@@ -549,7 +657,7 @@ class ClipEditPage(ScrollArea):
             max_combo.blockSignals(True)
             max_combo.clear()
             if mode == PLAN_MODE_SHORT:
-                for m in range(2, 6):
+                for m in range(2, 7):
                     max_combo.addItem(f"{m} 分钟", m)
             else:
                 for m in range(5, 16):
@@ -568,7 +676,7 @@ class ClipEditPage(ScrollArea):
             current_mode["value"] = mode
             if mode == PLAN_MODE_SHORT:
                 tip.setText(
-                    "短片：最短固定 2 分钟；最长可选 2～5 分钟（默认 5）。\n"
+                    "短片：最短固定 2 分钟；最长可选 2～6 分钟（默认 5）。\n"
                     "成片倍速对短片/长片共用；大于 1 会加速成片。"
                     "条数与时长为策划目标，实际产出可能略有浮动。"
                 )

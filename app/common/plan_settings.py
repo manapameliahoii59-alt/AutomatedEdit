@@ -19,11 +19,11 @@ DEFAULT_MAX_DURATION_SECONDS = 720  # 默认最长 12 分钟
 MIN_MAX_DURATION_SECONDS = 300  # 「最长时长」最低可选 5 分钟
 MAX_MAX_DURATION_SECONDS = 900  # 最高 15 分钟
 
-# 短片：最短固定 2 分钟；最长 2~5 分钟
+# 短片：最短固定 2 分钟；最长 2~6 分钟
 SHORT_MIN_DURATION_SECONDS = 120
 DEFAULT_SHORT_MAX_DURATION_SECONDS = 300
 MIN_SHORT_MAX_DURATION_SECONDS = 120
-MAX_SHORT_MAX_DURATION_SECONDS = 300
+MAX_SHORT_MAX_DURATION_SECONDS = 360
 
 # 成片全局倍速（写入策划方案 global_speed，渲染时加速）
 DEFAULT_GLOBAL_SPEED = 1.15
@@ -91,7 +91,7 @@ def clamp_max_duration_seconds(value: int | float | str | None) -> int:
 
 
 def clamp_short_max_duration_seconds(value: int | float | str | None) -> int:
-    """短片最长时长 clamp（120~300）。"""
+    """短片最长时长 clamp（120~360）。"""
     try:
         n = int(round(float(value)))  # type: ignore[arg-type]
     except (TypeError, ValueError):
@@ -126,10 +126,10 @@ def max_duration_seconds_from_minutes(minutes: int | float) -> int:
 
 
 def short_max_duration_minutes_from_seconds(seconds: int) -> int:
-    """短片 UI 用整分钟；最长时长 2~5 分钟。"""
+    """短片 UI 用整分钟；最长时长 2~6 分钟。"""
     sec = clamp_short_max_duration_seconds(seconds)
     mins = int(round(sec / 60.0))
-    return max(2, min(5, mins))
+    return max(2, min(6, mins))
 
 
 def short_max_duration_seconds_from_minutes(minutes: int | float) -> int:
@@ -137,7 +137,7 @@ def short_max_duration_seconds_from_minutes(minutes: int | float) -> int:
         m = int(minutes)
     except (TypeError, ValueError):
         m = 5
-    m = max(2, min(5, m))
+    m = max(2, min(6, m))
     return clamp_short_max_duration_seconds(m * 60)
 
 

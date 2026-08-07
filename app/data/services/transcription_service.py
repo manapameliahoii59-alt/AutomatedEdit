@@ -1,6 +1,7 @@
 import json
 import os
 import re
+import threading
 import time
 
 from app.common.ffmpeg_paths import ensure_ffmpeg_on_path, resolve_ffmpeg
@@ -13,8 +14,25 @@ PUNC_MODEL = "iic/punc_ct-transformer_zh-cn-common-vocab272727-pytorch"
 BEAM_SIZE = 15
 
 
+def _episode_sort_key(filename: str) -> tuple:
+    """按集数数字排序：1.mp4、2.mp4…10.mp4，避免字典序把 10 排到 2 前面。"""
+    stem = os.path.splitext(filename)[0]
+    m = re.match(r"^(\d+)", stem)
+    if m:
+        return (0, int(m.group(1)), filename.lower())
+    m = re.search(r"第\s*(\d+)\s*集", stem)
+    if m:
+        return (0, int(m.group(1)), filename.lower())
+    m = re.search(r"(\d+)", stem)
+    if m:
+        return (1, int(m.group(1)), filename.lower())
+    return (2, 0, filename.lower())
+
+
 class TranscriptionService:
     _model = None
+    # FunASR/GPU 不宜并行；批量识别也走同一把锁，避免日志与推理交错
+    _lock = threading.RLock()
 
     @classmethod
     def check_environment(cls) -> list[str]:
@@ -61,24 +79,30 @@ class TranscriptionService:
 
     @classmethod
     def init_model(cls):
-        if cls._model is not None:
-            return
-        ensure_ffmpeg_on_path()
-        import torch
-        from funasr import AutoModel
-        cls._torch = torch
-        device = "cuda" if torch.cuda.is_available() else "cpu"
-        print(f"🚀 正在初始化 ff 引擎 (device={device}, beam={BEAM_SIZE})")
-        cls._model = AutoModel(
-            model=MODEL_ID,
-            device=device,
-            vad_model=VAD_MODEL,
-            punc_model=PUNC_MODEL,
-            disable_update=True,
-        )
+        with cls._lock:
+            if cls._model is not None:
+                return
+            ensure_ffmpeg_on_path()
+            import torch
+            from funasr import AutoModel
+            cls._torch = torch
+            device = "cuda" if torch.cuda.is_available() else "cpu"
+            print(f"🚀 正在初始化 ff 引擎 (device={device}, beam={BEAM_SIZE})")
+            cls._model = AutoModel(
+                model=MODEL_ID,
+                device=device,
+                vad_model=VAD_MODEL,
+                punc_model=PUNC_MODEL,
+                disable_update=True,
+            )
 
     @classmethod
     def transcribe(cls, project: DramaProject) -> str:
+        with cls._lock:
+            return cls._transcribe_locked(project)
+
+    @classmethod
+    def _transcribe_locked(cls, project: DramaProject) -> str:
         cls.init_model()
         torch = cls._torch
 
@@ -86,7 +110,7 @@ class TranscriptionService:
         valid_exts = (".mp4", ".mov", ".mkv", ".avi")
         raw_files = sorted(
             [f for f in os.listdir(project_path) if f.lower().endswith(valid_exts)],
-            key=lambda s: [int(t) if t.isdigit() else t.lower() for t in re.split(r"(\d+)", s)],
+            key=_episode_sort_key,
         )
         if not raw_files:
             raise FileNotFoundError(f"项目 {project.name} 中没有找到视频文件")
@@ -94,10 +118,19 @@ class TranscriptionService:
         global_script = []
         start_time = time.time()
         file_errors: list[str] = []
+        total_files = len(raw_files)
+        print(f"🎬 开始识别《{project.name}》（共 {total_files} 集）", flush=True)
+        print(
+            f"   📋 识别顺序: {' → '.join(raw_files)}",
+            flush=True,
+        )
 
-        for file in raw_files:
+        for index, file in enumerate(raw_files, 1):
             file_path = os.path.join(project_path, file)
-            print(f"   🎧 正在识别: {file} ...")
+            print(
+                f"   🎧 《{project.name}》识别 {index}/{total_files}: {file} ...",
+                flush=True,
+            )
             try:
                 res = cls._model.generate(
                     input=file_path,
@@ -138,8 +171,8 @@ class TranscriptionService:
             except Exception as e:
                 msg = f"{file}: {e}"
                 file_errors.append(msg)
-                print(f"   ❌ 识别报错 {file}: {e}")
-                logger.warning("识别报错 {}: {}", file, e)
+                print(f"   ❌ 《{project.name}》识别报错 {file}: {e}", flush=True)
+                logger.warning("识别报错 《{}》 {}: {}", project.name, file, e)
 
         if not global_script:
             detail = "；".join(file_errors[:5]) if file_errors else "未知原因"
@@ -157,5 +190,5 @@ class TranscriptionService:
         finalize_written_artifact(output_path)
 
         cost = time.time() - start_time
-        print(f"✅ 《{project.name}》识别完成, 耗时 {cost:.1f}s")
+        print(f"✅ 《{project.name}》识别完成, 耗时 {cost:.1f}s", flush=True)
         return output_path

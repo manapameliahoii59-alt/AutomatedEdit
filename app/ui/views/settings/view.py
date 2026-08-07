@@ -86,10 +86,10 @@ class SettingInterface(ScrollArea):
             self.aboutGroup
         )
         self.checkUpdateCard = PushSettingCard(
-            '检查',
+            '检查更新',
             FIcon.SYNC,
             '检查更新',
-            f'当前版本 {VERSION}',
+            f'当前版本 {VERSION}，有新版本时可直接下载安装',
             self.aboutGroup,
         )
 

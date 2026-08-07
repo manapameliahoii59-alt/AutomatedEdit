@@ -169,7 +169,7 @@ class PlanSettings(BaseModel):
     clip_count: int = Field(default=15, ge=5, le=15)
     max_duration_sec: int = Field(default=720, ge=300, le=900)
     short_clip_count: int = Field(default=15, ge=5, le=15)
-    short_max_duration_sec: int = Field(default=300, ge=120, le=300)
+    short_max_duration_sec: int = Field(default=300, ge=120, le=360)
     global_speed: float = Field(default=1.15, ge=1.0, le=1.5)
 
     model_config = {"extra": "allow"}
@@ -180,7 +180,7 @@ class PlanSettings(BaseModel):
         self.clip_count = max(5, min(15, int(self.clip_count)))
         self.max_duration_sec = max(300, min(900, int(self.max_duration_sec)))
         self.short_clip_count = max(5, min(15, int(self.short_clip_count)))
-        self.short_max_duration_sec = max(120, min(300, int(self.short_max_duration_sec)))
+        self.short_max_duration_sec = max(120, min(360, int(self.short_max_duration_sec)))
         try:
             spd = float(self.global_speed)
         except (TypeError, ValueError):
@@ -194,7 +194,7 @@ class PlanSettingsPatch(BaseModel):
     clip_count: int | None = Field(default=None, ge=5, le=15)
     max_duration_sec: int | None = Field(default=None, ge=300, le=900)
     short_clip_count: int | None = Field(default=None, ge=5, le=15)
-    short_max_duration_sec: int | None = Field(default=None, ge=120, le=300)
+    short_max_duration_sec: int | None = Field(default=None, ge=120, le=360)
     global_speed: float | None = Field(default=None, ge=1.0, le=1.5)
 
     model_config = {"extra": "allow"}

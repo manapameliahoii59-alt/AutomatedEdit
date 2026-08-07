@@ -103,3 +103,48 @@ def test_clamp_plan_duration_allows_short():
     assert clamp_plan_duration_seconds(120, default=150) == 120
     assert clamp_plan_duration_seconds(60, default=150) == 120
     assert clamp_plan_duration_seconds(1000, default=150) == 900
+
+
+def test_short_and_long_prompts_are_independent():
+    from app.services.plan_director import (
+        _build_long_plan_prompt,
+        _build_short_plan_prompt,
+        _system_prompt_for_group,
+    )
+
+    short = _build_short_plan_prompt(
+        count=5, min_duration_seconds=120, max_duration_seconds=360
+    )
+    long_a = _build_long_plan_prompt(
+        count=5,
+        min_duration_seconds=150,
+        max_duration_seconds=720,
+        group_type="A",
+    )
+    long_b = _build_long_plan_prompt(
+        count=5,
+        min_duration_seconds=150,
+        max_duration_seconds=720,
+        group_type="B",
+    )
+
+    assert "短片引流" in short
+    assert "高转化引流" in long_a
+    assert "高转化引流" in long_b
+    assert "A组" in long_a
+    assert "B组" in long_b
+    assert "A组" not in short and "B组" not in short
+    assert "禁止从对白中间起切" in short
+    assert "句前缓冲" in short
+    assert "字幕残留" in short
+    assert "空镜" not in long_a and "句前缓冲" not in long_a
+    assert "字幕残留" not in long_a
+    assert "起始秒之前" not in long_a
+    assert "某句台词的起始秒" not in long_a
+    assert short != long_a
+    assert _system_prompt_for_group(
+        group_type="U", count=5, min_duration_seconds=120, max_duration_seconds=360
+    ) == short
+    assert "A组" in _system_prompt_for_group(
+        group_type="A", count=5, min_duration_seconds=150, max_duration_seconds=720
+    )

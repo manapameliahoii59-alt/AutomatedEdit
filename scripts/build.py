@@ -299,6 +299,7 @@ def bundle_config() -> None:
             "clip_last_import_dir": "",
             "overlay_title_json": "",
             "overlay_disclaimer_json": "",
+            "overlay_text_library_json": "",
             "encode_nvenc_preset": "p5",
             "encode_x264_preset": "superfast",
             "plan_mode": "long",

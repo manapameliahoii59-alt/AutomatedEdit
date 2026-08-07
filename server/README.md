@@ -154,8 +154,52 @@ PATCH 示例（仅更新部分字段，其余保持不变）：
 | 方法 | 路径 | 说明 |
 |------|------|------|
 | GET | `/api/client/version` | 返回最新版本、最低支持版本、安装包下载链接、更新说明 |
+| GET | `/release/<文件名>` | 下载 `release/` 目录下的安装包 |
 
-`.env` 配置（发布新版本时修改并重启 API）：
+### 推荐：与打包产物同目录
+
+本地打包后，`release/` 里会有安装包；再生成同目录的 `version.json`：
+
+```bash
+iscc scripts/pack_installer.iss
+uv run python scripts/write_release_version.py --changelog "修复若干问题"
+```
+
+生成示例：
+
+```
+release/
+  剪辑助手-v0.0.2-installer.exe
+  version.json
+```
+
+`version.json` 示例：
+
+```json
+{
+  "latest": "0.0.2",
+  "min_supported": "0.0.1",
+  "installer": "剪辑助手-v0.0.2-installer.exe",
+  "changelog": "修复若干问题"
+}
+```
+
+发版到服务器：把整个 `release/` 上传到 API 项目下（例如 `/www/wwwroot/automated-edit-api/release/`），或设置：
+
+```env
+CLIENT_RELEASES_DIR=/www/wwwroot/automated-edit-api/release
+```
+
+一般**无需重启** API（每次请求会重新读 `version.json`）。  
+下载地址：`{PUBLIC_BASE_URL或请求域名}/release/<installer>`。若反代后链接不对：
+
+```env
+PUBLIC_BASE_URL=https://你的对外域名
+```
+
+### 回退：`.env` 配置
+
+没有 `release/version.json` 时，仍可用：
 
 ```env
 CLIENT_LATEST_VERSION=0.0.2
@@ -164,7 +208,5 @@ CLIENT_DOWNLOAD_URL=https://你的域名/release/MyApp-v0.0.2-installer.exe
 CLIENT_CHANGELOG=修复若干问题；优化下载体验
 ```
 
-- `CLIENT_LATEST_VERSION`：最新版本号，高于客户端内置版本时会提示更新
-- `CLIENT_MIN_SUPPORTED_VERSION`：低于此版本的客户端会**强制**提示升级（仅「立即下载」，无「稍后」）
-- `CLIENT_DOWNLOAD_URL`：Inno Setup 安装包直链；用户点击后在浏览器下载，安装程序会自动识别原安装路径
+- 客户端确认更新后会**应用内下载**安装包并打开安装程序
 - 客户端 `app/common/config.py` 的 `VERSION` 与 `scripts/pack_installer.iss` 的 `MyAppVersion` 需与发布版本一致

@@ -32,14 +32,17 @@ def test_clamp_max_duration():
 def test_clamp_short_max_duration():
     assert clamp_short_max_duration_seconds(120) == 120
     assert clamp_short_max_duration_seconds(300) == 300
+    assert clamp_short_max_duration_seconds(360) == 360
     assert clamp_short_max_duration_seconds(60) == 120
-    assert clamp_short_max_duration_seconds(600) == 300
+    assert clamp_short_max_duration_seconds(600) == 360
 
 
 def test_short_max_duration_minutes_roundtrip():
     assert short_max_duration_minutes_from_seconds(300) == 5
+    assert short_max_duration_minutes_from_seconds(360) == 6
     assert short_max_duration_seconds_from_minutes(2) == 120
     assert short_max_duration_seconds_from_minutes(5) == 300
+    assert short_max_duration_seconds_from_minutes(6) == 360
 
 
 def test_clamp_plan_mode():

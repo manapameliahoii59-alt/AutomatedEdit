@@ -74,6 +74,7 @@ fabric.properties
 config.json
 .env
 server/.env
+.env.local_plan
 tools/ffmpeg/win/*.exe
 tools/outro/*.mp4
 logs

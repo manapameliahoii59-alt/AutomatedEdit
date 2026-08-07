@@ -15,7 +15,13 @@ class Settings(BaseSettings):
     deepseek_model: str = "deepseek-v4-flash"
     deepseek_api_keys: str = ""
 
-    # 桌面端更新（GET /api/client/version）
+    # 对外访问根地址（反代后建议配置，用于拼安装包下载链接）
+    # 例：https://api.example.com
+    public_base_url: str = ""
+    # 安装包目录（默认自动：仓库根 release/ 或 server/release/）
+    client_releases_dir: str = ""
+
+    # 桌面端更新回退配置（优先读 release/version.json）
     client_latest_version: str = "0.0.1"
     client_min_supported_version: str = "0.0.1"
     client_download_url: str = ""

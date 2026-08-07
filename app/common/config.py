@@ -39,7 +39,7 @@ class Config(MyQConfig):
     plan_mode = ConfigItem("Tools", "plan_mode", "long")
     plan_clip_count = ConfigItem("Tools", "plan_clip_count", 15)
     plan_max_duration_sec = ConfigItem("Tools", "plan_max_duration_sec", 720)
-    # 短片：条数 5~15；最长时长秒（最短固定 120s，最长 120~300）
+    # 短片：条数 5~15；最长时长秒（最短固定 120s，最长 120~360）
     plan_short_clip_count = ConfigItem("Tools", "plan_short_clip_count", 15)
     plan_short_max_duration_sec = ConfigItem(
         "Tools", "plan_short_max_duration_sec", 300
@@ -80,7 +80,7 @@ DEFAULT_API_BASE_URL = "http://129.204.86.63:7172"
 YEAR = datetime.datetime.now().year
 AUTHOR = "dragon"
 AUTHOR_EMAIL = "857134647@qq.com"
-VERSION = '0.0.1'
+VERSION = '0.0.2'
 APP_NAME = "剪辑助手"
 FEEDBACK_URL = f"mailto:{AUTHOR_EMAIL}"
 

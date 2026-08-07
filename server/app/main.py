@@ -4,12 +4,14 @@ import logging
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from fastapi.staticfiles import StaticFiles
 from sqlalchemy import inspect, text
 from sqlalchemy.exc import OperationalError
 
 from app.admin_panel import setup_admin
 from app.database import Base, engine
 from app.routers import admin, auth, client
+from app.services.client_version import get_releases_dir, STATIC_MOUNT_PATH
 from app.services.plan_jobs import fail_interrupted_jobs
 
 logger = logging.getLogger(__name__)
@@ -142,6 +144,15 @@ app.add_middleware(
 app.include_router(auth.router)
 app.include_router(client.router)
 app.include_router(admin.router)
+
+# 桌面端安装包：release/ → /release/<文件名>（与打包输出目录一致）
+_releases_dir = get_releases_dir()
+_releases_dir.mkdir(parents=True, exist_ok=True)
+app.mount(
+    STATIC_MOUNT_PATH,
+    StaticFiles(directory=str(_releases_dir)),
+    name="release",
+)
 
 setup_admin(app)
 

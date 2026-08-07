@@ -576,7 +576,7 @@ class ClipEditViewModel(ViewModel):
         task_manager.submit_task(_do, on_success=_on_success, on_error=_on_error)
 
     def batch_transcribe(self, project_ids: list[str]):
-        valid = []
+        queue: list[DramaProject] = []
         skipped = 0
         for pid in project_ids:
             project = next((p for p in self._projects if p.id == pid), None)
@@ -588,35 +588,39 @@ class ClipEditViewModel(ViewModel):
             except ImportError:
                 skipped += 1
                 continue
-            valid.append(project)
+            queue.append(project)
 
-        if not valid:
+        if not queue:
             self.messageReceived.emit("没有符合条件的项目可执行识别")
             return
 
         results = {"success": 0, "fail": 0}
-        total = len(valid)
-        for index, project in enumerate(valid, 1):
-            self._update_status(project.id, "transcribe", DramaStatus.IN_PROGRESS)
-            self._show_progress("正在识别", project.name, index=index, total=total)
-            self._add_task()
+        total = len(queue)
 
+        def _run_at(index: int) -> None:
+            if index >= total:
+                self._emit_batch_summary("批量识别完成", results, skipped)
+                return
+
+            project = queue[index]
             pid = project.id
             pname = project.name
+            self._update_status(pid, "transcribe", DramaStatus.IN_PROGRESS)
+            self._show_progress("正在识别", pname, index=index + 1, total=total)
+            self._add_task()
 
-            def _on_success(_ok, pid=pid, pname=pname):
+            def _on_success(_ok, pid=pid, index=index):
                 self._remove_task()
                 self._update_status(pid, "transcribe", DramaStatus.DONE)
                 results["success"] += 1
-                if self._active_tasks == 0:
-                    self._emit_batch_summary("批量识别完成", results, skipped)
+                _run_at(index + 1)
 
-            def _on_error(msg, pid=pid, pname=pname):
+            def _on_error(msg, pid=pid, pname=pname, index=index):
                 self._remove_task()
                 self._update_status(pid, "transcribe", DramaStatus.PENDING)
                 results["fail"] += 1
-                if self._active_tasks == 0:
-                    self._emit_batch_summary("批量识别完成", results, skipped)
+                self.errorOccurred.emit(f"《{pname}》识别失败：{msg}")
+                _run_at(index + 1)
 
             task_manager.submit_task(
                 lambda p=project: TranscriptionService.transcribe(p),
@@ -624,8 +628,10 @@ class ClipEditViewModel(ViewModel):
                 on_error=_on_error,
             )
 
+        _run_at(0)
+
     def batch_plan(self, project_ids: list[str]):
-        valid = []
+        queue: list[DramaProject] = []
         skipped = 0
         for pid in project_ids:
             project = next((p for p in self._projects if p.id == pid), None)
@@ -636,48 +642,52 @@ class ClipEditViewModel(ViewModel):
             if st.get("transcribe") != DramaStatus.DONE:
                 skipped += 1
                 continue
-            valid.append(project)
+            if not self._ensure_can_plan(project.name):
+                skipped += 1
+                continue
+            queue.append(project)
 
-        if not valid:
+        if not queue:
             self.messageReceived.emit("没有符合条件的项目可执行策划")
             return
 
         results = {"success": 0, "fail": 0}
-        total = len(valid)
-        for index, project in enumerate(valid, 1):
-            if not self._ensure_can_plan(project.name):
-                skipped += 1
-                continue
-            self._update_status(project.id, "plan", DramaStatus.IN_PROGRESS)
+        total = len(queue)
+
+        def _run_at(index: int) -> None:
+            if index >= total:
+                self._emit_batch_summary("批量策划完成", results, skipped)
+                return
+
+            project = queue[index]
+            pid = project.id
+            pname = project.name
+            self._update_status(pid, "plan", DramaStatus.IN_PROGRESS)
             self._show_progress(
                 "正在策划",
-                project.name,
-                project_id=project.id,
-                index=index,
+                pname,
+                project_id=pid,
+                index=index + 1,
                 total=total,
             )
             self._add_task()
-
-            pid = project.id
-            pname = project.name
             plan_handler = self._make_plan_progress_handler(pid)
 
-            def _on_success(result, pid=pid, pname=pname):
+            def _on_success(result, pid=pid, pname=pname, index=index):
                 self._remove_task()
                 self._update_status(pid, "plan", DramaStatus.DONE)
                 UsageService.report("plan")
                 self._report_plan_done(pname)
                 results["success"] += 1
                 self.messageReceived.emit(_format_plan_result_message(pname, result))
-                if self._active_tasks == 0:
-                    self._emit_batch_summary("批量策划完成", results, skipped)
+                _run_at(index + 1)
 
-            def _on_error(msg, pid=pid, pname=pname):
+            def _on_error(msg, pid=pid, pname=pname, index=index):
                 self._remove_task()
                 self._update_status(pid, "plan", DramaStatus.PENDING)
                 results["fail"] += 1
-                if self._active_tasks == 0:
-                    self._emit_batch_summary("批量策划完成", results, skipped)
+                self.errorOccurred.emit(f"《{pname}》策划失败：{msg}")
+                _run_at(index + 1)
 
             task_manager.submit_task(
                 lambda p=project, h=plan_handler: AIDirectorService.plan(
@@ -686,6 +696,8 @@ class ClipEditViewModel(ViewModel):
                 on_success=_on_success,
                 on_error=_on_error,
             )
+
+        _run_at(0)
 
     def batch_render(self, project_ids: list[str]):
         valid = []
