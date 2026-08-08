@@ -80,6 +80,7 @@ def create_plan_job_endpoint(
         "min_duration_seconds": body.min_duration_seconds,
         "split_ab": body.split_ab,
         "global_speed": body.global_speed,
+        "plan_mode": body.plan_mode,
     }
     try:
         job = create_plan_job(db, user.id, payload)
@@ -127,19 +128,40 @@ def report_usage(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+    from app.services.usage_meta import (
+        format_plan_drama_meta,
+        normalize_plan_mode,
+        parse_drama_name_from_meta,
+    )
+
+    meta = body.meta or ""
+    plan_mode = normalize_plan_mode(body.plan_mode) or ""
+    # 兼容旧客户端：模式写在 meta 后缀「剧名（混合）」里
+    if body.event == "plan_drama":
+        drama_name = parse_drama_name_from_meta(meta)
+        if not plan_mode:
+            from app.services.usage_meta import parse_plan_mode_from_meta
+
+            plan_mode = parse_plan_mode_from_meta(meta) or ""
+        meta = format_plan_drama_meta(drama_name, plan_mode or None) if drama_name else meta
+        activity_meta = drama_name
+    else:
+        activity_meta = meta
+
     if body.event in {"plan_drama", "clip_drama"}:
-        assert_can_record(db, user, body.event, body.meta or "")
+        assert_can_record(db, user, body.event, activity_meta)
 
     event = UsageEvent(
         user_id=user.id,
         event=body.event,
         success=body.success,
         duration_ms=max(0, body.duration_ms),
-        meta=body.meta or "",
+        meta=meta,
+        plan_mode=plan_mode if body.event == "plan_drama" else "",
         client_version=body.client_version or "",
     )
     db.add(event)
-    record_daily_activity(db, user.id, body.event, body.meta or "")
+    record_daily_activity(db, user.id, body.event, activity_meta)
     db.commit()
     return {"ok": True}
 

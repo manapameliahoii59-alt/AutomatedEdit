@@ -2,15 +2,19 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import math
 import os
 import shutil
+import tempfile
 import uuid
 from typing import Any, Literal, TypedDict
 
 Orientation = Literal["portrait", "landscape"]
 TextLayout = Literal["horizontal", "vertical"]
+HAlign = Literal["l", "c", "r"]
+VAlign = Literal["t", "c", "b"]
 # 具体取值见 _EFFECT_STYLES；未知 id 会 clamp 为 none
 TextEffect = str
 
@@ -22,6 +26,7 @@ FONT_CHOICES: tuple[tuple[str, str, str], ...] = (
     ("msyhl", "微软雅黑细体", "msyhl.ttc"),
     ("simhei", "黑体", "simhei.ttf"),
     ("simsun", "宋体", "simsun.ttc"),
+    # 成片 drawtext 会回退到 simsun：simsunb.ttf 在 FFmpeg 下无汉字轮廓
     ("simsunb", "粗宋", "simsunb.ttf"),
     ("simkai", "楷体", "simkai.ttf"),
     ("simfang", "仿宋", "simfang.ttf"),
@@ -48,9 +53,11 @@ _BRUSH_FONTS = ("stxingka", "fzstk", "fzytk", "stxinwei", "sthupo", "simkai")
 _BOLD_FONTS = ("msyhbd", "simhei", "stzhongs", "sthupo")
 _SOFT_FONTS = ("simyou", "stcaiyun", "msyhl", "stkaiti")
 
-# 风格预设：柔和外扩辉光 + 可选细描边（贴近抖音短剧/漫剧标题）
+# 风格预设：柔和外扩辉光 + 可选细描边（贴近抖音/剪映标题花字）
+# category: basic | hot | soft | neon | outline —— 供花字墙分组
 class _EffectStyle(TypedDict):
     label: str
+    category: str
     default_glow: str
     radii: tuple[float, ...]
     opacities: tuple[float, ...]
@@ -62,13 +69,20 @@ class _EffectStyle(TypedDict):
     core_shadow: bool
 
 
+# 默认：少圈、近缘、密采样 —— 避免旧版大半径稀疏叠字的重影感
+_DEFAULT_RADII = (0.08, 0.16, 0.26)
+_DEFAULT_OPACITIES = (0.30, 0.17, 0.08)
+_DEFAULT_STEPS = 12
+
+
 def _style(
     label: str,
     glow: str,
     *,
-    radii: tuple[float, ...] = (0.14, 0.28, 0.46, 0.68),
-    opacities: tuple[float, ...] = (0.45, 0.26, 0.13, 0.05),
-    steps: int = 8,
+    category: str = "hot",
+    radii: tuple[float, ...] = _DEFAULT_RADII,
+    opacities: tuple[float, ...] = _DEFAULT_OPACITIES,
+    steps: int = _DEFAULT_STEPS,
     outline_ratio: float = 0.06,
     outline_color: str = "#000000",
     prefer_fonts: tuple[str, ...] = _BRUSH_FONTS,
@@ -77,6 +91,7 @@ def _style(
 ) -> _EffectStyle:
     return {
         "label": label,
+        "category": category,
         "default_glow": glow,
         "radii": radii,
         "opacities": opacities,
@@ -90,43 +105,67 @@ def _style(
 
 
 _EFFECT_STYLES: dict[str, _EffectStyle] = {
-    "none": _style("无特效", "#FFFFFF", radii=(), opacities=(), steps=0, outline_ratio=0.0, prefer_fonts=(), suggest_fill=""),
-    # —— 参考图同类 ——
+    "none": _style(
+        "无特效",
+        "#FFFFFF",
+        category="basic",
+        radii=(),
+        opacities=(),
+        steps=0,
+        outline_ratio=0.0,
+        prefer_fonts=(),
+        suggest_fill="",
+    ),
+    # —— 基础辉光 ——
     "glow": _style(
         "白字辉光",
         "#FFFFFF",
-        radii=(0.16, 0.30, 0.48, 0.70),
-        opacities=(0.45, 0.26, 0.13, 0.05),
+        category="basic",
+        radii=(0.09, 0.17, 0.28),
+        opacities=(0.32, 0.18, 0.08),
         outline_ratio=0.07,
-    ),
-    "pink_mood": _style(
-        "粉雾氛围",
-        "#FF4FA3",
-        radii=(0.14, 0.28, 0.46, 0.68),
-        opacities=(0.48, 0.28, 0.14, 0.06),
-        outline_ratio=0.05,
     ),
     "ice_white": _style(
         "冰白强辉",
         "#F5FBFF",
-        radii=(0.18, 0.34, 0.54, 0.78),
-        opacities=(0.55, 0.32, 0.16, 0.06),
+        category="basic",
+        radii=(0.10, 0.20, 0.32),
+        opacities=(0.36, 0.20, 0.09),
         outline_ratio=0.08,
     ),
     "poster_white": _style(
         "海报大字",
         "#FFFFFF",
-        radii=(0.12, 0.24, 0.40, 0.58),
-        opacities=(0.40, 0.22, 0.10, 0.04),
+        category="basic",
+        radii=(0.07, 0.14, 0.22),
+        opacities=(0.28, 0.15, 0.07),
         outline_ratio=0.11,
         prefer_fonts=_BOLD_FONTS,
     ),
-    # —— 彩色氛围 ——
+    # —— 热门花字 ——
+    "pink_mood": _style(
+        "粉雾氛围",
+        "#FF4FA3",
+        category="hot",
+        radii=(0.08, 0.16, 0.26),
+        opacities=(0.34, 0.18, 0.08),
+        outline_ratio=0.05,
+    ),
+    "candy_pink": _style(
+        "糖果粉",
+        "#FF6EC7",
+        category="hot",
+        radii=(0.08, 0.16, 0.26),
+        opacities=(0.32, 0.17, 0.08),
+        prefer_fonts=_SOFT_FONTS + _BRUSH_FONTS[:2],
+        suggest_fill="#FFF5FB",
+    ),
     "guochao": _style(
         "国潮痛字",
         "#FF2D6A",
-        radii=(0.15, 0.30, 0.50, 0.72),
-        opacities=(0.50, 0.30, 0.15, 0.06),
+        category="hot",
+        radii=(0.09, 0.18, 0.28),
+        opacities=(0.34, 0.18, 0.08),
         outline_ratio=0.08,
         prefer_fonts=("stxingka", "stxinwei", "sthupo", "simkai"),
         core_shadow=True,
@@ -134,51 +173,30 @@ _EFFECT_STYLES: dict[str, _EffectStyle] = {
     "red_impact": _style(
         "血红冲击",
         "#FF1E3C",
-        radii=(0.15, 0.30, 0.50, 0.72),
-        opacities=(0.52, 0.30, 0.14, 0.05),
+        category="hot",
+        radii=(0.09, 0.18, 0.28),
+        opacities=(0.36, 0.18, 0.08),
         outline_ratio=0.08,
         prefer_fonts=("sthupo", "stxingka", "stxinwei"),
         core_shadow=True,
     ),
-    "sunset": _style(
-        "日落粉橙",
-        "#FF6B9D",
-        radii=(0.14, 0.28, 0.48, 0.70),
-        opacities=(0.46, 0.26, 0.12, 0.05),
-        prefer_fonts=_SOFT_FONTS + _BRUSH_FONTS[:2],
-    ),
-    "rose_gold": _style(
-        "玫瑰金",
-        "#FF8FAB",
-        radii=(0.14, 0.28, 0.46, 0.66),
-        opacities=(0.44, 0.26, 0.12, 0.05),
-        suggest_fill="#FFF0F5",
-        prefer_fonts=("stcaiyun", "simyou", "stxingka"),
-    ),
     "warm_gold": _style(
         "暖金爆款",
         "#FFB020",
-        radii=(0.14, 0.28, 0.46, 0.66),
-        opacities=(0.44, 0.26, 0.12, 0.05),
+        category="hot",
+        radii=(0.08, 0.16, 0.26),
+        opacities=(0.32, 0.17, 0.08),
         outline_ratio=0.07,
         outline_color="#2A1600",
         prefer_fonts=("stxinwei", "sthupo", "stxingka"),
         suggest_fill="#FFF6D8",
     ),
-    "soft_yellow": _style(
-        "柔黄标题",
-        "#FFE566",
-        radii=(0.14, 0.28, 0.46, 0.66),
-        opacities=(0.42, 0.24, 0.12, 0.05),
-        outline_color="#3A2A00",
-        prefer_fonts=("simyou", "stcaiyun", "fzstk"),
-        suggest_fill="#FFFCE8",
-    ),
     "manga_yellow": _style(
         "漫剧黄字",
         "#FFD400",
-        radii=(0.10, 0.22, 0.38, 0.56),
-        opacities=(0.38, 0.22, 0.10, 0.04),
+        category="hot",
+        radii=(0.07, 0.14, 0.22),
+        opacities=(0.28, 0.15, 0.07),
         outline_ratio=0.12,
         prefer_fonts=_BOLD_FONTS,
         suggest_fill="#FFE566",
@@ -186,18 +204,77 @@ _EFFECT_STYLES: dict[str, _EffectStyle] = {
     "orange_fire": _style(
         "橙火爆款",
         "#FF6A00",
-        radii=(0.15, 0.30, 0.50, 0.72),
-        opacities=(0.48, 0.28, 0.14, 0.05),
+        category="hot",
+        radii=(0.09, 0.18, 0.28),
+        opacities=(0.34, 0.18, 0.08),
         outline_color="#2A1000",
         prefer_fonts=("sthupo", "stxinwei", "msyhbd"),
         core_shadow=True,
     ),
-    # —— 冷色 / 霓虹 ——
+    "ink_red": _style(
+        "朱红国风",
+        "#E6392B",
+        category="hot",
+        radii=(0.08, 0.16, 0.26),
+        opacities=(0.32, 0.17, 0.08),
+        outline_ratio=0.07,
+        prefer_fonts=("stliti", "simli", "stxingka", "fzstk"),
+        suggest_fill="#FFF5F2",
+        core_shadow=True,
+    ),
+    "lemon_pop": _style(
+        "柠檬爆款",
+        "#FFE100",
+        category="hot",
+        radii=(0.08, 0.16, 0.26),
+        opacities=(0.32, 0.17, 0.08),
+        outline_color="#3A3200",
+        prefer_fonts=_BOLD_FONTS,
+        suggest_fill="#FFFCE0",
+    ),
+    # —— 柔光 ——
+    "sunset": _style(
+        "日落粉橙",
+        "#FF6B9D",
+        category="soft",
+        radii=(0.08, 0.16, 0.26),
+        opacities=(0.30, 0.16, 0.07),
+        prefer_fonts=_SOFT_FONTS + _BRUSH_FONTS[:2],
+    ),
+    "rose_gold": _style(
+        "玫瑰金",
+        "#FF8FAB",
+        category="soft",
+        radii=(0.08, 0.16, 0.26),
+        opacities=(0.30, 0.16, 0.07),
+        suggest_fill="#FFF0F5",
+        prefer_fonts=("stcaiyun", "simyou", "stxingka"),
+    ),
+    "soft_yellow": _style(
+        "柔黄标题",
+        "#FFE566",
+        category="soft",
+        radii=(0.08, 0.16, 0.26),
+        opacities=(0.28, 0.15, 0.07),
+        outline_color="#3A2A00",
+        prefer_fonts=("simyou", "stcaiyun", "fzstk"),
+        suggest_fill="#FFFCE8",
+    ),
+    "purple_dream": _style(
+        "紫幻柔光",
+        "#B44DFF",
+        category="soft",
+        radii=(0.08, 0.16, 0.26),
+        opacities=(0.30, 0.16, 0.07),
+        prefer_fonts=("stxingka", "stcaiyun", "fzstk"),
+    ),
+    # —— 霓虹 / 冷色 ——
     "neon": _style(
         "青霓虹",
         "#00E5FF",
-        radii=(0.12, 0.24, 0.40, 0.60),
-        opacities=(0.42, 0.24, 0.12, 0.05),
+        category="neon",
+        radii=(0.07, 0.14, 0.24),
+        opacities=(0.30, 0.16, 0.07),
         outline_ratio=0.05,
         outline_color="#001820",
         prefer_fonts=_BOLD_FONTS,
@@ -205,64 +282,64 @@ _EFFECT_STYLES: dict[str, _EffectStyle] = {
     "cold_blue": _style(
         "冷蓝情绪",
         "#5B8CFF",
-        radii=(0.14, 0.28, 0.46, 0.66),
-        opacities=(0.42, 0.24, 0.12, 0.05),
+        category="neon",
         prefer_fonts=("stxingka", "stxihei", "msyhbd"),
+    ),
+    "sky_pop": _style(
+        "天空蓝",
+        "#4DB8FF",
+        category="neon",
+        suggest_fill="#F0F8FF",
+        prefer_fonts=("msyhbd", "simhei", "stxihei"),
     ),
     "cyan_mint": _style(
         "薄荷绿",
         "#3DFFC8",
-        radii=(0.14, 0.28, 0.46, 0.66),
-        opacities=(0.42, 0.24, 0.12, 0.05),
+        category="neon",
         outline_color="#003528",
         prefer_fonts=("simyou", "msyhbd", "stxihei"),
     ),
-    "purple_dream": _style(
-        "紫幻柔光",
-        "#B44DFF",
-        radii=(0.14, 0.28, 0.48, 0.70),
-        opacities=(0.46, 0.26, 0.13, 0.05),
-        prefer_fonts=("stxingka", "stcaiyun", "fzstk"),
+    "jade_green": _style(
+        "翠绿花字",
+        "#2EE59B",
+        category="neon",
+        outline_color="#003820",
+        prefer_fonts=("stxingka", "simyou", "msyhbd"),
+        suggest_fill="#F0FFF6",
     ),
     "violet_neon": _style(
         "紫霓虹",
         "#C77DFF",
-        radii=(0.12, 0.24, 0.42, 0.62),
-        opacities=(0.44, 0.26, 0.12, 0.05),
+        category="neon",
+        radii=(0.07, 0.14, 0.24),
+        opacities=(0.30, 0.16, 0.07),
         outline_color="#1A0030",
         prefer_fonts=_BOLD_FONTS,
     ),
     "deep_purple": _style(
         "深紫悬疑",
         "#7B2FFF",
-        radii=(0.15, 0.30, 0.50, 0.72),
-        opacities=(0.48, 0.28, 0.14, 0.05),
+        category="neon",
+        radii=(0.09, 0.18, 0.28),
+        opacities=(0.32, 0.17, 0.08),
         prefer_fonts=("stzhongs", "msyhbd", "stxingka"),
         core_shadow=True,
     ),
     "cyber_lime": _style(
         "赛博黄绿",
         "#B8FF00",
-        radii=(0.12, 0.24, 0.40, 0.60),
-        opacities=(0.44, 0.26, 0.12, 0.05),
+        category="neon",
+        radii=(0.07, 0.14, 0.24),
+        opacities=(0.30, 0.16, 0.07),
         outline_color="#1A2200",
         prefer_fonts=_BOLD_FONTS,
         suggest_fill="#F5FFE8",
-    ),
-    "ink_red": _style(
-        "朱红国风",
-        "#E6392B",
-        radii=(0.14, 0.28, 0.46, 0.66),
-        opacities=(0.44, 0.26, 0.12, 0.05),
-        outline_ratio=0.07,
-        prefer_fonts=("stliti", "simli", "stxingka", "fzstk"),
-        suggest_fill="#FFF5F2",
-        core_shadow=True,
     ),
     # —— 纯描边可读 ——
     "outline": _style(
         "黑描边白字",
         "#FFFFFF",
+        category="outline",
         radii=(),
         opacities=(),
         steps=0,
@@ -272,13 +349,56 @@ _EFFECT_STYLES: dict[str, _EffectStyle] = {
     "heavy_outline": _style(
         "粗黑描边",
         "#FFFFFF",
+        category="outline",
         radii=(),
         opacities=(),
         steps=0,
         outline_ratio=0.16,
         prefer_fonts=_BOLD_FONTS,
     ),
+    "gold_stroke": _style(
+        "描金大字",
+        "#FFD700",
+        category="outline",
+        radii=(),
+        opacities=(),
+        steps=0,
+        outline_ratio=0.12,
+        outline_color="#8B6914",
+        prefer_fonts=_BOLD_FONTS,
+        suggest_fill="#FFF8DC",
+    ),
 }
+
+
+def _register_huazi_effects() -> None:
+    """综艺花字注册进统一 effect 表，便于 cfg / 选择器复用。"""
+    from app.common.huazi_styles import HUAZI_STYLES
+
+    for sid, hz in HUAZI_STYLES.items():
+        _EFFECT_STYLES[sid] = _style(
+            hz["label"],
+            hz["preview_color"],
+            category="huazi",
+            radii=(),
+            opacities=(),
+            steps=0,
+            outline_ratio=0.0,
+            prefer_fonts=hz["prefer_fonts"],
+            suggest_fill=hz["preview_color"],
+        )
+
+
+_register_huazi_effects()
+
+EFFECT_CATEGORY_LABELS: tuple[tuple[str, str], ...] = (
+    ("huazi", "综艺花字"),
+    ("basic", "基础"),
+    ("hot", "热门辉光"),
+    ("soft", "柔光"),
+    ("neon", "霓虹冷色"),
+    ("outline", "描边"),
+)
 
 EFFECT_CHOICES: tuple[tuple[str, str], ...] = tuple(
     (eid, style["label"]) for eid, style in _EFFECT_STYLES.items()
@@ -288,7 +408,7 @@ _EFFECT_DEFAULT_GLOW: dict[str, str] = {
 }
 
 DEFAULT_TITLE_PORTRAIT = {
-    "x_pct": 4.0,
+    "x_pct": 1.5,
     "y_pct": 94.5,
     "font": DEFAULT_FONT,
     "fontsize": 22,
@@ -310,7 +430,7 @@ DEFAULT_TITLE_LANDSCAPE = {
     "glow_color": "#FFFFFF",
 }
 DEFAULT_DISCLAIMER_PORTRAIT = {
-    "x_pct": 4.0,
+    "x_pct": 1.5,
     "y_pct": 96.9,
     "font": DEFAULT_FONT,
     "fontsize": 14,
@@ -364,6 +484,9 @@ class OverlayOrientStyle(TypedDict):
 
     x_pct: float
     y_pct: float
+    # 九宫格对齐：c/r/b 成片按实际字宽/块高对齐，避免剧名长短导致「看着居中、成片偏了」
+    h_align: str
+    v_align: str
     font: str
     fontsize: int
     color: str
@@ -480,23 +603,41 @@ def effect_style(effect: TextEffect | str) -> _EffectStyle:
     return _EFFECT_STYLES[clamp_text_effect(effect)]
 
 
+def effects_in_category(category: str) -> list[tuple[str, str]]:
+    """某分组下的 (id, 显示名)，按 _EFFECT_STYLES 声明顺序。"""
+    cat = str(category or "").strip().lower()
+    return [
+        (eid, style["label"])
+        for eid, style in _EFFECT_STYLES.items()
+        if style.get("category") == cat
+    ]
+
+
 def _soft_glow_offsets(
     effect: TextEffect, fontsize: int
 ) -> list[tuple[float, float, float]]:
-    """柔和辉光副本：(dx, dy, 相对透明度)。沿字形四周外扩成雾状光晕。"""
+    """柔和辉光副本：(dx, dy, 相对透明度)。
+
+    近缘密采样 + 相邻圈错开角度，避免大半径稀疏叠字造成的重影。
+    """
     style = effect_style(effect)
     radii, opacities, steps = style["radii"], style["opacities"], style["steps"]
     if not radii or steps <= 0:
         return []
     out: list[tuple[float, float, float]] = []
-    # 中心薄雾 + 近缘加厚，贴近短剧「外发光」观感
-    out.append((0.0, 0.0, opacities[0] * 0.65))
-    for r_mul, op in zip(radii, opacities):
+    for ring_i, (r_mul, op) in enumerate(zip(radii, opacities)):
         radius = max(1.0, float(fontsize) * float(r_mul))
+        # 相邻圈错开半步，减轻圆周「分身」对齐
+        ang_offset = (math.pi / steps) * (ring_i % 2)
         for i in range(steps):
-            ang = (2.0 * math.pi * i) / steps
+            ang = ang_offset + (2.0 * math.pi * i) / steps
             out.append((radius * math.cos(ang), radius * math.sin(ang), op))
     return out
+
+
+def glow_layer_count(effect: TextEffect | str, fontsize: int = 20) -> int:
+    """辉光 drawtext 层数（不含正文），供测试与诊断。"""
+    return len(_soft_glow_offsets(clamp_text_effect(effect), fontsize))
 
 
 def _outline_borderw(effect: TextEffect, fontsize: int) -> int:
@@ -508,6 +649,17 @@ def _outline_borderw(effect: TextEffect, fontsize: int) -> int:
 
 def effect_label(effect: TextEffect | str) -> str:
     return effect_style(effect)["label"]
+
+
+def effect_uses_glow(effect: TextEffect | str) -> bool:
+    """是否为外发光类（可调发光色）。综艺花字走 PNG，不算发光。"""
+    from app.common.huazi_styles import is_huazi_effect
+
+    eid = clamp_text_effect(effect)
+    if eid == "none" or is_huazi_effect(eid):
+        return False
+    style = effect_style(eid)
+    return bool(style["radii"] and style["steps"] > 0)
 
 
 def resolve_glow_color(style: OverlayTextStyle | dict) -> str:
@@ -563,6 +715,12 @@ def _clamp_orient_style(
             100.0,
             float(defaults_orient.get("y_pct", 0.0)),
         ),
+        "h_align": clamp_h_align(
+            src.get("h_align", defaults_orient.get("h_align", ""))
+        ),
+        "v_align": clamp_v_align(
+            src.get("v_align", defaults_orient.get("v_align", ""))
+        ),
         "font": clamp_font_key(_pick("font", defaults_orient.get("font", DEFAULT_FONT))),
         "fontsize": clamp_overlay_fontsize(
             _pick("fontsize", defaults_orient.get("fontsize", 16)),
@@ -590,6 +748,16 @@ def clamp_text_layout(value: Any) -> TextLayout:
     if str(value or "").strip().lower() == "vertical":
         return "vertical"
     return "horizontal"
+
+
+def clamp_h_align(value: Any) -> str:
+    key = str(value or "").strip().lower()
+    return key if key in ("l", "c", "r") else ""
+
+
+def clamp_v_align(value: Any) -> str:
+    key = str(value or "").strip().lower()
+    return key if key in ("t", "c", "b") else ""
 
 
 def clamp_overlay_style(
@@ -709,6 +877,8 @@ def style_for_orientation(
         "glow_color": orient["glow_color"],
         "x_pct": orient["x_pct"],
         "y_pct": orient["y_pct"],
+        "h_align": orient.get("h_align", ""),
+        "v_align": orient.get("v_align", ""),
         "portrait": s["portrait"],
         "landscape": s["landscape"],
     }
@@ -747,14 +917,269 @@ def set_position_for_orientation(
     orientation: Orientation,
     x_pct: float,
     y_pct: float,
+    *,
+    h_align: str | None = None,
+    v_align: str | None = None,
 ) -> dict:
     key: Orientation = "landscape" if orientation == "landscape" else "portrait"
     out = dict(style)
     cur = dict(out.get(key) if isinstance(out.get(key), dict) else {})
     cur["x_pct"] = _clamp_float(x_pct, 0.0, 100.0, 0.0)
     cur["y_pct"] = _clamp_float(y_pct, 0.0, 100.0, 0.0)
+    if h_align is not None:
+        cur["h_align"] = clamp_h_align(h_align)
+    if v_align is not None:
+        cur["v_align"] = clamp_v_align(v_align)
     out[key] = cur
     return out
+
+
+# 九宫格常用锚点：(水平 l/c/r, 垂直 t/c/b)
+POSITION_PRESETS: tuple[tuple[str, str, str, str], ...] = (
+    ("tl", "左上", "l", "t"),
+    ("tc", "上中", "c", "t"),
+    ("tr", "右上", "r", "t"),
+    ("ml", "左中", "l", "c"),
+    ("mc", "正中", "c", "c"),
+    ("mr", "右中", "r", "c"),
+    ("bl", "左下", "l", "b"),
+    ("bc", "下中", "c", "b"),
+    ("br", "右下", "r", "b"),
+)
+_POSITION_PRESET_BY_ID = {pid: (hx, vy) for pid, _label, hx, vy in POSITION_PRESETS}
+_POSITION_GRID: tuple[tuple[str, ...], ...] = (
+    ("tl", "tc", "tr"),
+    ("ml", "mc", "mr"),
+    ("bl", "bc", "br"),
+)
+_POSITION_CELL: dict[str, tuple[int, int]] = {
+    pid: (r, c)
+    for r, row in enumerate(_POSITION_GRID)
+    for c, pid in enumerate(row)
+}
+# 九宫格贴边空隙（相对画布短边百分比）；过大时竖排长文视觉会「离边很远」
+DEFAULT_POSITION_MARGIN_PCT = 1.5
+
+
+def pct_for_position_preset(
+    preset: str,
+    *,
+    box_w_ratio: float,
+    box_h_ratio: float,
+    margin_pct: float = DEFAULT_POSITION_MARGIN_PCT,
+) -> tuple[float, float]:
+    """按九宫格锚点计算文字左上角百分比。
+
+    box_w_ratio / box_h_ratio 为文字框相对画布宽高的比例（0~1）。
+    边缘锚点留 margin_pct 边距；居中锚点按文字框几何中心对齐。
+    """
+    key = str(preset or "").strip().lower()
+    pair = _POSITION_PRESET_BY_ID.get(key)
+    if pair is None:
+        m = float(DEFAULT_POSITION_MARGIN_PCT)
+        return m, m
+    hx, vy = pair
+    bw = max(0.0, min(1.0, float(box_w_ratio)))
+    bh = max(0.0, min(1.0, float(box_h_ratio)))
+    m = max(0.0, min(40.0, float(margin_pct))) / 100.0
+
+    if hx == "l":
+        x = m
+    elif hx == "r":
+        x = max(0.0, 1.0 - bw - m)
+    else:
+        x = max(0.0, (1.0 - bw) / 2.0)
+
+    if vy == "t":
+        y = m
+    elif vy == "b":
+        y = max(0.0, 1.0 - bh - m)
+    else:
+        y = max(0.0, (1.0 - bh) / 2.0)
+
+    return round(x * 100.0, 2), round(y * 100.0, 2)
+
+
+def nearest_position_preset(
+    x_pct: float,
+    y_pct: float,
+    *,
+    box_w_ratio: float = 0.0,
+    box_h_ratio: float = 0.0,
+) -> str:
+    """根据文字左上角百分比，落到最接近的九宫格格（以文字框中心判格）。"""
+    bw = max(0.0, min(1.0, float(box_w_ratio))) * 100.0
+    bh = max(0.0, min(1.0, float(box_h_ratio))) * 100.0
+    cx = float(x_pct) + bw / 2.0
+    cy = float(y_pct) + bh / 2.0
+    col = 0 if cx < 100.0 / 3.0 else (2 if cx >= 200.0 / 3.0 else 1)
+    row = 0 if cy < 100.0 / 3.0 else (2 if cy >= 200.0 / 3.0 else 1)
+    return _POSITION_GRID[row][col]
+
+
+def step_position_preset(preset: str, *, dcol: int = 0, drow: int = 0) -> str:
+    """在九宫格上按列/行偏移一格（越界夹紧）。dcol: -1左/+1右；drow: -1上/+1下。"""
+    cell = _POSITION_CELL.get(str(preset or "").strip().lower(), (1, 1))
+    row = max(0, min(2, cell[0] + int(drow)))
+    col = max(0, min(2, cell[1] + int(dcol)))
+    return _POSITION_GRID[row][col]
+
+
+def align_for_position_preset(preset: str) -> tuple[str, str]:
+    """九宫格 id → (h_align, v_align)。"""
+    pair = _POSITION_PRESET_BY_ID.get(str(preset or "").strip().lower())
+    if pair is None:
+        return "l", "t"
+    return pair[0], pair[1]
+
+
+def estimate_overlay_box_ratios(
+    text: str,
+    fontsize: int,
+    *,
+    orientation: Orientation = "portrait",
+) -> tuple[float, float]:
+    """粗估文字框相对画布比例，仅用于旧配置推断对齐。"""
+    lines = (text or "").split("\n") or [""]
+    n = max(1, len(lines))
+    gap = max(0, int(round(float(fontsize) * 0.12)))
+    ref_w, ref_h = (1920.0, 1080.0) if orientation == "landscape" else (1080.0, 1920.0)
+
+    def _line_px(s: str) -> float:
+        total = 0.0
+        for ch in s:
+            total += float(fontsize) * (1.0 if ord(ch) > 127 else 0.55)
+        return max(float(fontsize) * 0.5, total)
+
+    tw = max((_line_px(line) for line in lines), default=float(fontsize))
+    th = float(n * int(fontsize) + max(0, n - 1) * gap)
+    return min(0.95, tw / ref_w), min(0.95, th / ref_h)
+
+
+def resolve_aligns(
+    orient: dict,
+    *,
+    box_w_ratio: float = 0.0,
+    box_h_ratio: float = 0.0,
+) -> tuple[str, str]:
+    """读取 h/v_align；缺省时按文字框中心落入的九宫格推断（兼容旧配置）。"""
+    h = clamp_h_align(orient.get("h_align"))
+    v = clamp_v_align(orient.get("v_align"))
+    if h and v:
+        return h, v
+    preset = nearest_position_preset(
+        float(orient.get("x_pct", 0.0) or 0.0),
+        float(orient.get("y_pct", 0.0) or 0.0),
+        box_w_ratio=box_w_ratio,
+        box_h_ratio=box_h_ratio,
+    )
+    ih, iv = align_for_position_preset(preset)
+    return h or ih, v or iv
+
+
+def top_left_pct_for_align(
+    orient: dict,
+    *,
+    box_w_ratio: float,
+    box_h_ratio: float,
+    margin_pct: float = DEFAULT_POSITION_MARGIN_PCT,
+) -> tuple[float, float]:
+    """按对齐方式计算预览左上角百分比（居中/右随框宽重算）。"""
+    v_stored = clamp_v_align(orient.get("v_align"))
+    h_align, _v_align = resolve_aligns(
+        orient, box_w_ratio=box_w_ratio, box_h_ratio=box_h_ratio
+    )
+    bw = max(0.0, min(1.0, float(box_w_ratio)))
+    bh = max(0.0, min(1.0, float(box_h_ratio)))
+    m = max(0.0, min(40.0, float(margin_pct))) / 100.0
+    x_pct = _clamp_float(orient.get("x_pct"), 0.0, 100.0, 0.0)
+    y_pct = _clamp_float(orient.get("y_pct"), 0.0, 100.0, 0.0)
+
+    # 水平：居中/右对齐始终按框宽算（解决剧名长短偏心）
+    if h_align == "c":
+        x = (1.0 - bw) / 2.0 * 100.0
+    elif h_align == "r":
+        x = max(0.0, 1.0 - bw - m) * 100.0
+    else:
+        x = x_pct
+
+    # 垂直几何对齐仅在显式 v_align 时启用，避免旧配置 y_pct 被误判成贴底
+    if v_stored == "c":
+        y = (1.0 - bh) / 2.0 * 100.0
+    elif v_stored == "b":
+        y = max(0.0, 1.0 - bh - m) * 100.0
+    else:
+        y = y_pct
+    return round(x, 2), round(y, 2)
+
+
+def drawtext_position_exprs(
+    orient: dict,
+    *,
+    line_count: int,
+    fontsize: int,
+    line_gap: int,
+    margin_pct: float = DEFAULT_POSITION_MARGIN_PCT,
+    box_w_ratio: float = 0.0,
+    box_h_ratio: float = 0.0,
+) -> tuple[str, str]:
+    """drawtext 的 (x_expr, y0_expr)。水平居中用 text_w，避免剧名长短偏心。"""
+    v_stored = clamp_v_align(orient.get("v_align"))
+    h_align, _v_align = resolve_aligns(
+        orient, box_w_ratio=box_w_ratio, box_h_ratio=box_h_ratio
+    )
+    m = max(0.0, min(40.0, float(margin_pct))) / 100.0
+    x_pct = _clamp_float(orient.get("x_pct"), 0.0, 100.0, 0.0) / 100.0
+    y_pct = _clamp_float(orient.get("y_pct"), 0.0, 100.0, 0.0) / 100.0
+    n = max(1, int(line_count))
+    block = int(n * int(fontsize) + max(0, n - 1) * int(line_gap))
+
+    if h_align == "c":
+        x_expr = "(w-text_w)/2"
+    elif h_align == "r":
+        x_expr = f"w*{1.0 - m:.6f}-text_w"
+    else:
+        x_expr = f"w*{x_pct:.6f}"
+
+    if v_stored == "c":
+        y0 = f"(h-{block})/2"
+    elif v_stored == "b":
+        y0 = f"h*{1.0 - m:.6f}-{block}"
+    else:
+        y0 = f"h*{y_pct:.6f}"
+    return x_expr, y0
+
+
+def overlay_image_position_exprs(
+    orient: dict,
+    *,
+    margin_pct: float = DEFAULT_POSITION_MARGIN_PCT,
+    box_w_ratio: float = 0.0,
+    box_h_ratio: float = 0.0,
+) -> tuple[str, str]:
+    """ffmpeg overlay 的 (x_expr, y_expr)；主画面 W/H，叠图 w/h。"""
+    v_stored = clamp_v_align(orient.get("v_align"))
+    h_align, _v_align = resolve_aligns(
+        orient, box_w_ratio=box_w_ratio, box_h_ratio=box_h_ratio
+    )
+    m = max(0.0, min(40.0, float(margin_pct))) / 100.0
+    x_pct = _clamp_float(orient.get("x_pct"), 0.0, 100.0, 0.0) / 100.0
+    y_pct = _clamp_float(orient.get("y_pct"), 0.0, 100.0, 0.0) / 100.0
+
+    if h_align == "c":
+        x_expr = "(W-w)/2"
+    elif h_align == "r":
+        x_expr = f"W*{1.0 - m:.6f}-w"
+    else:
+        x_expr = f"W*{x_pct:.6f}"
+
+    if v_stored == "c":
+        y_expr = "(H-h)/2"
+    elif v_stored == "b":
+        y_expr = f"H*{1.0 - m:.6f}-h"
+    else:
+        y_expr = f"H*{y_pct:.6f}"
+    return x_expr, y_expr
 
 
 def default_overlay_title() -> OverlayTextStyle:
@@ -1208,25 +1633,122 @@ def escape_drawtext(text: str) -> str:
     return out
 
 
+def escape_drawtext_fontfile(path: str) -> str:
+    """转义 fontfile= / textfile= 路径（含盘符冒号），并加单引号，避免 filter 链被截断。"""
+    p = str(path or "").replace("\\", "/")
+    p = p.replace("'", r"\'").replace(":", r"\:")
+    return f"'{p}'"
+
+
+def _ascii_font_cache_dir() -> str:
+    """纯 ASCII 字体缓存目录，避免中文工程路径弄坏 drawtext 解析。"""
+    d = os.path.join(tempfile.gettempdir(), "AutomatedEditFonts")
+    os.makedirs(d, exist_ok=True)
+    return d
+
+
+def _path_has_non_ascii(path: str) -> bool:
+    try:
+        path.encode("ascii")
+        return False
+    except UnicodeEncodeError:
+        return True
+
+
+def _text_needs_external_file(text: str) -> bool:
+    """非 ASCII 文案不要写进 filter 脚本：Windows 上 FFmpeg 常按系统代码页读脚本导致乱码。"""
+    return any(ord(ch) > 127 for ch in (text or ""))
+
+
+def prepare_drawtext_textfile(text: str) -> str:
+    """把文案落到 ASCII 路径的 UTF-8（带 BOM）文件，供 drawtext textfile= 使用。"""
+    payload = (text or " ").replace("\r", "").replace("\n", "")
+    if not payload:
+        payload = " "
+    digest = hashlib.sha1(payload.encode("utf-8")).hexdigest()[:20]
+    path = os.path.join(_ascii_font_cache_dir(), f"dt_{digest}.txt")
+    with open(path, "w", encoding="utf-8-sig", newline="") as f:
+        f.write(payload)
+    return path.replace("\\", "/")
+
+
+def _drawtext_text_option(line: str) -> str:
+    raw = line if line else " "
+    if _text_needs_external_file(raw):
+        return f"textfile={escape_drawtext_fontfile(prepare_drawtext_textfile(raw))}"
+    return f"text='{escape_drawtext(raw)}'"
+
+
+# FFmpeg/FreeType 下无可用汉字轮廓的字体 → 换成同风格可用字体（否则成片变「口口口」）
+_DRAWTEXT_FONT_FALLBACKS: dict[str, str] = {
+    "simsunb": "simsun",  # Windows simsunb.ttf 在 drawtext 下只有方框
+}
+
+
+def resolve_drawtext_font_key(font_key: str) -> str:
+    """成片 drawtext 用的字体 key（含不可用字体回退）。"""
+    key = clamp_font_key(font_key)
+    return _DRAWTEXT_FONT_FALLBACKS.get(key, key)
+
+
 def prepare_font_file(font_key: str, work_dir: str | None = None) -> str:
-    """确保字体可用，返回供 drawtext fontfile= 使用的路径。"""
-    filename = font_filename(font_key)
+    """确保字体可用，返回供 drawtext fontfile= 使用的**纯 ASCII**路径。
+
+    中文工程缓存路径会导致 FFmpeg 把 ``fontfile=C:/中文/...`` 的盘符冒号
+    当成选项分隔符而解析失败；故绝不返回非 ASCII 路径。
+    """
+    key = resolve_drawtext_font_key(font_key)
+    filename = font_filename(key)
     windir = os.environ.get("WINDIR", "C:/Windows")
     system_font = os.path.join(windir, "Fonts", filename)
-    dest_dir = work_dir or os.getcwd()
-    dest = os.path.join(dest_dir, filename)
-    if not os.path.exists(dest) and os.path.exists(system_font):
+
+    # 1) ASCII 临时目录（drawtext 最稳）
+    ascii_dest = os.path.join(_ascii_font_cache_dir(), filename)
+    src_for_ascii = system_font if os.path.isfile(system_font) else None
+    if work_dir:
+        # 工程缓存里可能是旧的不可用字体副本；回退后文件名已变，按新文件名取
+        work_copy = os.path.join(work_dir, filename)
+        if os.path.isfile(work_copy):
+            src_for_ascii = work_copy
+    if src_for_ascii and os.path.isfile(src_for_ascii):
         try:
-            shutil.copy(system_font, dest)
-        except Exception:
+            # 覆盖拷贝，避免缓存里残留坏文件
+            if (not os.path.isfile(ascii_dest)) or (
+                os.path.getsize(ascii_dest) != os.path.getsize(src_for_ascii)
+            ):
+                shutil.copy2(src_for_ascii, ascii_dest)
+        except OSError:
             pass
-    if os.path.exists(dest):
-        cwd = os.getcwd()
-        if os.path.abspath(dest_dir) == os.path.abspath(cwd):
-            return filename
-        return dest.replace("\\", "/")
-    if os.path.exists(system_font):
+    if os.path.isfile(ascii_dest) and not _path_has_non_ascii(ascii_dest):
+        return ascii_dest.replace("\\", "/")
+
+    # 2) 系统 Fonts（通常为 C:/Windows/Fonts，ASCII）
+    if os.path.isfile(system_font) and not _path_has_non_ascii(system_font):
         return system_font.replace("\\", "/")
+
+    # 3) 工程缓存仅当路径本身是 ASCII 时才用
+    if work_dir:
+        dest = os.path.join(work_dir, filename)
+        if not os.path.isfile(dest) and os.path.isfile(system_font):
+            try:
+                shutil.copy2(system_font, dest)
+            except OSError:
+                pass
+        if os.path.isfile(dest) and not _path_has_non_ascii(dest):
+            return dest.replace("\\", "/")
+
+    # 4) 最后兜底：微软雅黑（系统几乎必有）
+    msyh = os.path.join(windir, "Fonts", font_filename("msyh"))
+    if os.path.isfile(msyh):
+        ascii_msyh = os.path.join(_ascii_font_cache_dir(), font_filename("msyh"))
+        try:
+            if not os.path.isfile(ascii_msyh):
+                shutil.copy2(msyh, ascii_msyh)
+        except OSError:
+            pass
+        if os.path.isfile(ascii_msyh):
+            return ascii_msyh.replace("\\", "/")
+        return msyh.replace("\\", "/")
     return filename
 
 
@@ -1237,7 +1759,12 @@ def build_drawtext_filters(
     fontfile: str | None = None,
     orientation: Orientation = "portrait",
 ) -> list[str]:
-    """生成 drawtext 列表。竖排拆多条；短剧风格=柔光晕 + 细描边正文。"""
+    """生成 drawtext 列表。竖排拆多条；短剧风格=柔光晕 + 细描边正文。
+
+    综艺花字（Pillow PNG）不走 drawtext，返回空列表。
+    """
+    from app.common.huazi_styles import is_huazi_effect
+
     defaults = {
         "text": "",
         "font": DEFAULT_FONT,
@@ -1255,9 +1782,21 @@ def build_drawtext_filters(
     if not rendered.strip():
         return []
     orient = position_for_orientation(s, orientation)
+    if is_huazi_effect(orient["effect"]):
+        return []
     rendered = apply_text_layout(rendered, orient["layout"])
-    font = fontfile or prepare_font_file(orient["font"])
-    font_esc = font.replace("\\", "/").replace(":", r"\:")
+    # 始终按 key 解析（含 simsunb→simsun）；拒绝中文路径 / 强制回退时忽略传入 fontfile
+    font_key = clamp_font_key(orient["font"])
+    font = prepare_font_file(font_key)
+    if (
+        fontfile
+        and not _path_has_non_ascii(str(fontfile))
+        and resolve_drawtext_font_key(font_key) == font_key
+    ):
+        # ASCII 绝对路径或单测用的相对文件名
+        if os.path.isfile(fontfile) or not os.path.isabs(fontfile):
+            font = str(fontfile).replace("\\", "/")
+    font_esc = escape_drawtext_fontfile(font)
     color_hex = orient["color"].lstrip("#")
     glow_hex = resolve_glow_color(orient).lstrip("#")
     opacity = orient["opacity"]
@@ -1267,14 +1806,23 @@ def build_drawtext_filters(
     glow_offsets = _soft_glow_offsets(effect, fontsize)
     outline_w = _outline_borderw(effect, fontsize)
     outline_hex = str(estyle["outline_color"]).lstrip("#")
-    x_expr = f"w*{orient['x_pct'] / 100.0:.6f}"
-    y0 = f"h*{orient['y_pct'] / 100.0:.6f}"
     line_gap = max(0, int(round(fontsize * 0.12)))
 
     lines = rendered.split("\n")
+    est_bw, est_bh = estimate_overlay_box_ratios(
+        rendered, fontsize, orientation=orientation
+    )
+    x_expr, y0 = drawtext_position_exprs(
+        orient,
+        line_count=len(lines),
+        fontsize=fontsize,
+        line_gap=line_gap,
+        box_w_ratio=est_bw,
+        box_h_ratio=est_bh,
+    )
     filters: list[str] = []
     for i, line in enumerate(lines):
-        text_esc = escape_drawtext(line if line else " ")
+        text_opt = _drawtext_text_option(line)
         y_expr = y0 if i == 0 else f"{y0}+{i}*({fontsize}+{line_gap})"
         # 1) 柔和外扩光晕（偏移叠字，不是彩色硬描边）
         for dx, dy, op_mul in glow_offsets:
@@ -1282,19 +1830,20 @@ def build_drawtext_filters(
             x_g = x_expr if abs(dx) < 1e-6 else f"{x_expr}+{dx:.2f}"
             y_g = y_expr if abs(dy) < 1e-6 else f"{y_expr}+{dy:.2f}"
             filters.append(
-                f"drawtext=fontfile={font_esc}:text='{text_esc}':"
+                f"drawtext=fontfile={font_esc}:{text_opt}:"
                 f"x={x_g}:y={y_g}:fontsize={fontsize}:"
                 f"fontcolor={glow_hex}@{glow_op:.3f}"
             )
         # 2) 正文：可选细黑描边（短剧标题常用，保证糊底可读）
         core = (
-            f"drawtext=fontfile={font_esc}:text='{text_esc}':"
+            f"drawtext=fontfile={font_esc}:{text_opt}:"
             f"x={x_expr}:y={y_expr}:fontsize={fontsize}:"
             f"fontcolor={color_hex}@{opacity}"
         )
         if outline_w > 0:
             core += f":borderw={outline_w}:bordercolor={outline_hex}@0.92"
-        if estyle["core_shadow"]:
+        # 有外发光时不再叠硬阴影，避免「多重重影」
+        if estyle["core_shadow"] and not glow_offsets:
             core += ":shadowx=2:shadowy=2:shadowcolor=black@0.45"
         filters.append(core)
     return filters
@@ -1319,10 +1868,81 @@ def build_drawtext_filter(
     return ",".join(parts)
 
 
-def build_overlay_drawtext_filters(
-    project_name: str, *, horizontal: bool = False
-) -> list[str]:
-    """按当前 cfg 生成剧名+提示的 drawtext 列表（空文案跳过）。"""
+class OverlayImageSpec(TypedDict):
+    path: str
+    x_expr: str
+    y_expr: str
+
+
+class OverlayPlan(TypedDict):
+    drawtext_filters: list[str]
+    image_overlays: list[OverlayImageSpec]
+
+
+def _build_huazi_image_spec(
+    style: OverlayTextStyle | dict,
+    *,
+    project_name: str,
+    orientation: Orientation,
+    cache_dir: str | None,
+) -> OverlayImageSpec | None:
+    from app.common.huazi_render import render_huazi_png_file
+    from app.common.huazi_styles import is_huazi_effect
+
+    defaults = {
+        "text": "",
+        "font": DEFAULT_FONT,
+        "fontsize": 16,
+        "color": "#FFFFFF",
+        "opacity": 1.0,
+        "layout": "horizontal",
+        "effect": "none",
+        "glow_color": "#FFFFFF",
+        "portrait": {"x_pct": 0.0, "y_pct": 0.0},
+        "landscape": {"x_pct": 0.0, "y_pct": 0.0},
+    }
+    s = clamp_overlay_style(dict(style), defaults)
+    rendered = resolve_overlay_text(s["text"], project_name)
+    if not rendered.strip():
+        return None
+    orient = position_for_orientation(s, orientation)
+    if not is_huazi_effect(orient["effect"]):
+        return None
+    layout_text = apply_text_layout(rendered, orient["layout"])
+    font_path = prepare_font_file(orient["font"], work_dir=cache_dir)
+    # prepare_font_file 可能返回相对文件名；渲染需要可读绝对/存在路径
+    if not os.path.isfile(font_path):
+        windir = os.environ.get("WINDIR", "C:/Windows")
+        system_font = os.path.join(windir, "Fonts", font_filename(orient["font"]))
+        if os.path.isfile(system_font):
+            font_path = system_font
+    try:
+        png = render_huazi_png_file(
+            layout_text,
+            orient["effect"],
+            font_path=font_path,
+            fontsize=int(orient["fontsize"]),
+            opacity=float(orient["opacity"]),
+            cache_dir=cache_dir,
+        )
+    except Exception:
+        return None
+    est_bw, est_bh = estimate_overlay_box_ratios(
+        layout_text, int(orient["fontsize"]), orientation=orientation
+    )
+    x_expr, y_expr = overlay_image_position_exprs(
+        orient, box_w_ratio=est_bw, box_h_ratio=est_bh
+    )
+    return {"path": png.replace("\\", "/"), "x_expr": x_expr, "y_expr": y_expr}
+
+
+def build_overlay_plan(
+    project_name: str,
+    *,
+    horizontal: bool = False,
+    cache_dir: str | None = None,
+) -> OverlayPlan:
+    """生成成片叠字计划：drawtext 链 + 综艺花字 PNG overlay。"""
     orientation: Orientation = "landscape" if horizontal else "portrait"
     title = load_overlay_title_from_cfg()
     disc = load_overlay_disclaimer_from_cfg()
@@ -1331,27 +1951,37 @@ def build_overlay_drawtext_filters(
         if not resolve_overlay_text(style["text"], project_name).strip():
             continue
         fonts_needed.add(position_for_orientation(style, orientation)["font"])
-    fontfiles = {k: prepare_font_file(k) for k in fonts_needed}
+    fontfiles = {k: prepare_font_file(k, work_dir=cache_dir) for k in fonts_needed}
 
-    filters: list[str] = []
-    filters.extend(
-        build_drawtext_filters(
-            title,
-            project_name=project_name,
-            fontfile=fontfiles.get(
-                position_for_orientation(title, orientation)["font"]
-            ),
-            orientation=orientation,
+    drawtext: list[str] = []
+    images: list[OverlayImageSpec] = []
+    for style in (title, disc):
+        orient = position_for_orientation(style, orientation)
+        fontfile = fontfiles.get(orient["font"])
+        drawtext.extend(
+            build_drawtext_filters(
+                style,
+                project_name=project_name,
+                fontfile=fontfile,
+                orientation=orientation,
+            )
         )
-    )
-    filters.extend(
-        build_drawtext_filters(
-            disc,
+        spec = _build_huazi_image_spec(
+            style,
             project_name=project_name,
-            fontfile=fontfiles.get(
-                position_for_orientation(disc, orientation)["font"]
-            ),
             orientation=orientation,
+            cache_dir=cache_dir,
         )
-    )
-    return filters
+        if spec is not None:
+            images.append(spec)
+    return {"drawtext_filters": drawtext, "image_overlays": images}
+
+
+def build_overlay_drawtext_filters(
+    project_name: str, *, horizontal: bool = False
+) -> list[str]:
+    """按当前 cfg 生成剧名+提示的 drawtext 列表（空文案跳过）。
+
+    兼容旧调用；综艺花字请用 build_overlay_plan。
+    """
+    return build_overlay_plan(project_name, horizontal=horizontal)["drawtext_filters"]

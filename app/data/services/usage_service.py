@@ -60,16 +60,20 @@ class UsageService:
         _run_in_background(_do)
 
     @staticmethod
-    def report_plan_drama(name: str) -> None:
+    def report_plan_drama(name: str, plan_mode: str | None = None) -> None:
         text = (name or "").strip()
         if not text:
             return
+
+        mode = str(plan_mode or "").strip().lower() or None
+        if mode not in {"short", "long", "mixed"}:
+            mode = None
 
         def _do():
             api = get_api()
             if hasattr(api, "report_usage"):
                 try:
-                    api.report_usage("plan_drama", meta=text)
+                    api.report_usage("plan_drama", meta=text, plan_mode=mode)
                 except ApiError:
                     return
             QuotaService.instance().mark_planned(text)

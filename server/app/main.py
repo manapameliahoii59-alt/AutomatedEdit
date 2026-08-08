@@ -118,6 +118,35 @@ def _ensure_daily_quota_columns() -> None:
                     text("ALTER TABLE users ADD COLUMN valid_until DATE NULL")
                 )
 
+    if "usage_events" in table_names:
+        usage_cols = {col["name"] for col in inspector.get_columns("usage_events")}
+        if "plan_mode" not in usage_cols:
+            with engine.begin() as conn:
+                conn.execute(
+                    text(
+                        "ALTER TABLE usage_events ADD COLUMN plan_mode "
+                        "VARCHAR(16) NOT NULL DEFAULT ''"
+                    )
+                )
+
+    if "plan_jobs" in table_names:
+        job_cols = {col["name"] for col in inspector.get_columns("plan_jobs")}
+        with engine.begin() as conn:
+            if "project_name" not in job_cols:
+                conn.execute(
+                    text(
+                        "ALTER TABLE plan_jobs ADD COLUMN project_name "
+                        "VARCHAR(255) NOT NULL DEFAULT ''"
+                    )
+                )
+            if "plan_mode" not in job_cols:
+                conn.execute(
+                    text(
+                        "ALTER TABLE plan_jobs ADD COLUMN plan_mode "
+                        "VARCHAR(16) NOT NULL DEFAULT ''"
+                    )
+                )
+
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):

@@ -158,6 +158,7 @@ def _run_job(job_id: str, payload: dict[str, Any], plan_key: str, api_keys_raw: 
             min_duration_seconds=payload.get("min_duration_seconds"),
             split_ab=payload.get("split_ab"),
             global_speed=payload.get("global_speed"),
+            plan_mode=payload.get("plan_mode"),
         )
         from app.services.plan_director import clamp_clip_count
 
@@ -170,6 +171,7 @@ def _run_job(job_id: str, payload: dict[str, Any], plan_key: str, api_keys_raw: 
                 f"仅通过 {len(plans)}/{target_total} 条"
                 "（多数候选因时长或台词未匹配被过滤）"
             )
+        plan_mode = str(payload.get("plan_mode") or "").strip().lower()
         _persist_job(
             job_id,
             status="done",
@@ -180,6 +182,8 @@ def _run_job(job_id: str, payload: dict[str, Any], plan_key: str, api_keys_raw: 
                 "total": target_total,
                 "detail": detail,
                 "underfilled": underfilled,
+                "project_name": str(payload.get("project_name") or ""),
+                "plan_mode": plan_mode,
             },
             error="",
         )
@@ -200,17 +204,28 @@ def create_plan_job(db: Session, user_id: int, payload: dict[str, Any]) -> PlanJ
     from app.services.plan_director import clamp_clip_count
 
     target_total = clamp_clip_count(payload.get("target_clips_count") or 15)
+    project_name = str(payload.get("project_name") or "").strip()
+    plan_mode = str(payload.get("plan_mode") or "").strip().lower()
+    if plan_mode not in {"short", "long", "mixed"}:
+        # 兼容旧客户端：无 mode 时由 split_ab 推断
+        split_ab = payload.get("split_ab")
+        use_ab = True if split_ab is None else bool(split_ab)
+        plan_mode = "short" if not use_ab else "long"
     progress = {
         "phase": "plan",
         "current": 0,
         "total": target_total,
         "detail": "排队中…",
+        "project_name": project_name,
+        "plan_mode": plan_mode,
     }
     now = _utc_now()
     row = PlanJob(
         id=job_id,
         user_id=user_id,
         status="pending",
+        project_name=project_name,
+        plan_mode=plan_mode,
         progress_json=json.dumps(progress, ensure_ascii=False),
         error="",
         result_json="",

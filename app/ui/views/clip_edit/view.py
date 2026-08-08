@@ -44,19 +44,26 @@ from app.common.plan_settings import (
     DEFAULT_CLIP_COUNT,
     DEFAULT_GLOBAL_SPEED,
     DEFAULT_MAX_DURATION_SECONDS,
+    DEFAULT_MIXED_CLIP_COUNT,
+    DEFAULT_MIXED_MAX_DURATION_SECONDS,
     DEFAULT_SHORT_MAX_DURATION_SECONDS,
     GLOBAL_SPEED_CHOICES,
     MAX_CLIP_COUNT,
+    MAX_MIXED_CLIP_COUNT,
     MIN_CLIP_COUNT,
     PLAN_MODE_LONG,
+    PLAN_MODE_MIXED,
     PLAN_MODE_SHORT,
     clamp_clip_count,
     clamp_global_speed,
     clamp_max_duration_seconds,
+    clamp_mixed_max_duration_seconds,
     clamp_plan_mode,
     clamp_short_max_duration_seconds,
     max_duration_minutes_from_seconds,
     max_duration_seconds_from_minutes,
+    mixed_max_duration_minutes_from_seconds,
+    mixed_max_duration_seconds_from_minutes,
     short_max_duration_minutes_from_seconds,
     short_max_duration_seconds_from_minutes,
 )
@@ -562,23 +569,28 @@ class ClipEditPage(ScrollArea):
     def _open_plan_settings(self):
         dlg = QDialog(self.window())
         dlg.setWindowTitle("策划设置")
-        dlg.setMinimumWidth(480)
+        dlg.setMinimumWidth(520)
         layout = QVBoxLayout(dlg)
         layout.setSpacing(12)
 
         mode_row = QHBoxLayout()
         short_radio = QRadioButton("短片模式", dlg)
         long_radio = QRadioButton("长片模式", dlg)
+        mixed_radio = QRadioButton("混合模式", dlg)
         mode_group = QButtonGroup(dlg)
         mode_group.addButton(short_radio)
         mode_group.addButton(long_radio)
+        mode_group.addButton(mixed_radio)
         initial_mode = clamp_plan_mode(cfg.plan_mode.value)
         if initial_mode == PLAN_MODE_SHORT:
             short_radio.setChecked(True)
+        elif initial_mode == PLAN_MODE_MIXED:
+            mixed_radio.setChecked(True)
         else:
             long_radio.setChecked(True)
         mode_row.addWidget(short_radio)
         mode_row.addWidget(long_radio)
+        mode_row.addWidget(mixed_radio)
         mode_row.addStretch(1)
         layout.addLayout(mode_row)
 
@@ -592,8 +604,6 @@ class ClipEditPage(ScrollArea):
 
         count_combo = QComboBox(dlg)
         count_combo.setMinimumWidth(200)
-        for n in range(MIN_CLIP_COUNT, MAX_CLIP_COUNT + 1):
-            count_combo.addItem(f"{n} 条", n)
 
         max_combo = QComboBox(dlg)
         max_combo.setMinimumWidth(200)
@@ -611,7 +621,6 @@ class ClipEditPage(ScrollArea):
         form.addRow("成片倍速", speed_combo)
         layout.addLayout(form)
 
-        # 两套参数各自缓存，切换模式时互不覆盖
         values = {
             PLAN_MODE_SHORT: {
                 "count": clamp_clip_count(cfg.plan_short_clip_count.value),
@@ -627,6 +636,16 @@ class ClipEditPage(ScrollArea):
                     clamp_max_duration_seconds(cfg.plan_max_duration_sec.value)
                 ),
             },
+            PLAN_MODE_MIXED: {
+                "count": clamp_clip_count(
+                    cfg.plan_mixed_clip_count.value, max_count=MAX_MIXED_CLIP_COUNT
+                ),
+                "max_min": mixed_max_duration_minutes_from_seconds(
+                    clamp_mixed_max_duration_seconds(
+                        cfg.plan_mixed_max_duration_sec.value
+                    )
+                ),
+            },
         }
         current_mode = {"value": initial_mode}
         initial_speed = clamp_global_speed(cfg.plan_global_speed.value)
@@ -634,7 +653,6 @@ class ClipEditPage(ScrollArea):
         def _set_combo_value(combo: QComboBox, value) -> None:
             idx = combo.findData(value)
             if idx < 0:
-                # 浮点倍速：按近似匹配
                 for i in range(combo.count()):
                     data = combo.itemData(i)
                     try:
@@ -653,11 +671,22 @@ class ClipEditPage(ScrollArea):
             data = combo.currentData()
             return clamp_global_speed(data if data is not None else DEFAULT_GLOBAL_SPEED)
 
+        def _refill_count_combo(mode: str) -> None:
+            count_combo.blockSignals(True)
+            count_combo.clear()
+            hi = MAX_MIXED_CLIP_COUNT if mode == PLAN_MODE_MIXED else MAX_CLIP_COUNT
+            for n in range(MIN_CLIP_COUNT, hi + 1):
+                count_combo.addItem(f"{n} 条", n)
+            count_combo.blockSignals(False)
+
         def _refill_max_combo(mode: str) -> None:
             max_combo.blockSignals(True)
             max_combo.clear()
             if mode == PLAN_MODE_SHORT:
                 for m in range(2, 7):
+                    max_combo.addItem(f"{m} 分钟", m)
+            elif mode == PLAN_MODE_MIXED:
+                for m in range(6, 16):
                     max_combo.addItem(f"{m} 分钟", m)
             else:
                 for m in range(5, 16):
@@ -665,7 +694,11 @@ class ClipEditPage(ScrollArea):
             max_combo.blockSignals(False)
 
         def _active_mode() -> str:
-            return PLAN_MODE_SHORT if short_radio.isChecked() else PLAN_MODE_LONG
+            if short_radio.isChecked():
+                return PLAN_MODE_SHORT
+            if mixed_radio.isChecked():
+                return PLAN_MODE_MIXED
+            return PLAN_MODE_LONG
 
         def _persist_current():
             mode = current_mode["value"]
@@ -677,21 +710,32 @@ class ClipEditPage(ScrollArea):
             if mode == PLAN_MODE_SHORT:
                 tip.setText(
                     "短片：最短固定 2 分钟；最长可选 2～6 分钟（默认 5）。\n"
-                    "成片倍速对短片/长片共用；大于 1 会加速成片。"
+                    "不分 A/B 组。成片倍速三种模式共用；大于 1 会加速成片。"
+                    "条数与时长为策划目标，实际产出可能略有浮动。"
+                )
+            elif mode == PLAN_MODE_MIXED:
+                tip.setText(
+                    "混合：最短固定 2 分钟；最长可选 6～15 分钟（默认 12）。\n"
+                    "按 A/B 组策划，条数最高 20。成片倍速三种模式共用；"
                     "条数与时长为策划目标，实际产出可能略有浮动。"
                 )
             else:
                 tip.setText(
                     "长片：最短固定 2.5 分钟；最长可选 5～15 分钟（默认 12）。\n"
-                    "成片倍速对短片/长片共用；大于 1 会加速成片。"
+                    "按 A/B 组策划。成片倍速三种模式共用；大于 1 会加速成片。"
                     "条数与时长为策划目标，实际产出可能略有浮动。"
                 )
+            _refill_count_combo(mode)
             _refill_max_combo(mode)
             _set_combo_value(count_combo, values[mode]["count"])
             _set_combo_value(max_combo, values[mode]["max_min"])
 
         def _on_mode_toggled(_checked=False):
-            if not short_radio.isChecked() and not long_radio.isChecked():
+            if not (
+                short_radio.isChecked()
+                or long_radio.isChecked()
+                or mixed_radio.isChecked()
+            ):
                 return
             new_mode = _active_mode()
             if new_mode == current_mode["value"]:
@@ -701,6 +745,7 @@ class ClipEditPage(ScrollArea):
 
         short_radio.toggled.connect(_on_mode_toggled)
         long_radio.toggled.connect(_on_mode_toggled)
+        mixed_radio.toggled.connect(_on_mode_toggled)
         _apply_mode(initial_mode)
         _set_combo_value(speed_combo, initial_speed)
 
@@ -721,6 +766,11 @@ class ClipEditPage(ScrollArea):
                 values[mode]["count"] = DEFAULT_CLIP_COUNT
                 values[mode]["max_min"] = short_max_duration_minutes_from_seconds(
                     DEFAULT_SHORT_MAX_DURATION_SECONDS
+                )
+            elif mode == PLAN_MODE_MIXED:
+                values[mode]["count"] = DEFAULT_MIXED_CLIP_COUNT
+                values[mode]["max_min"] = mixed_max_duration_minutes_from_seconds(
+                    DEFAULT_MIXED_MAX_DURATION_SECONDS
                 )
             else:
                 values[mode]["count"] = DEFAULT_CLIP_COUNT
@@ -749,12 +799,20 @@ class ClipEditPage(ScrollArea):
         long_max_sec = max_duration_seconds_from_minutes(
             values[PLAN_MODE_LONG]["max_min"]
         )
+        mixed_count = clamp_clip_count(
+            values[PLAN_MODE_MIXED]["count"], max_count=MAX_MIXED_CLIP_COUNT
+        )
+        mixed_max_sec = mixed_max_duration_seconds_from_minutes(
+            values[PLAN_MODE_MIXED]["max_min"]
+        )
 
         qconfig.set(cfg.plan_mode, mode)
         qconfig.set(cfg.plan_short_clip_count, short_count)
         qconfig.set(cfg.plan_short_max_duration_sec, short_max_sec)
         qconfig.set(cfg.plan_clip_count, long_count)
         qconfig.set(cfg.plan_max_duration_sec, long_max_sec)
+        qconfig.set(cfg.plan_mixed_clip_count, mixed_count)
+        qconfig.set(cfg.plan_mixed_max_duration_sec, mixed_max_sec)
         qconfig.set(cfg.plan_global_speed, global_speed)
         self.vm.save_plan_settings(
             mode=mode,
@@ -762,15 +820,22 @@ class ClipEditPage(ScrollArea):
             max_duration_sec=long_max_sec,
             short_clip_count=short_count,
             short_max_duration_sec=short_max_sec,
+            mixed_clip_count=mixed_count,
+            mixed_max_duration_sec=mixed_max_sec,
             global_speed=global_speed,
         )
-        active_count = short_count if mode == PLAN_MODE_SHORT else long_count
-        active_max_min = (
-            values[PLAN_MODE_SHORT]["max_min"]
-            if mode == PLAN_MODE_SHORT
-            else values[PLAN_MODE_LONG]["max_min"]
-        )
-        mode_label = "短片" if mode == PLAN_MODE_SHORT else "长片"
+        if mode == PLAN_MODE_SHORT:
+            active_count = short_count
+            active_max_min = values[PLAN_MODE_SHORT]["max_min"]
+            mode_label = "短片"
+        elif mode == PLAN_MODE_MIXED:
+            active_count = mixed_count
+            active_max_min = values[PLAN_MODE_MIXED]["max_min"]
+            mode_label = "混合"
+        else:
+            active_count = long_count
+            active_max_min = values[PLAN_MODE_LONG]["max_min"]
+            mode_label = "长片"
         speed_label = (
             "原速" if abs(global_speed - 1.0) < 1e-6 else f"{global_speed:.2f}x"
         )

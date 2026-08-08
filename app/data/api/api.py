@@ -131,19 +131,23 @@ class RemoteApi:
         success: bool = True,
         duration_ms: int = 0,
         meta: str = '',
+        plan_mode: str | None = None,
     ):
         if not self._token:
             return
+        payload = {
+            'event': event,
+            'success': success,
+            'duration_ms': duration_ms,
+            'meta': meta,
+            'client_version': VERSION,
+        }
+        if plan_mode:
+            payload['plan_mode'] = plan_mode
         self._request(
             'POST',
             '/api/client/usage',
-            json={
-                'event': event,
-                'success': success,
-                'duration_ms': duration_ms,
-                'meta': meta,
-                'client_version': VERSION,
-            },
+            json=payload,
         )
 
     def fetch_daily_quota(self) -> dict:

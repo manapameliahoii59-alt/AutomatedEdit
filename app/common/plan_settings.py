@@ -1,4 +1,4 @@
-"""策划条数 / 时长范围：短片与长片两套参数。"""
+"""策划条数 / 时长范围：短片、长片、混合三套参数。"""
 
 from __future__ import annotations
 
@@ -8,10 +8,12 @@ from typing import Any, Literal, TypedDict
 DEFAULT_CLIP_COUNT = 15
 MIN_CLIP_COUNT = 5
 MAX_CLIP_COUNT = 15
+MAX_MIXED_CLIP_COUNT = 20
 
 PLAN_MODE_SHORT = "short"
 PLAN_MODE_LONG = "long"
-PlanMode = Literal["short", "long"]
+PLAN_MODE_MIXED = "mixed"
+PlanMode = Literal["short", "long", "mixed"]
 
 # 长片：最短固定 2.5 分钟；最长 5~15 分钟
 MIN_DURATION_SECONDS = 150  # 2.5 分钟，固定最短
@@ -24,6 +26,13 @@ SHORT_MIN_DURATION_SECONDS = 120
 DEFAULT_SHORT_MAX_DURATION_SECONDS = 300
 MIN_SHORT_MAX_DURATION_SECONDS = 120
 MAX_SHORT_MAX_DURATION_SECONDS = 360
+
+# 混合：最短固定 2 分钟；最长 6~15 分钟；条数最高 20；分 A/B
+MIXED_MIN_DURATION_SECONDS = 120
+DEFAULT_MIXED_MAX_DURATION_SECONDS = 720
+MIN_MIXED_MAX_DURATION_SECONDS = 360  # 「最长时长」最低可选 6 分钟
+MAX_MIXED_MAX_DURATION_SECONDS = 900
+DEFAULT_MIXED_CLIP_COUNT = 15
 
 # 成片全局倍速（写入策划方案 global_speed，渲染时加速）
 DEFAULT_GLOBAL_SPEED = 1.15
@@ -42,7 +51,7 @@ GLOBAL_SPEED_CHOICES: tuple[float, ...] = (
     1.5,
 )
 
-# 默认 A:B = 6:9（仅长片）
+# 默认 A:B = 6:9（长片 / 混合）
 _DEFAULT_A = 6
 _DEFAULT_TOTAL = 15
 
@@ -56,17 +65,26 @@ class ActivePlanParams(TypedDict):
     global_speed: float
 
 
-def clamp_clip_count(value: int | float | str | None) -> int:
+def clamp_clip_count(
+    value: int | float | str | None,
+    *,
+    max_count: int | None = None,
+) -> int:
     try:
         n = int(value)  # type: ignore[arg-type]
     except (TypeError, ValueError):
         n = DEFAULT_CLIP_COUNT
-    return max(MIN_CLIP_COUNT, min(MAX_CLIP_COUNT, n))
+    hi = MAX_CLIP_COUNT if max_count is None else int(max_count)
+    hi = max(MIN_CLIP_COUNT, hi)
+    return max(MIN_CLIP_COUNT, min(hi, n))
 
 
 def clamp_plan_mode(value: Any) -> PlanMode:
-    if str(value or "").strip().lower() == PLAN_MODE_SHORT:
+    mode = str(value or "").strip().lower()
+    if mode == PLAN_MODE_SHORT:
         return PLAN_MODE_SHORT
+    if mode == PLAN_MODE_MIXED:
+        return PLAN_MODE_MIXED
     return PLAN_MODE_LONG
 
 
@@ -99,9 +117,18 @@ def clamp_short_max_duration_seconds(value: int | float | str | None) -> int:
     return max(MIN_SHORT_MAX_DURATION_SECONDS, min(MAX_SHORT_MAX_DURATION_SECONDS, n))
 
 
+def clamp_mixed_max_duration_seconds(value: int | float | str | None) -> int:
+    """混合最长时长 clamp（360~900）。"""
+    try:
+        n = int(round(float(value)))  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        n = DEFAULT_MIXED_MAX_DURATION_SECONDS
+    return max(MIN_MIXED_MAX_DURATION_SECONDS, min(MAX_MIXED_MAX_DURATION_SECONDS, n))
+
+
 def split_ab_counts(total: int) -> tuple[int, int]:
     """按默认 6:9 比例分配 A/B；保证两边至少各 1（总条数≥2 时）。"""
-    total = clamp_clip_count(total)
+    total = clamp_clip_count(total, max_count=MAX_MIXED_CLIP_COUNT)
     if total <= 1:
         return total, 0
     a = int(round(total * _DEFAULT_A / _DEFAULT_TOTAL))
@@ -141,6 +168,22 @@ def short_max_duration_seconds_from_minutes(minutes: int | float) -> int:
     return clamp_short_max_duration_seconds(m * 60)
 
 
+def mixed_max_duration_minutes_from_seconds(seconds: int) -> int:
+    """混合 UI 用整分钟；最长时长 6~15 分钟。"""
+    sec = clamp_mixed_max_duration_seconds(seconds)
+    mins = int(round(sec / 60.0))
+    return max(6, min(15, mins))
+
+
+def mixed_max_duration_seconds_from_minutes(minutes: int | float) -> int:
+    try:
+        m = int(minutes)
+    except (TypeError, ValueError):
+        m = 12
+    m = max(6, min(15, m))
+    return clamp_mixed_max_duration_seconds(m * 60)
+
+
 def resolve_active_plan_params() -> ActivePlanParams:
     """按当前 cfg.plan_mode 解析策划请求参数。"""
     from app.common.config import cfg
@@ -156,6 +199,19 @@ def resolve_active_plan_params() -> ActivePlanParams:
                 cfg.plan_short_max_duration_sec.value
             ),
             "split_ab": False,
+            "global_speed": speed,
+        }
+    if mode == PLAN_MODE_MIXED:
+        return {
+            "mode": PLAN_MODE_MIXED,
+            "clip_count": clamp_clip_count(
+                cfg.plan_mixed_clip_count.value, max_count=MAX_MIXED_CLIP_COUNT
+            ),
+            "min_duration_sec": MIXED_MIN_DURATION_SECONDS,
+            "max_duration_sec": clamp_mixed_max_duration_seconds(
+                cfg.plan_mixed_max_duration_sec.value
+            ),
+            "split_ab": True,
             "global_speed": speed,
         }
     return {
@@ -194,6 +250,18 @@ def apply_plan_settings_dict(data: dict | None) -> None:
             cfg.plan_short_max_duration_sec,
             clamp_short_max_duration_seconds(data["short_max_duration_sec"]),
         )
+    if data.get("mixed_clip_count") is not None:
+        qconfig.set(
+            cfg.plan_mixed_clip_count,
+            clamp_clip_count(
+                data["mixed_clip_count"], max_count=MAX_MIXED_CLIP_COUNT
+            ),
+        )
+    if data.get("mixed_max_duration_sec") is not None:
+        qconfig.set(
+            cfg.plan_mixed_max_duration_sec,
+            clamp_mixed_max_duration_seconds(data["mixed_max_duration_sec"]),
+        )
     if data.get("global_speed") is not None:
         qconfig.set(cfg.plan_global_speed, clamp_global_speed(data["global_speed"]))
 
@@ -205,6 +273,8 @@ def plan_settings_patch(
     max_duration_sec: int | None = None,
     short_clip_count: int | None = None,
     short_max_duration_sec: int | None = None,
+    mixed_clip_count: int | None = None,
+    mixed_max_duration_sec: int | None = None,
     global_speed: float | None = None,
 ) -> dict:
     plan: dict[str, Any] = {}
@@ -219,6 +289,14 @@ def plan_settings_patch(
     if short_max_duration_sec is not None:
         plan["short_max_duration_sec"] = clamp_short_max_duration_seconds(
             short_max_duration_sec
+        )
+    if mixed_clip_count is not None:
+        plan["mixed_clip_count"] = clamp_clip_count(
+            mixed_clip_count, max_count=MAX_MIXED_CLIP_COUNT
+        )
+    if mixed_max_duration_sec is not None:
+        plan["mixed_max_duration_sec"] = clamp_mixed_max_duration_seconds(
+            mixed_max_duration_sec
         )
     if global_speed is not None:
         plan["global_speed"] = clamp_global_speed(global_speed)

@@ -1125,12 +1125,21 @@ class RenderService:
             )
             return False
 
-        from app.common.overlay_text_settings import build_overlay_drawtext_filters
+        from app.common.overlay_text_settings import build_overlay_plan
 
         is_horizontal = ctx.target_w >= ctx.target_h
-        overlay_filters = build_overlay_drawtext_filters(
-            project_name, horizontal=is_horizontal
+        cache_dir = RenderService._cache_dir(ctx.project_path)
+        overlay_plan = build_overlay_plan(
+            project_name,
+            horizontal=is_horizontal,
+            cache_dir=cache_dir,
         )
+        overlay_filters = overlay_plan["drawtext_filters"]
+        image_overlays = [
+            spec
+            for spec in overlay_plan["image_overlays"]
+            if spec.get("path") and os.path.isfile(spec["path"])
+        ]
 
         v_outro = (
             f"scale={ctx.target_w}:{ctx.target_h}:force_original_aspect_ratio=decrease,"
@@ -1152,19 +1161,42 @@ class RenderService:
         filter_parts.append(f"[{outro_idx}:a]{a_outro}[ao];")
 
         main_va = "".join(f"[v{i}][a{i}]" for i in range(n_main))
-        if overlay_filters:
-            overlay_chain = ",".join(overlay_filters)
+        has_overlay = bool(overlay_filters or image_overlays)
+        if has_overlay:
             if n_main == 1:
-                filter_parts.append(f"[v0]{overlay_chain}[vm];")
-                filter_parts.append("[vm][a0][vo][ao]concat=n=2:v=1:a=1[v][a]")
+                cur = "[v0]"
+                audio_tag = "[a0]"
             else:
                 filter_parts.append(
                     f"{main_va}concat=n={n_main}:v=1:a=1[vm0][am];"
                 )
-                filter_parts.append(f"[vm0]{overlay_chain}[vm];")
+                cur = "[vm0]"
+                audio_tag = "[am]"
+
+            remaining = (1 if overlay_filters else 0) + len(image_overlays)
+            step = 0
+            if overlay_filters:
+                remaining -= 1
+                out = "[vm]" if remaining == 0 else f"[od{step}]"
+                chain = ",".join(overlay_filters)
+                filter_parts.append(f"{cur}{chain}{out};")
+                cur = out
+                step += 1
+
+            img_base_idx = n_main + 1  # after outro
+            for i, spec in enumerate(image_overlays):
+                remaining -= 1
+                in_tag = f"[{img_base_idx + i}:v]"
+                out = "[vm]" if remaining == 0 else f"[od{step}]"
                 filter_parts.append(
-                    "[vm][am][vo][ao]concat=n=2:v=1:a=1[v][a]"
+                    f"{cur}{in_tag}overlay=x={spec['x_expr']}:y={spec['y_expr']}:shortest=1{out};"
                 )
+                cur = out
+                step += 1
+
+            filter_parts.append(
+                f"[vm]{audio_tag}[vo][ao]concat=n=2:v=1:a=1[v][a]"
+            )
         else:
             filter_parts.append(
                 f"{main_va}[vo][ao]concat=n={n_main + 1}:v=1:a=1[v][a]"
@@ -1175,8 +1207,9 @@ class RenderService:
         for p in input_paths:
             base_cmd.extend(["-i", p])
         base_cmd.extend(["-i", outro_path])
+        for spec in image_overlays:
+            base_cmd.extend(["-loop", "1", "-i", spec["path"]])
         map_tail = ["-map", "[v]", "-map", "[a]"]
-
         success, err = RenderService._run_ffmpeg_with_filter_complex(
             base_cmd,
             filter_graph,

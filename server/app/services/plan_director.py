@@ -18,9 +18,11 @@ MIN_MAX_DURATION_SECONDS = 300
 MAX_MAX_DURATION_SECONDS = 900
 ABS_MIN_DURATION_SECONDS = 120  # 短片最短下限
 SEARCH_EPISODES = 15
+MAX_TARGET_CLIPS_COUNT = 20
 DEFAULT_TARGET_CLIPS_COUNT = 15
 MIN_TARGET_CLIPS_COUNT = 5
-MAX_TARGET_CLIPS_COUNT = 15
+# 兼容：短片/长片客户端仍限 15；混合可达 20
+MAX_SHORT_LONG_CLIPS_COUNT = 15
 DEFAULT_GLOBAL_SPEED = 1.15
 MIN_GLOBAL_SPEED = 1.0
 MAX_GLOBAL_SPEED = 1.5
@@ -40,8 +42,9 @@ MIN_START_GAP_SECONDS = 1.1
 MIN_BEFORE_SPEECH_SECONDS = 0.3
 # 短片：上一句结束后再空出的字幕/余韵缓冲（不得贴 prev_end 起切）
 POST_UTTERANCE_PAD_SECONDS = 0.3
-# 短片：同一开场起点最多共用几条（仍允许少量共用）
-MAX_SAME_SHORT_START = 2
+# 短片：同一开场起点最多占用目标条数的比例（2/5）
+SAME_SHORT_START_RATIO_NUM = 2
+SAME_SHORT_START_RATIO_DEN = 5
 
 # 兼容旧引用
 TARGET_CLIPS_COUNT = DEFAULT_TARGET_CLIPS_COUNT
@@ -98,14 +101,58 @@ def split_ab_counts(total: int) -> tuple[int, int]:
     return a, total - a
 
 
+def max_same_short_start(target_count: int) -> int:
+    """同一开场最多占用目标条数的 2/5（至少 1）。"""
+    try:
+        n = int(target_count)
+    except (TypeError, ValueError):
+        n = DEFAULT_TARGET_CLIPS_COUNT
+    n = max(1, n)
+    return max(1, (n * SAME_SHORT_START_RATIO_NUM) // SAME_SHORT_START_RATIO_DEN)
+
+
 def _parse_clips_response(raw_res: str) -> list:
+    return _parse_plan_json(raw_res).get("clips", [])
+
+
+def _parse_plan_json(raw_res: str) -> dict:
     clean_res = raw_res.strip()
     if clean_res.startswith("```json"):
         clean_res = clean_res.split("```json")[1].split("```")[0].strip()
     elif clean_res.startswith("```"):
         clean_res = clean_res.split("```")[1].split("```")[0].strip()
     clean_res = re.sub(r"\n", " ", clean_res)
-    return json.loads(clean_res).get("clips", [])
+    data = json.loads(clean_res)
+    return data if isinstance(data, dict) else {}
+
+
+def _parse_short_starts_ends(raw_res: str) -> tuple[list[dict], list[dict]]:
+    """解析短片 starts/ends；若仅有旧版 clips 则拆成两端候选。"""
+    data = _parse_plan_json(raw_res)
+    starts = data.get("starts") if isinstance(data.get("starts"), list) else []
+    ends = data.get("ends") if isinstance(data.get("ends"), list) else []
+    clips = data.get("clips") if isinstance(data.get("clips"), list) else []
+    if (not starts or not ends) and clips:
+        if not starts:
+            starts = [
+                {
+                    "se": c.get("se") or c.get("start_episode"),
+                    "st": c.get("st", c.get("start_time", 0)),
+                }
+                for c in clips
+                if isinstance(c, dict)
+            ]
+        if not ends:
+            ends = [
+                {
+                    "le": c.get("le") or c.get("cut_text_source_file"),
+                    "ct": c.get("ct") or c.get("cut_text", ""),
+                    "hook": c.get("hook") or c.get("hk") or "点击查看大结局",
+                }
+                for c in clips
+                if isinstance(c, dict)
+            ]
+    return starts, ends
 
 
 def _compute_clip_duration(s_idx, l_idx, start_time, cut_point, ordered_files, episode_end_times):
@@ -385,6 +432,250 @@ def _pick_short_start_for_duration(
     return None
 
 
+def _asr_clean_start_hints(
+    steps: list[dict],
+    ordered_files: list[str],
+    *,
+    limit: int = 24,
+) -> list[dict]:
+    """从 ASR 句缝枚举干净开场候选，补足模型 starts 不足。"""
+    hints: list[dict] = []
+    seen: set[str] = set()
+    for ep in ordered_files[:SEARCH_EPISODES]:
+        ep_steps = _episode_utterances(steps, ep)
+        for i, (utter_start, _utter_end) in enumerate(ep_steps):
+            prev_end = ep_steps[i - 1][1] if i > 0 else 0.0
+            probe = (prev_end + utter_start) / 2.0 if i > 0 else max(0.0, utter_start - 0.5)
+            windows = _short_start_windows(
+                steps,
+                ep,
+                probe,
+                lead_in_seconds=START_LEAD_IN_SECONDS,
+                min_gap_seconds=MIN_START_GAP_SECONDS,
+            )
+            if not windows:
+                continue
+            st = round(windows[0][1], 3)
+            key = f"{ep}_{round(st, 1)}"
+            if key in seen:
+                continue
+            seen.add(key)
+            hints.append({"se": ep, "st": st})
+            if len(hints) >= limit:
+                return hints
+    return hints
+
+
+def _normalize_short_ends(
+    ends_raw: list[dict],
+    *,
+    steps: list[dict],
+    step_texts: list[str],
+    ordered_files: list[str],
+) -> list[dict]:
+    """校验切点台词，返回可用 end 候选。"""
+    out: list[dict] = []
+    seen_fp: set[str] = set()
+    for item in ends_raw:
+        if not isinstance(item, dict):
+            continue
+        l_ep = item.get("le") or item.get("cut_text_source_file")
+        cut_text = item.get("ct") or item.get("cut_text", "")
+        hook = item.get("hook") or item.get("hk") or "点击查看大结局"
+        if l_ep not in ordered_files or not cut_text:
+            continue
+        c_idx = _find_cut_index(steps, cut_text, step_texts)
+        if c_idx == -1:
+            continue
+        if steps[c_idx].get("source_file") != l_ep:
+            continue
+        phys_end = float(steps[c_idx].get("end") or 0)
+        fp = f"{l_ep}_{round(phys_end)}"
+        if fp in seen_fp:
+            continue
+        seen_fp.add(fp)
+        out.append(
+            {
+                "le": l_ep,
+                "l_idx": ordered_files.index(l_ep),
+                "phys_end": phys_end,
+                "cut_point": phys_end + 0.3,
+                "hook": hook,
+                "ct": cut_text,
+            }
+        )
+    return out
+
+
+def _normalize_short_starts(
+    starts_raw: list[dict],
+    *,
+    ordered_files: list[str],
+) -> list[dict]:
+    out: list[dict] = []
+    seen: set[str] = set()
+    for item in starts_raw:
+        if not isinstance(item, dict):
+            continue
+        s_ep = item.get("se") or item.get("start_episode")
+        if s_ep not in ordered_files:
+            continue
+        try:
+            st = float(item.get("st", item.get("start_time", 0)) or 0)
+        except (TypeError, ValueError):
+            st = 0.0
+        if st < 0:
+            st = 0.0
+        key = f"{s_ep}_{round(st, 1)}"
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append({"se": s_ep, "s_idx": ordered_files.index(s_ep), "st": st})
+    return out
+
+
+def _compose_short_plans_from_starts_ends(
+    *,
+    starts_raw: list[dict],
+    ends_raw: list[dict],
+    steps: list[dict],
+    step_texts: list[str],
+    ordered_files: list[str],
+    episode_end_times: dict,
+    min_dur: float,
+    max_dur: float,
+    target_count: int,
+    used_fingerprints: set[str],
+    used_short_starts: dict[str, int],
+    project_name: str,
+    date_str: str,
+    speed: float,
+    supplement_asr_starts: bool = True,
+    same_start_limit: int | None = None,
+    group_type: str | None = None,
+) -> list[dict]:
+    """用开头×切点按时长组合方案（短片 U / 混合 A·B）。"""
+    starts = _normalize_short_starts(starts_raw, ordered_files=ordered_files)
+    if group_type == "A":
+        starts = [s for s in starts if s["se"] == "1.mp4"]
+    if supplement_asr_starts and len(starts) < max(6, target_count):
+        asr_eps = (
+            ["1.mp4"]
+            if group_type == "A" and "1.mp4" in ordered_files
+            else ordered_files
+        )
+        asr_hints = _asr_clean_start_hints(
+            steps, asr_eps, limit=max(16, target_count * 2)
+        )
+        starts = _normalize_short_starts(
+            [{"se": s["se"], "st": s["st"]} for s in starts]
+            + asr_hints,
+            ordered_files=ordered_files,
+        )
+        if group_type == "A":
+            starts = [s for s in starts if s["se"] == "1.mp4"]
+    ends = _normalize_short_ends(
+        ends_raw,
+        steps=steps,
+        step_texts=step_texts,
+        ordered_files=ordered_files,
+    )
+    if not starts or not ends:
+        return []
+
+    mid_dur = (min_dur + max_dur) / 2.0
+    candidates: list[tuple[float, float, dict]] = []
+    # 限制组合规模，避免 starts×ends 过大
+    max_starts = min(len(starts), max(12, target_count * 2))
+    max_ends = min(len(ends), max(16, target_count * 2))
+    for start in starts[:max_starts]:
+        for end in ends[:max_ends]:
+            if start["s_idx"] > end["l_idx"]:
+                continue
+            if group_type == "B" and start["s_idx"] >= end["l_idx"]:
+                continue
+            if group_type == "A" and start["se"] != "1.mp4":
+                continue
+            snapped = _pick_short_start_for_duration(
+                steps,
+                start["se"],
+                start["st"],
+                s_idx=start["s_idx"],
+                l_idx=end["l_idx"],
+                cut_point=end["cut_point"],
+                ordered_files=ordered_files,
+                episode_end_times=episode_end_times,
+                min_dur=min_dur,
+                max_dur=max_dur,
+            )
+            if snapped is None:
+                continue
+            total_dur = _compute_clip_duration(
+                start["s_idx"],
+                end["l_idx"],
+                snapped,
+                end["cut_point"],
+                ordered_files,
+                episode_end_times,
+            )
+            if total_dur < min_dur or total_dur > max_dur:
+                continue
+            # 分越低越好：时长贴近中位 + 跨集略加分（多样性）
+            score = abs(total_dur - mid_dur)
+            if start["s_idx"] != end["l_idx"]:
+                score -= 8.0
+            candidates.append(
+                (
+                    score,
+                    total_dur,
+                    {
+                        "se": start["se"],
+                        "s_idx": start["s_idx"],
+                        "st": snapped,
+                        "le": end["le"],
+                        "l_idx": end["l_idx"],
+                        "phys_end": end["phys_end"],
+                        "cut_point": end["cut_point"],
+                        "hook": end["hook"],
+                    },
+                )
+            )
+
+    candidates.sort(key=lambda x: x[0])
+    plans: list[dict] = []
+    start_cap = (
+        max(1, int(same_start_limit))
+        if same_start_limit is not None
+        else max_same_short_start(target_count)
+    )
+    for _score, _dur, item in candidates:
+        fp = f"{item['se']}_{item['le']}_{round(item['phys_end'])}"
+        start_key = f"{item['se']}_{round(float(item['st']), 1)}"
+        if fp in used_fingerprints:
+            continue
+        if used_short_starts.get(start_key, 0) >= start_cap:
+            continue
+        used_fingerprints.add(fp)
+        used_short_starts[start_key] = used_short_starts.get(start_key, 0) + 1
+        plans.append(
+            {
+                "title": f"{project_name}-{date_str}-{len(plans) + 1:02d}",
+                "project_name": project_name,
+                "global_speed": speed,
+                "files_config": {
+                    "first_episode_cut_start": round(item["st"], 1),
+                    "full_episodes": ordered_files[item["s_idx"] : item["l_idx"]],
+                    "last_episode": item["le"],
+                    "last_episode_cut_point": round(item["cut_point"], 2),
+                },
+                "hook": item["hook"],
+            }
+        )
+        if len(plans) >= target_count:
+            break
+    return plans
+
+
 def _compress_script(steps: list[dict], target_episodes: list[str]) -> str:
     """压缩剧本：带每句起止秒，便于模型选句首 st。"""
     parts: list[str] = []
@@ -408,19 +699,26 @@ def _build_short_plan_prompt(
     min_duration_seconds: int,
     max_duration_seconds: int,
 ) -> str:
-    """短片模式专用提示词（与长片完全独立，互不影响）。"""
+    """短片模式专用提示词（与长片完全独立，互不影响）。
+
+    模型只给开头/切点候选；服务端按时长组合，以保证条数与开场质量。
+    """
+    start_n = max(8, count)
+    end_n = max(12, count + 5)
     return (
-        f"你是一个短剧广告投放导演。任务：策划 {count} 个短片引流剪辑计划。\n"
-        f"硬性要求：每条剪辑总时长必须在 {min_duration_seconds}~{max_duration_seconds} 秒之间。\n"
-        "可在单集内剪一段（se与le相同），也可跨多集（le须晚于se）；"
-        "起始集不限。若单集时长不足最短秒数，必须跨多集。"
-        "剧本条目格式为 [集名](起始秒-结束秒)台词；"
-        "st 必须落在两句之间的干净空镜："
+        f"你是一个短剧广告投放导演。任务：为约 {count} 条短片提供开场与切点候选"
+        f"（最终条数由服务端按时长 {min_duration_seconds}~{max_duration_seconds} 秒自动组合）。\n"
+        "不要直接输出完整 clips；分别给出 starts 与 ends。\n"
+        f"请给出约 {start_n} 个开场候选、约 {end_n} 个切点候选；"
+        "开场与切点尽量分散到不同集/不同剧情节点。\n"
+        "剧本条目格式为 [集名](起始秒-结束秒)台词。\n"
+        "starts 规则：st 必须落在两句之间的干净空镜，"
         "须晚于上一句结束约 0.3 秒以上（避开上句字幕残留），"
-        "且早于下一句起始秒，禁止从对白中间起切。"
-        "好的开场可少量共用，但不要大量片头挤在同一秒；切点 ct 与 hook 尽量有差异。\n"
-        "ct 必须逐字摘自 le 对应集剧本原文（8~15字），禁止改写/概括。\n"
-        '输出纯 JSON: {"clips":[{"se":"1.mp4","st":0,"le":"6.mp4","ct":"台词","hook":"引流标题"}]}\n'
+        "且早于下一句起始秒，禁止从对白中间起切；se 为起始集。\n"
+        "ends 规则：ct 必须逐字摘自 le 对应集剧本原文（8~15字），禁止改写/概括；"
+        "hook 为悬念引流标题；切点彼此尽量不同。\n"
+        '输出纯 JSON: {"starts":[{"se":"1.mp4","st":12.5}],'
+        '"ends":[{"le":"6.mp4","ct":"台词原文","hook":"引流标题"}]}\n'
         "字段: se=起始集, st=起始秒(句前缓冲), le=结束集, ct=le集中台词(8~15字), hook=悬念引流标题"
     )
 
@@ -458,19 +756,71 @@ def _build_long_plan_prompt(
     )
 
 
+def _build_mixed_plan_prompt(
+    *,
+    count: int,
+    min_duration_seconds: int,
+    max_duration_seconds: int,
+    group_type: str,
+) -> str:
+    """混合模式专用提示词（与短片/长片完全独立）。
+
+    范围规则对齐长片 A/B；输出格式对齐短片 starts/ends，由服务端按时长组合。
+    """
+    start_n = max(8, count)
+    end_n = max(12, count + 5)
+    if group_type == "A":
+        scope_rule = (
+            "A组从第1集切入：开场 se 必须为 1.mp4；"
+            "可在第1集内结束（le 亦为 1.mp4），也可跨多集（le 须晚于 se）。"
+        )
+    else:
+        scope_rule = (
+            "B组必须跨多集：开场 se 与切点 le 须不同集，且 le 对应集晚于 se，"
+            "通常跨越 2 集及以上。"
+        )
+    return (
+        f"你是一个短剧广告投放导演。任务：为混合模式约 {count} 条剪辑"
+        f"（本组）提供开场与切点候选；最终条数由服务端按时长 "
+        f"{min_duration_seconds}~{max_duration_seconds} 秒自动组合。\n"
+        f"{scope_rule}\n"
+        "不要直接输出完整 clips；分别给出 starts 与 ends。\n"
+        f"请给出约 {start_n} 个开场候选、约 {end_n} 个切点候选；"
+        "开场与切点尽量分散、彼此有明显差异。\n"
+        "剧本条目格式为 [集名](起始秒-结束秒)台词。\n"
+        "starts 规则：st 必须落在两句之间的干净空镜，"
+        "须晚于上一句结束约 0.3 秒以上（避开上句字幕残留），"
+        "且早于下一句起始秒，禁止从对白中间起切；se 为起始集。\n"
+        "ends 规则：ct 必须逐字摘自 le 对应集剧本原文（8~15字），禁止改写/概括；"
+        "hook 为悬念引流标题；切点彼此尽量不同。\n"
+        '输出纯 JSON: {"starts":[{"se":"1.mp4","st":12.5}],'
+        '"ends":[{"le":"6.mp4","ct":"台词原文","hook":"引流标题"}]}\n'
+        "字段: se=起始集, st=起始秒(句前缓冲), le=结束集, ct=le集中台词(8~15字), hook=悬念引流标题"
+    )
+
+
 def _system_prompt_for_group(
     *,
     group_type: str,
     count: int,
     min_duration_seconds: int,
     max_duration_seconds: int,
+    plan_mode: str = "long",
 ) -> str:
-    """按组类型选择短片或长片提示词。U=短片；A/B=长片。"""
-    if group_type == "U":
+    """按策划模式与组类型选择提示词。"""
+    mode = str(plan_mode or "").strip().lower()
+    if mode == "short" or group_type == "U":
         return _build_short_plan_prompt(
             count=count,
             min_duration_seconds=min_duration_seconds,
             max_duration_seconds=max_duration_seconds,
+        )
+    if mode == "mixed":
+        return _build_mixed_plan_prompt(
+            count=count,
+            min_duration_seconds=min_duration_seconds,
+            max_duration_seconds=max_duration_seconds,
+            group_type=group_type,
         )
     return _build_long_plan_prompt(
         count=count,
@@ -490,6 +840,7 @@ def _call_deepseek(
     key_pool: queue.Queue,
     min_duration_seconds: int,
     max_duration_seconds: int,
+    plan_mode: str = "long",
 ) -> tuple[str | None, float, str | None]:
     api_key = key_pool.get()
     t0 = time.perf_counter()
@@ -499,6 +850,7 @@ def _call_deepseek(
             count=count,
             min_duration_seconds=min_duration_seconds,
             max_duration_seconds=max_duration_seconds,
+            plan_mode=plan_mode,
         )
         headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
         payload = {
@@ -547,11 +899,18 @@ def run_plan(
     min_duration_seconds: int | None = None,
     split_ab: bool | None = None,
     global_speed: float | None = None,
+    plan_mode: str | None = None,
 ) -> list[dict]:
     if not api_keys_raw.strip():
         raise ValueError("服务端未配置策划 API 密钥")
 
     use_ab = True if split_ab is None else bool(split_ab)
+    mode = str(plan_mode or "").strip().lower()
+    if mode not in {"short", "long", "mixed"}:
+        # 兼容旧客户端：无 plan_mode 时由 split_ab 推断
+        mode = "short" if not use_ab else "long"
+    use_pair = mode in {"short", "mixed"}
+
     speed = (
         clamp_global_speed(global_speed)
         if global_speed is not None
@@ -563,7 +922,9 @@ def run_plan(
         if target_clips_count is not None
         else DEFAULT_TARGET_CLIPS_COUNT
     )
-    default_min = MIN_DURATION_SECONDS if use_ab else ABS_MIN_DURATION_SECONDS
+    default_min = (
+        ABS_MIN_DURATION_SECONDS if mode in {"short", "mixed"} else MIN_DURATION_SECONDS
+    )
     if min_duration_seconds is not None:
         min_dur = clamp_plan_duration_seconds(
             min_duration_seconds, default=default_min
@@ -579,11 +940,11 @@ def run_plan(
     if max_dur <= min_dur:
         max_dur = min(MAX_MAX_DURATION_SECONDS, min_dur + 30)
 
-    if use_ab:
+    if mode == "short":
+        task_groups = [("U", target_total)]
+    else:
         group_a_count, group_b_count = split_ab_counts(target_total)
         task_groups = [("A", group_a_count), ("B", group_b_count)]
-    else:
-        task_groups = [("U", target_total)]
 
     target_episodes = ordered_files[:SEARCH_EPISODES]
     compressed_script = _compress_script(steps, target_episodes)
@@ -651,12 +1012,61 @@ def run_plan(
                 key_pool=key_pool,
                 min_duration_seconds=min_dur,
                 max_duration_seconds=max_dur,
+                plan_mode=mode,
             )
             if api_error or not raw_res:
                 consecutive_empty += 1
                 continue
 
             try:
+                if use_pair:
+                    starts_raw, ends_raw = _parse_short_starts_ends(raw_res)
+                    # 切点必须来自模型；开场不足时可由 ASR 句缝补
+                    if not ends_raw:
+                        consecutive_empty += 1
+                        continue
+                    need = total_count - completed_in_group
+                    paired = _compose_short_plans_from_starts_ends(
+                        starts_raw=starts_raw,
+                        ends_raw=ends_raw,
+                        steps=steps,
+                        step_texts=step_texts,
+                        ordered_files=ordered_files,
+                        episode_end_times=episode_end_times,
+                        min_dur=min_dur,
+                        max_dur=max_dur,
+                        target_count=need,
+                        used_fingerprints=used_fingerprints,
+                        used_short_starts=used_short_starts,
+                        project_name=project_name,
+                        date_str=date_str,
+                        speed=speed,
+                        supplement_asr_starts=True,
+                        same_start_limit=max_same_short_start(target_total),
+                        group_type=None if g_type == "U" else g_type,
+                    )
+                    # 修正标题序号（组合函数内从 1 起，需接上已有条数）
+                    for plan in paired:
+                        final_plans.append(plan)
+                        plan["title"] = (
+                            f"{project_name}-{date_str}-{len(final_plans):02d}"
+                        )
+                    batch_ok = len(paired)
+                    if batch_ok <= 0:
+                        consecutive_empty += 1
+                    else:
+                        consecutive_empty = 0
+                    completed_in_group += batch_ok
+                    if g_type == "U":
+                        _emit(f"已通过 {len(final_plans)}/{target_total} 条")
+                    else:
+                        _emit(
+                            f"{g_type}组 · 已通过 {len(final_plans)}/{target_total} 条"
+                        )
+                    if len(final_plans) >= target_total:
+                        break
+                    continue
+
                 clips = _parse_clips_response(raw_res)
                 if not clips:
                     consecutive_empty += 1
@@ -688,25 +1098,7 @@ def run_plan(
 
                     phys_end = steps[c_idx].get("end", 0)
                     cut_point = phys_end + 0.3
-
-                    # 短片：在句前静音窗内选 st，并按时长微调；长片不改 st。
-                    if g_type == "U":
-                        snapped = _pick_short_start_for_duration(
-                            steps,
-                            s_ep,
-                            start_time,
-                            s_idx=s_idx,
-                            l_idx=l_idx,
-                            cut_point=cut_point,
-                            ordered_files=ordered_files,
-                            episode_end_times=episode_end_times,
-                            min_dur=min_dur,
-                            max_dur=max_dur,
-                        )
-                        if snapped is None:
-                            continue
-                        start_time = snapped
-                    elif cut_point <= start_time:
+                    if cut_point <= start_time:
                         continue
 
                     total_dur = _compute_clip_duration(
@@ -715,21 +1107,10 @@ def run_plan(
                     if total_dur < min_dur or total_dur > max_dur:
                         continue
 
-                    # 短片：切点去重；同一开场 st 最多共用 MAX_SAME_SHORT_START 次
-                    if g_type == "U":
-                        fp = f"{s_ep}_{l_ep}_{round(phys_end)}"
-                        start_key = f"{s_ep}_{round(float(start_time), 1)}"
-                        if used_short_starts.get(start_key, 0) >= MAX_SAME_SHORT_START:
-                            continue
-                    else:
-                        fp = f"{s_ep}_{l_ep}_{round(phys_end)}_{round(start_time)}"
+                    fp = f"{s_ep}_{l_ep}_{round(phys_end)}_{round(start_time)}"
                     if fp in used_fingerprints:
                         continue
                     used_fingerprints.add(fp)
-                    if g_type == "U":
-                        used_short_starts[start_key] = (
-                            used_short_starts.get(start_key, 0) + 1
-                        )
 
                     final_plans.append(
                         {
@@ -754,10 +1135,7 @@ def run_plan(
                 else:
                     consecutive_empty = 0
                 completed_in_group += batch_ok
-                if g_type == "U":
-                    _emit(f"已通过 {len(final_plans)}/{target_total} 条")
-                else:
-                    _emit(f"{g_type}组 · 已通过 {len(final_plans)}/{target_total} 条")
+                _emit(f"{g_type}组 · 已通过 {len(final_plans)}/{target_total} 条")
                 if len(final_plans) >= target_total:
                     break
             except Exception:
@@ -794,7 +1172,7 @@ def run_plan(
                     "total": target_total,
                     "detail": (
                         f"仅通过 {len(unique_plans)}/{target_total} 条"
-                        "（多数候选因时长或台词未匹配被过滤）"
+                        "（开头/切点组合或台词匹配不足）"
                     ),
                     "underfilled": True,
                 }

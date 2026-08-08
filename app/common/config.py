@@ -35,7 +35,7 @@ class Config(MyQConfig):
     # 渲染编码档位（默认：NVENC p5 / x264 superfast）
     encode_nvenc_preset = ConfigItem("Tools", "encode_nvenc_preset", "p5")
     encode_x264_preset = ConfigItem("Tools", "encode_x264_preset", "superfast")
-    # 策划：短片/长片模式；长片条数与最长时长（最短固定 150s）
+    # 策划：短片/长片/混合模式；长片条数与最长时长（最短固定 150s）
     plan_mode = ConfigItem("Tools", "plan_mode", "long")
     plan_clip_count = ConfigItem("Tools", "plan_clip_count", 15)
     plan_max_duration_sec = ConfigItem("Tools", "plan_max_duration_sec", 720)
@@ -43,6 +43,11 @@ class Config(MyQConfig):
     plan_short_clip_count = ConfigItem("Tools", "plan_short_clip_count", 15)
     plan_short_max_duration_sec = ConfigItem(
         "Tools", "plan_short_max_duration_sec", 300
+    )
+    # 混合：条数 5~20；最长时长秒（最短固定 120s，最长可选 360~900）；分 A/B
+    plan_mixed_clip_count = ConfigItem("Tools", "plan_mixed_clip_count", 15)
+    plan_mixed_max_duration_sec = ConfigItem(
+        "Tools", "plan_mixed_max_duration_sec", 720
     )
     # 成片全局倍速（默认 1.15）
     plan_global_speed = ConfigItem("Tools", "plan_global_speed", 1.15)
@@ -80,7 +85,7 @@ DEFAULT_API_BASE_URL = "http://129.204.86.63:7172"
 YEAR = datetime.datetime.now().year
 AUTHOR = "dragon"
 AUTHOR_EMAIL = "857134647@qq.com"
-VERSION = '0.0.2'
+VERSION = '0.0.3'
 APP_NAME = "剪辑助手"
 FEEDBACK_URL = f"mailto:{AUTHOR_EMAIL}"
 

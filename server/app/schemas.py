@@ -36,10 +36,12 @@ class PlanJobCreateRequest(BaseModel):
     steps: list[dict[str, Any]]
     ordered_files: list[str] = Field(min_length=1)
     # 可选：客户端策划设置（缺省则服务端用默认 15 条 / 720s / 分 A/B）
-    target_clips_count: int | None = Field(default=None, ge=5, le=15)
+    target_clips_count: int | None = Field(default=None, ge=5, le=20)
     max_duration_seconds: int | None = Field(default=None, ge=120, le=900)
     min_duration_seconds: int | None = Field(default=None, ge=120, le=900)
     split_ab: bool | None = None
+    # short | long | mixed；缺省时由 split_ab 推断（兼容旧客户端）
+    plan_mode: str | None = None
     # 成片全局倍速（缺省服务端用 1.15）
     global_speed: float | None = Field(default=None, ge=1.0, le=1.5)
 
@@ -67,6 +69,8 @@ class UsageReport(BaseModel):
     success: bool = True
     duration_ms: int = 0
     meta: str = ""
+    # short | long | mixed；仅 plan_drama 有意义
+    plan_mode: str | None = None
     client_version: str = ""
 
 
@@ -77,6 +81,7 @@ class UsageEventOut(BaseModel):
     success: bool
     duration_ms: int
     meta: str
+    plan_mode: str = ""
     client_version: str
     created_at: datetime
 
@@ -163,24 +168,34 @@ class VideoDownloadSettingsPatch(BaseModel):
 
 
 class PlanSettings(BaseModel):
-    """自动化剪辑「策划设置」（短片/长片模式 + 条数 / 最长时长）。"""
+    """自动化剪辑「策划设置」（短片/长片/混合模式 + 条数 / 最长时长）。"""
 
     mode: str = Field(default="long")
     clip_count: int = Field(default=15, ge=5, le=15)
     max_duration_sec: int = Field(default=720, ge=300, le=900)
     short_clip_count: int = Field(default=15, ge=5, le=15)
     short_max_duration_sec: int = Field(default=300, ge=120, le=360)
+    mixed_clip_count: int = Field(default=15, ge=5, le=20)
+    mixed_max_duration_sec: int = Field(default=720, ge=360, le=900)
     global_speed: float = Field(default=1.15, ge=1.0, le=1.5)
 
     model_config = {"extra": "allow"}
 
     @model_validator(mode="after")
     def _clamp(self) -> "PlanSettings":
-        self.mode = "short" if str(self.mode or "").strip().lower() == "short" else "long"
+        mode = str(self.mode or "").strip().lower()
+        if mode == "short":
+            self.mode = "short"
+        elif mode == "mixed":
+            self.mode = "mixed"
+        else:
+            self.mode = "long"
         self.clip_count = max(5, min(15, int(self.clip_count)))
         self.max_duration_sec = max(300, min(900, int(self.max_duration_sec)))
         self.short_clip_count = max(5, min(15, int(self.short_clip_count)))
         self.short_max_duration_sec = max(120, min(360, int(self.short_max_duration_sec)))
+        self.mixed_clip_count = max(5, min(20, int(self.mixed_clip_count)))
+        self.mixed_max_duration_sec = max(360, min(900, int(self.mixed_max_duration_sec)))
         try:
             spd = float(self.global_speed)
         except (TypeError, ValueError):
@@ -195,6 +210,8 @@ class PlanSettingsPatch(BaseModel):
     max_duration_sec: int | None = Field(default=None, ge=300, le=900)
     short_clip_count: int | None = Field(default=None, ge=5, le=15)
     short_max_duration_sec: int | None = Field(default=None, ge=120, le=360)
+    mixed_clip_count: int | None = Field(default=None, ge=5, le=20)
+    mixed_max_duration_sec: int | None = Field(default=None, ge=360, le=900)
     global_speed: float | None = Field(default=None, ge=1.0, le=1.5)
 
     model_config = {"extra": "allow"}
@@ -293,6 +310,7 @@ class OverlayTextStyleSettings(BaseModel):
             "ice_white",
             "poster_white",
             "pink_mood",
+            "candy_pink",
             "guochao",
             "red_impact",
             "sunset",
@@ -301,9 +319,12 @@ class OverlayTextStyleSettings(BaseModel):
             "soft_yellow",
             "manga_yellow",
             "orange_fire",
+            "lemon_pop",
             "neon",
             "cold_blue",
+            "sky_pop",
             "cyan_mint",
+            "jade_green",
             "purple_dream",
             "violet_neon",
             "deep_purple",
@@ -311,6 +332,20 @@ class OverlayTextStyleSettings(BaseModel):
             "ink_red",
             "outline",
             "heavy_outline",
+            "gold_stroke",
+            # 综艺花字（Pillow PNG）
+            "hz_sticker_pink",
+            "hz_sticker_orange",
+            "hz_pop_yellow",
+            "hz_gold_3d",
+            "hz_neon_cyan",
+            "hz_violet_glow",
+            "hz_red_impact",
+            "hz_ice_blue",
+            "hz_lime_pop",
+            "hz_white_black",
+            "hz_rose_soft",
+            "hz_ink_red",
         }
         self.effect = effect if effect in allowed_effects else "none"
         glow = str(self.glow_color or "#FFFFFF").strip()
@@ -327,6 +362,7 @@ class OverlayTextStyleSettings(BaseModel):
                 "ice_white": "#F5FBFF",
                 "poster_white": "#FFFFFF",
                 "pink_mood": "#FF4FA3",
+                "candy_pink": "#FF6EC7",
                 "guochao": "#FF2D6A",
                 "red_impact": "#FF1E3C",
                 "sunset": "#FF6B9D",
@@ -335,9 +371,12 @@ class OverlayTextStyleSettings(BaseModel):
                 "soft_yellow": "#FFE566",
                 "manga_yellow": "#FFD400",
                 "orange_fire": "#FF6A00",
+                "lemon_pop": "#FFE100",
                 "neon": "#00E5FF",
                 "cold_blue": "#5B8CFF",
+                "sky_pop": "#4DB8FF",
                 "cyan_mint": "#3DFFC8",
+                "jade_green": "#2EE59B",
                 "purple_dream": "#B44DFF",
                 "violet_neon": "#C77DFF",
                 "deep_purple": "#7B2FFF",
@@ -345,6 +384,7 @@ class OverlayTextStyleSettings(BaseModel):
                 "ink_red": "#E6392B",
                 "outline": "#FFFFFF",
                 "heavy_outline": "#FFFFFF",
+                "gold_stroke": "#FFD700",
             }
             self.glow_color = defaults.get(self.effect, "#FFFFFF")
 

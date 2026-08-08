@@ -95,6 +95,7 @@ class RemotePlanService:
             "min_duration_seconds": params["min_duration_sec"],
             "split_ab": params["split_ab"],
             "global_speed": params["global_speed"],
+            "plan_mode": params["mode"],
         }
 
     @classmethod

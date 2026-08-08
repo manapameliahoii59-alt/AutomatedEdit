@@ -142,6 +142,8 @@ class ClipEditViewModel(ViewModel):
         max_duration_sec: int | None = None,
         short_clip_count: int | None = None,
         short_max_duration_sec: int | None = None,
+        mixed_clip_count: int | None = None,
+        mixed_max_duration_sec: int | None = None,
         global_speed: float | None = None,
     ) -> None:
         """本地已写入 cfg 后，后台同步到服务端用户设置。"""
@@ -154,6 +156,8 @@ class ClipEditViewModel(ViewModel):
             max_duration_sec=max_duration_sec,
             short_clip_count=short_clip_count,
             short_max_duration_sec=short_max_duration_sec,
+            mixed_clip_count=mixed_clip_count,
+            mixed_max_duration_sec=mixed_max_duration_sec,
             global_speed=global_speed,
         )
         if not patch.get("plan"):
@@ -359,7 +363,10 @@ class ClipEditViewModel(ViewModel):
 
     def _report_plan_done(self, project_name: str) -> None:
         if project_name:
-            UsageService.report_plan_drama(project_name)
+            from app.common.plan_settings import resolve_active_plan_params
+
+            mode = resolve_active_plan_params().get("mode")
+            UsageService.report_plan_drama(project_name, plan_mode=mode)
 
     def _ensure_can_plan(self, project_name: str) -> bool:
         allowed, message = QuotaService.instance().check_remote("plan", project_name)

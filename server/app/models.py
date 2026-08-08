@@ -65,6 +65,7 @@ class UsageEvent(Base):
     success: Mapped[bool] = mapped_column(Boolean, default=True)
     duration_ms: Mapped[int] = mapped_column(Integer, default=0)
     meta: Mapped[str] = mapped_column(Text, default="")
+    plan_mode: Mapped[str] = mapped_column(String(16), default="")
     client_version: Mapped[str] = mapped_column(String(32), default="")
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), index=True)
 
@@ -102,6 +103,8 @@ class PlanJob(Base):
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
     status: Mapped[str] = mapped_column(String(16), default="pending", index=True)
+    project_name: Mapped[str] = mapped_column(String(255), default="")
+    plan_mode: Mapped[str] = mapped_column(String(16), default="")
     progress_json: Mapped[str] = mapped_column(Text, default="{}")
     error: Mapped[str] = mapped_column(Text, default="")
     result_json: Mapped[str] = mapped_column(Text, default="")

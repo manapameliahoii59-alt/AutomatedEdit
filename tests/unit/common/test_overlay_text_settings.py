@@ -8,6 +8,7 @@ from app.common.overlay_text_settings import (
     clamp_overlay_style,
     clamp_text_effect,
     escape_drawtext,
+    glow_layer_count,
     position_for_orientation,
     resolve_glow_color,
     resolve_overlay_text,
@@ -24,7 +25,7 @@ def test_clamp_overlay_style_defaults():
     assert style["opacity"] == 0.8
     assert style["effect"] == "none"
     assert style["glow_color"] == "#FFFFFF"
-    assert style["portrait"]["x_pct"] == 4.0
+    assert style["portrait"]["x_pct"] == 1.5
     assert style["portrait"]["y_pct"] == 94.5
     assert style["portrait"]["fontsize"] == 22
     assert style["landscape"]["x_pct"] == 2.5
@@ -54,6 +55,8 @@ def test_clamp_text_effect_and_glow_color():
     assert clamp_text_effect("neon") == "neon"
     assert clamp_text_effect("NEON") == "neon"
     assert clamp_text_effect("pink_mood") == "pink_mood"
+    assert clamp_text_effect("candy_pink") == "candy_pink"
+    assert clamp_text_effect("gold_stroke") == "gold_stroke"
     assert clamp_text_effect("weird") == "none"
     assert clamp_text_effect(None) == "none"
 
@@ -69,6 +72,105 @@ def test_clamp_text_effect_and_glow_color():
         DEFAULT_TITLE,
     )
     assert resolve_glow_color(guochao) == "#FF00AA"
+
+
+def test_simsunb_drawtext_falls_back_to_simsun():
+    """粗宋 simsunb 在 FFmpeg 下无汉字字形，成片应回退到宋体。"""
+    from app.common.overlay_text_settings import (
+        prepare_font_file,
+        resolve_drawtext_font_key,
+    )
+
+    assert resolve_drawtext_font_key("simsunb") == "simsun"
+    path = prepare_font_file("simsunb")
+    assert path.lower().endswith("simsun.ttc") or "simsun.ttc" in path.lower()
+    assert "simsunb" not in path.lower()
+    assert not any(ord(c) > 127 for c in path)
+
+
+def test_drawtext_center_uses_text_w_not_baked_left():
+    """水平居中应按 text_w 居中，不因剧名长短沿用旧左缘百分比。"""
+    from app.common.overlay_text_settings import build_drawtext_filters
+
+    style = clamp_overlay_style(
+        {
+            "text": "《{name}》",
+            "fontsize": 22,
+            "portrait": {
+                "x_pct": 35.0,
+                "y_pct": 10.0,
+                "h_align": "c",
+                "v_align": "t",
+            },
+            "landscape": {
+                "x_pct": 35.0,
+                "y_pct": 10.0,
+                "h_align": "c",
+                "v_align": "t",
+            },
+        },
+        DEFAULT_TITLE,
+    )
+    short = build_drawtext_filters(
+        style, project_name="短", fontfile="msyh.ttc", orientation="portrait"
+    )
+    long = build_drawtext_filters(
+        style,
+        project_name="超级超级长的剧名示例",
+        fontfile="msyh.ttc",
+        orientation="portrait",
+    )
+    assert short and long
+    assert "x=(w-text_w)/2" in short[0]
+    assert "x=(w-text_w)/2" in long[0]
+    assert "x=w*0.350000" not in short[0]
+
+
+def test_pct_for_position_preset_nine_grid():
+    from app.common.overlay_text_settings import (
+        nearest_position_preset,
+        pct_for_position_preset,
+        step_position_preset,
+    )
+
+    # 零尺寸框：左上≈边距，正中≈50，右下≈100-边距
+    assert pct_for_position_preset("tl", box_w_ratio=0, box_h_ratio=0) == (1.5, 1.5)
+    cx, cy = pct_for_position_preset("mc", box_w_ratio=0, box_h_ratio=0)
+    assert abs(cx - 50.0) < 0.01 and abs(cy - 50.0) < 0.01
+    bx, by = pct_for_position_preset("br", box_w_ratio=0, box_h_ratio=0)
+    assert abs(bx - 98.5) < 0.01 and abs(by - 98.5) < 0.01
+
+    # 有尺寸时右下会内收
+    x, y = pct_for_position_preset(
+        "br", box_w_ratio=0.2, box_h_ratio=0.1, margin_pct=1.5
+    )
+    assert abs(x - 78.5) < 0.05  # 100 - 20 - 1.5
+    assert abs(y - 88.5) < 0.05  # 100 - 10 - 1.5
+
+    mx, my = pct_for_position_preset(
+        "mc", box_w_ratio=0.2, box_h_ratio=0.1
+    )
+    assert abs(mx - 40.0) < 0.05
+    assert abs(my - 45.0) < 0.05
+
+    assert nearest_position_preset(1.5, 1.5) == "tl"
+    assert nearest_position_preset(50, 50) == "mc"
+    assert nearest_position_preset(90, 90) == "br"
+    assert step_position_preset("mc", dcol=-1) == "ml"
+    assert step_position_preset("mc", dcol=1) == "mr"
+    assert step_position_preset("mc", drow=-1) == "tc"
+    assert step_position_preset("mc", drow=1) == "bc"
+    assert step_position_preset("tl", dcol=-1, drow=-1) == "tl"
+    assert step_position_preset("br", dcol=1, drow=1) == "br"
+
+
+def test_glow_layer_count_is_dense_near_edge():
+    """近缘密采样：层数约为圈数×步数，不再含中心雾。"""
+    n = glow_layer_count("glow")
+    assert n == 3 * 12
+    assert n == glow_layer_count("pink_mood")
+    assert glow_layer_count("outline") == 0
+    assert glow_layer_count("none") == 0
 
 
 def test_build_drawtext_glow_layers():
@@ -88,8 +190,8 @@ def test_build_drawtext_glow_layers():
     parts = build_drawtext_filters(
         style, project_name="x", fontfile="msyh.ttc", orientation="portrait"
     )
-    # 中心雾 + 4 圈×8 向 + 正文；辉光层无彩色硬描边，正文有细黑边
-    assert len(parts) == 1 + 4 * 8 + 1
+    # 近缘密采样辉光层 + 正文；辉光层无彩色硬描边，正文有细黑边
+    assert len(parts) == glow_layer_count("glow") + 1
     assert all("borderw=" not in p for p in parts[:-1])
     assert "borderw=" in parts[-1]
     assert "bordercolor=000000@" in parts[-1]
@@ -111,7 +213,7 @@ def test_build_drawtext_neon_and_guochao():
     neon_parts = build_drawtext_filters(
         neon, project_name="x", fontfile="msyh.ttc"
     )
-    assert len(neon_parts) == 1 + 4 * 8 + 1
+    assert len(neon_parts) == glow_layer_count("neon") + 1
     assert any("fontcolor=00E5FF@" in p for p in neon_parts[:-1])
     assert "borderw=" in neon_parts[-1]
 
@@ -129,9 +231,9 @@ def test_build_drawtext_neon_and_guochao():
     gc_parts = build_drawtext_filters(
         guochao, project_name="x", fontfile="STXINGKA.TTF"
     )
-    assert len(gc_parts) == 1 + 4 * 8 + 1
-    assert "shadowx=2" in gc_parts[-1]
-    assert "shadowcolor=black@0.45" in gc_parts[-1]
+    assert len(gc_parts) == glow_layer_count("guochao") + 1
+    # 有外发光时不再叠硬阴影，避免重影
+    assert "shadowx=" not in gc_parts[-1]
     assert any("fontcolor=FF2D6A@" in p for p in gc_parts[:-1])
 
 
@@ -150,7 +252,7 @@ def test_build_drawtext_pink_mood_and_outline():
     pink_parts = build_drawtext_filters(
         pink, project_name="x", fontfile="msyh.ttc"
     )
-    assert len(pink_parts) == 1 + 4 * 8 + 1
+    assert len(pink_parts) == glow_layer_count("pink_mood") + 1
     assert any("fontcolor=FF4FA3@" in p for p in pink_parts[:-1])
 
     outline = clamp_overlay_style(
@@ -347,6 +449,45 @@ def test_escape_drawtext_single_line():
     assert escape_drawtext("100%") == "100%%"
 
 
+def test_escape_drawtext_fontfile_quotes_and_drive():
+    from app.common.overlay_text_settings import escape_drawtext_fontfile
+
+    esc = escape_drawtext_fontfile(r"C:\Users\x\msyh.ttc")
+    assert esc.startswith("'") and esc.endswith("'")
+    assert r"C\:" in esc
+    assert "\\" not in esc.replace(r"\:", "").replace(r"\'", "")
+
+
+def test_build_drawtext_chinese_uses_textfile(tmp_path, monkeypatch):
+    """中文走 textfile，避免 Windows 下 filter 脚本代码页乱码。"""
+    from app.common import overlay_text_settings as ots
+
+    cache = tmp_path / "fonts"
+    cache.mkdir()
+    monkeypatch.setattr(ots, "_ascii_font_cache_dir", lambda: str(cache))
+
+    style = clamp_overlay_style(
+        {
+            "text": "《{name}》",
+            "fontsize": 20,
+            "portrait": {"x_pct": 1, "y_pct": 1},
+            "landscape": {"x_pct": 1, "y_pct": 1},
+        },
+        DEFAULT_TITLE,
+    )
+    parts = build_drawtext_filters(
+        style, project_name="无敌", fontfile="msyh.ttc", orientation="portrait"
+    )
+    assert parts
+    joined = ",".join(parts)
+    assert "textfile=" in joined
+    assert "text='" not in joined
+    # 旁路文件为 UTF-8，内容可读
+    txts = list(cache.glob("dt_*.txt"))
+    assert txts
+    assert "无敌" in txts[0].read_text(encoding="utf-8-sig")
+
+
 def test_position_for_orientation_and_set():
     style = clamp_overlay_style(None, DEFAULT_TITLE)
     style = set_position_for_orientation(style, "landscape", 12, 88)
@@ -354,7 +495,7 @@ def test_position_for_orientation_and_set():
     assert land["x_pct"] == 12.0
     assert land["y_pct"] == 88.0
     assert land["fontsize"] == 22
-    assert position_for_orientation(style, "portrait")["x_pct"] == 4.0
+    assert position_for_orientation(style, "portrait")["x_pct"] == 1.5
 
 
 def test_build_drawtext_filter_empty_skips():
@@ -404,9 +545,8 @@ def test_build_overlay_filters_with_defaults(monkeypatch):
     monkeypatch.setattr("qfluentwidgets.qconfig.set", _fake_set)
     filters = build_overlay_drawtext_filters("测试剧", horizontal=False)
     assert len(filters) == 2
-    assert "《测试剧》" in filters[0]
-    assert "内容纯属虚构" in filters[1]
-    assert "x=w*0.040000" in filters[0]
+    assert "textfile=" in filters[0] and "textfile=" in filters[1]
+    assert "x=w*0.015000" in filters[0]
 
     filters_h = build_overlay_drawtext_filters("测试剧", horizontal=True)
     assert "x=w*0.025000" in filters_h[0]
@@ -667,4 +807,5 @@ def test_build_overlay_filters_uses_selected_group(monkeypatch):
     )
     save_overlay_library_to_cfg({"selected_id": g["id"], "groups": [g]})
     filters = build_overlay_drawtext_filters("测试剧")
-    assert any("《测试剧》专属" in f for f in filters)
+    assert any("textfile=" in f for f in filters)
+    assert any("fontsize=22" in f for f in filters)

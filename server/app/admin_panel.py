@@ -1,3 +1,5 @@
+import json
+
 from sqlalchemy import select
 from sqlalchemy.orm import joinedload
 from sqladmin import Admin, ModelView, action
@@ -7,14 +9,18 @@ from starlette.middleware import Middleware
 from starlette.middleware.sessions import SessionMiddleware
 from starlette.requests import Request
 from starlette.responses import RedirectResponse
-from markupsafe import Markup
+from markupsafe import Markup, escape
 from wtforms import BooleanField as WTBooleanField, StringField, TextAreaField
 from wtforms.widgets import CheckboxInput
 
 from app.config import settings
 from app.database import engine
-from app.models import UsageEvent, User, UserDailyActivity, UserSettings
+from app.models import PlanJob, UsageEvent, User, UserDailyActivity, UserSettings
 from app.services.plan_secrets import ensure_user_secret
+from app.services.usage_meta import PLAN_MODE_LABELS
+
+# 每日活动「剧目」列：固定宽度 + 省略号，悬停看全文
+_DRAMA_COL_MAX_WIDTH_PX = 200
 
 
 def _iocpx_account(model, _attr):
@@ -23,6 +29,51 @@ def _iocpx_account(model, _attr):
         return user.username
     user_id = getattr(model, "user_id", None)
     return f"#{user_id}" if user_id else "-"
+
+
+def _plan_mode_label(model, _attr):
+    mode = str(getattr(model, "plan_mode", None) or "").strip().lower()
+    return PLAN_MODE_LABELS.get(mode, mode or "-")
+
+
+def _drama_names_text(model, attr) -> str:
+    """解析剧目 JSON 列表为顿号分隔文案。"""
+    key = getattr(attr, "key", None) or getattr(attr, "name", None)
+    if not key:
+        return ""
+    raw = getattr(model, key, None)
+    if raw is None:
+        return ""
+    text = str(raw).strip()
+    if not text or text == "[]":
+        return ""
+    try:
+        data = json.loads(text)
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return text
+    if isinstance(data, list):
+        names = [str(item).strip() for item in data if str(item).strip()]
+        return "、".join(names)
+    return text
+
+
+def _drama_names_ellipsis(model, attr):
+    """列表页：定宽省略，title 悬停显示完整剧目。"""
+    full = _drama_names_text(model, attr)
+    if not full:
+        return "-"
+    safe = escape(full)
+    return Markup(
+        f'<span title="{safe}" style="'
+        f"display:inline-block;max-width:{_DRAMA_COL_MAX_WIDTH_PX}px;"
+        "overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"
+        f'vertical-align:bottom;">{safe}</span>'
+    )
+
+
+def _drama_names_detail(model, attr):
+    """详情页展示完整剧目名。"""
+    return _drama_names_text(model, attr) or "-"
 
 
 def _is_active_label(model, _attr):
@@ -273,6 +324,7 @@ class UsageEventAdmin(ModelView, model=UsageEvent):
         UsageEvent.event,
         UsageEvent.success,
         UsageEvent.meta,
+        UsageEvent.plan_mode,
         UsageEvent.duration_ms,
         UsageEvent.client_version,
         UsageEvent.created_at,
@@ -282,28 +334,32 @@ class UsageEventAdmin(ModelView, model=UsageEvent):
         UsageEvent.event: "事件",
         UsageEvent.success: "成功",
         UsageEvent.meta: "详情",
+        UsageEvent.plan_mode: "策划模式",
         UsageEvent.duration_ms: "耗时(ms)",
         UsageEvent.client_version: "客户端版本",
         UsageEvent.created_at: "时间",
     }
     column_formatters = {
         UsageEvent.user_id: _iocpx_account,
+        UsageEvent.plan_mode: _plan_mode_label,
     }
-    column_sortable_list = [UsageEvent.id, UsageEvent.created_at]
+    column_sortable_list = [UsageEvent.id, UsageEvent.created_at, UsageEvent.plan_mode]
     column_default_sort = [(UsageEvent.id, True)]
-    column_searchable_list = [UsageEvent.event, UsageEvent.meta]
+    column_searchable_list = [UsageEvent.event, UsageEvent.meta, UsageEvent.plan_mode]
     column_details_list = [
         UsageEvent.id,
         UsageEvent.user_id,
         UsageEvent.event,
         UsageEvent.success,
         UsageEvent.meta,
+        UsageEvent.plan_mode,
         UsageEvent.duration_ms,
         UsageEvent.client_version,
         UsageEvent.created_at,
     ]
     column_formatters_detail = {
         UsageEvent.user_id: _iocpx_account,
+        UsageEvent.plan_mode: _plan_mode_label,
     }
 
     def list_query(self, request: Request):
@@ -311,6 +367,67 @@ class UsageEventAdmin(ModelView, model=UsageEvent):
 
     def details_query(self, request: Request):
         return select(UsageEvent).options(joinedload(UsageEvent.user))
+
+
+class PlanJobAdmin(ModelView, model=PlanJob):
+    name = "策划任务"
+    name_plural = "策划任务"
+    can_create = False
+    can_edit = False
+    can_delete = False
+    column_list = [
+        PlanJob.id,
+        PlanJob.user_id,
+        PlanJob.status,
+        PlanJob.project_name,
+        PlanJob.plan_mode,
+        PlanJob.error,
+        PlanJob.created_at,
+        PlanJob.updated_at,
+    ]
+    column_labels = {
+        PlanJob.id: "任务ID",
+        PlanJob.user_id: "易投账号",
+        PlanJob.status: "状态",
+        PlanJob.project_name: "剧目",
+        PlanJob.plan_mode: "策划模式",
+        PlanJob.error: "错误",
+        PlanJob.created_at: "创建时间",
+        PlanJob.updated_at: "更新时间",
+    }
+    column_formatters = {
+        PlanJob.user_id: _iocpx_account,
+        PlanJob.plan_mode: _plan_mode_label,
+    }
+    column_sortable_list = [
+        PlanJob.created_at,
+        PlanJob.updated_at,
+        PlanJob.status,
+        PlanJob.plan_mode,
+    ]
+    column_default_sort = [(PlanJob.created_at, True)]
+    column_searchable_list = [
+        PlanJob.id,
+        PlanJob.status,
+        PlanJob.project_name,
+        PlanJob.plan_mode,
+        PlanJob.error,
+    ]
+    column_details_list = [
+        PlanJob.id,
+        PlanJob.user_id,
+        PlanJob.status,
+        PlanJob.project_name,
+        PlanJob.plan_mode,
+        PlanJob.progress_json,
+        PlanJob.error,
+        PlanJob.created_at,
+        PlanJob.updated_at,
+    ]
+    column_formatters_detail = {
+        PlanJob.user_id: _iocpx_account,
+        PlanJob.plan_mode: _plan_mode_label,
+    }
 
 
 class UserDailyActivityAdmin(ModelView, model=UserDailyActivity):
@@ -346,6 +463,9 @@ class UserDailyActivityAdmin(ModelView, model=UserDailyActivity):
     }
     column_formatters = {
         UserDailyActivity.user_id: _iocpx_account,
+        UserDailyActivity.downloaded_dramas: _drama_names_ellipsis,
+        UserDailyActivity.planned_dramas: _drama_names_ellipsis,
+        UserDailyActivity.clipped_dramas: _drama_names_ellipsis,
     }
     column_sortable_list = [
         UserDailyActivity.id,
@@ -373,6 +493,9 @@ class UserDailyActivityAdmin(ModelView, model=UserDailyActivity):
     ]
     column_formatters_detail = {
         UserDailyActivity.user_id: _iocpx_account,
+        UserDailyActivity.downloaded_dramas: _drama_names_detail,
+        UserDailyActivity.planned_dramas: _drama_names_detail,
+        UserDailyActivity.clipped_dramas: _drama_names_detail,
     }
 
     def list_query(self, request: Request):
@@ -393,5 +516,6 @@ def setup_admin(app: Starlette) -> Admin:
     admin.add_view(UserAdmin)
     admin.add_view(UserSettingsAdmin)
     admin.add_view(UsageEventAdmin)
+    admin.add_view(PlanJobAdmin)
     admin.add_view(UserDailyActivityAdmin)
     return admin

@@ -52,8 +52,22 @@ def test_plan_job_completes_with_mocked_run_plan(monkeypatch):
         job = plan_jobs.create_plan_job(
             db,
             user_id=7,
-            payload={"project_name": "demo", "steps": [], "ordered_files": ["1.mp4"]},
+            payload={
+                "project_name": "demo",
+                "steps": [],
+                "ordered_files": ["1.mp4"],
+                "plan_mode": "mixed",
+                "split_ab": True,
+            },
         )
+
+        from app.models import PlanJob
+
+        db.expire_all()
+        stored = db.get(PlanJob, job.id)
+        assert stored is not None
+        assert stored.project_name == "demo"
+        assert stored.plan_mode == "mixed"
 
         deadline = time.time() + 5
         while time.time() < deadline:
