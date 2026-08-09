@@ -13,6 +13,8 @@ if str(SERVER_ROOT) not in sys.path:
 class _FakeSecret:
     deepseek_keys = "sk-test"
     plan_decrypt_key = "abcd" * 16
+    plan_llm_provider = "deepseek"
+    plan_llm_model = "deepseek-v4-flash"
 
 
 def test_plan_job_completes_with_mocked_run_plan(monkeypatch):
@@ -38,14 +40,21 @@ def test_plan_job_completes_with_mocked_run_plan(monkeypatch):
     )
     monkeypatch.setattr(
         plan_jobs,
-        "resolve_deepseek_keys",
-        lambda _db, _uid: "sk-test",
+        "resolve_plan_llm_config",
+        lambda _db, _uid: {
+            "provider": "deepseek",
+            "api_url": "https://api.deepseek.com/chat/completions",
+            "model": "deepseek-v4-flash",
+            "keys": "sk-test",
+        },
     )
-    monkeypatch.setattr(
-        plan_jobs,
-        "run_plan",
-        lambda **_kwargs: [{"title": "demo", "files_config": {"x": 1}}],
-    )
+    captured: dict = {}
+
+    def _fake_run_plan(**kwargs):
+        captured.update(kwargs)
+        return [{"title": "demo", "files_config": {"x": 1}}]
+
+    monkeypatch.setattr(plan_jobs, "run_plan", _fake_run_plan)
 
     db = TestSession()
     try:
@@ -85,6 +94,9 @@ def test_plan_job_completes_with_mocked_run_plan(monkeypatch):
         assert record.result is not None
         assert "ciphertext" in record.result
         assert "nonce" in record.result
+        assert captured.get("provider") == "deepseek"
+        assert captured.get("api_keys_raw") == "sk-test"
+        assert captured.get("llm_session_id") == job.id
     finally:
         db.close()
 

@@ -10,13 +10,22 @@ from starlette.middleware.sessions import SessionMiddleware
 from starlette.requests import Request
 from starlette.responses import RedirectResponse
 from markupsafe import Markup, escape
-from wtforms import BooleanField as WTBooleanField, StringField, TextAreaField
+from wtforms import BooleanField as WTBooleanField, SelectField, StringField, TextAreaField
 from wtforms.widgets import CheckboxInput
 
 from app.config import settings
 from app.database import engine
 from app.models import PlanJob, UsageEvent, User, UserDailyActivity, UserSettings
-from app.services.plan_secrets import ensure_user_secret
+from app.services.plan_secrets import (
+    PLAN_LLM_PRESET_CHOICES,
+    PLAN_LLM_PROVIDER_DEEPSEEK,
+    decode_plan_llm_preset,
+    encode_plan_llm_preset,
+    ensure_user_secret,
+    normalize_plan_llm_model,
+    normalize_plan_llm_provider,
+    plan_llm_preset_label,
+)
 from app.services.usage_meta import PLAN_MODE_LABELS
 
 # 每日活动「剧目」列：固定宽度 + 省略号，悬停看全文
@@ -36,9 +45,17 @@ def _plan_mode_label(model, _attr):
     return PLAN_MODE_LABELS.get(mode, mode or "-")
 
 
+def _drama_column_key(attr) -> str:
+    """sqladmin 传入的 attr 可能是 ColumnProperty，也可能是列名字符串。"""
+    if isinstance(attr, str):
+        return attr
+    key = getattr(attr, "key", None) or getattr(attr, "name", None)
+    return str(key) if key else ""
+
+
 def _drama_names_text(model, attr) -> str:
     """解析剧目 JSON 列表为顿号分隔文案。"""
-    key = getattr(attr, "key", None) or getattr(attr, "name", None)
+    key = _drama_column_key(attr)
     if not key:
         return ""
     raw = getattr(model, key, None)
@@ -91,6 +108,18 @@ def _deepseek_keys_label(model, _attr):
     if not keys:
         return "未配置"
     return keys if len(keys) <= 32 else f"{keys[:32]}…"
+
+
+def _plan_llm_model_label(model, _attr):
+    secret = getattr(model, "secrets", None)
+    provider = normalize_plan_llm_provider(
+        getattr(secret, "plan_llm_provider", None) if secret else None
+    )
+    model_name = normalize_plan_llm_model(
+        getattr(secret, "plan_llm_model", None) if secret else None,
+        provider=provider,
+    )
+    return plan_llm_preset_label(provider, model_name)
 
 
 class _SwitchCheckboxInput(CheckboxInput):
@@ -179,6 +208,7 @@ class UserAdmin(ModelView, model=User):
         User.valid_until,
         User.daily_plan_limit,
         User.daily_clip_limit,
+        "plan_llm_model",
         "deepseek_keys",
         User.created_at,
     ]
@@ -192,12 +222,14 @@ class UserAdmin(ModelView, model=User):
         User.daily_plan_limit: "每日策划上限",
         User.daily_clip_limit: "每日剪辑上限",
         User.created_at: "创建时间",
-        "deepseek_keys": "DeepSeek Keys",
+        "plan_llm_model": "策划模型",
+        "deepseek_keys": "策划 API Keys",
     }
     column_searchable_list = [User.username]
     column_formatters = {
         User.is_active: _is_active_label,
         User.valid_until: _valid_until_label,
+        "plan_llm_model": _plan_llm_model_label,
         "deepseek_keys": _deepseek_keys_label,
     }
     column_details_list = [
@@ -209,11 +241,14 @@ class UserAdmin(ModelView, model=User):
         User.valid_until,
         User.daily_plan_limit,
         User.daily_clip_limit,
+        "plan_llm_model",
+        "deepseek_keys",
         User.created_at,
     ]
     column_formatters_detail = {
         User.is_active: _is_active_label,
         User.valid_until: _valid_until_label,
+        "plan_llm_model": _plan_llm_model_label,
         "deepseek_keys": _deepseek_keys_label,
     }
 
@@ -234,13 +269,30 @@ class UserAdmin(ModelView, model=User):
         secret = user.secrets
         user.deepseek_keys = (secret.deepseek_keys if secret else "") or ""
         user.dashscope_key = (secret.dashscope_key if secret else "") or ""
+        provider = normalize_plan_llm_provider(
+            getattr(secret, "plan_llm_provider", None) if secret else None
+        )
+        model_name = normalize_plan_llm_model(
+            getattr(secret, "plan_llm_model", None) if secret else None,
+            provider=provider,
+        )
+        user.plan_llm_preset = encode_plan_llm_preset(provider, model_name)
         return user
 
     async def scaffold_form(self, rules=None):
         base_form = await super().scaffold_form(rules=None)
 
         class UserForm(base_form):
-            deepseek_keys = TextAreaField("DeepSeek API Keys（逗号分隔，策划专用）")
+            plan_llm_preset = SelectField(
+                "策划模型",
+                choices=list(PLAN_LLM_PRESET_CHOICES),
+                default=f"{PLAN_LLM_PROVIDER_DEEPSEEK}|deepseek-v4-flash",
+                description="官方填 DeepSeek Key；OpenCode Go 填 Zen/Go 套餐 Key",
+            )
+            deepseek_keys = TextAreaField(
+                "策划 API Keys（逗号分隔）",
+                description="与上方模型对应：官方 DeepSeek Key 或 OpenCode Go Key",
+            )
             dashscope_key = StringField("DashScope Key（可选）")
 
         if rules:
@@ -248,16 +300,27 @@ class UserAdmin(ModelView, model=User):
         return UserForm
 
     async def on_model_change(self, data, model, is_created, request):
-        request.state.admin_user_deepseek_keys = (data.pop("deepseek_keys", None) or "").strip()
-        request.state.admin_user_dashscope_key = (data.pop("dashscope_key", None) or "").strip()
+        request.state.admin_user_deepseek_keys = (
+            data.pop("deepseek_keys", None) or ""
+        ).strip()
+        request.state.admin_user_dashscope_key = (
+            data.pop("dashscope_key", None) or ""
+        ).strip()
+        request.state.admin_user_plan_llm_preset = (
+            data.pop("plan_llm_preset", None) or ""
+        ).strip()
 
     async def after_model_change(self, data, model, is_created, request):
         deepseek = getattr(request.state, "admin_user_deepseek_keys", "")
         dashscope = getattr(request.state, "admin_user_dashscope_key", "")
+        preset = getattr(request.state, "admin_user_plan_llm_preset", "")
+        provider, llm_model = decode_plan_llm_preset(preset)
         with self.session_maker() as session:
             secret = ensure_user_secret(session, model.id)
             secret.deepseek_keys = deepseek
             secret.dashscope_key = dashscope
+            secret.plan_llm_provider = provider
+            secret.plan_llm_model = llm_model
             session.commit()
 
     @action(

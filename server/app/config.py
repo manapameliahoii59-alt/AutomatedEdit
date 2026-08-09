@@ -15,6 +15,10 @@ class Settings(BaseSettings):
     deepseek_model: str = "deepseek-v4-flash"
     deepseek_api_keys: str = ""
 
+    # OpenCode Go（Zen）策划通道默认端点
+    opencode_go_api_url: str = "https://opencode.ai/zen/go/v1/chat/completions"
+    opencode_go_model: str = "deepseek-v4-flash"
+
     # 对外访问根地址（反代后建议配置，用于拼安装包下载链接）
     # 例：https://api.example.com
     public_base_url: str = ""

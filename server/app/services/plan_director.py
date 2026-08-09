@@ -841,6 +841,8 @@ def _call_deepseek(
     min_duration_seconds: int,
     max_duration_seconds: int,
     plan_mode: str = "long",
+    provider: str = "deepseek",
+    llm_session_id: str = "",
 ) -> tuple[str | None, float, str | None]:
     api_key = key_pool.get()
     t0 = time.perf_counter()
@@ -852,7 +854,13 @@ def _call_deepseek(
             max_duration_seconds=max_duration_seconds,
             plan_mode=plan_mode,
         )
-        headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+        headers = {
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+        }
+        # OpenCode Go 部分模型需要会话亲和头
+        if str(provider or "").strip().lower() == "opencode_go" and llm_session_id:
+            headers["x-opencode-session"] = str(llm_session_id)
         payload = {
             "model": model_name,
             "messages": [
@@ -861,6 +869,7 @@ def _call_deepseek(
             ],
             "response_format": {"type": "json_object"},
             "max_tokens": MAX_OUTPUT_TOKENS,
+            # 全通道关闭 thinking，避免推理模式拖慢策划
             "thinking": {"type": "disabled"},
         }
         with httpx.Client(timeout=httpx.Timeout(30.0, read=180.0)) as client:
@@ -900,9 +909,13 @@ def run_plan(
     split_ab: bool | None = None,
     global_speed: float | None = None,
     plan_mode: str | None = None,
+    provider: str = "deepseek",
+    llm_session_id: str = "",
 ) -> list[dict]:
     if not api_keys_raw.strip():
         raise ValueError("服务端未配置策划 API 密钥")
+    llm_provider = str(provider or "deepseek").strip().lower() or "deepseek"
+    session_id = str(llm_session_id or "").strip()
 
     use_ab = True if split_ab is None else bool(split_ab)
     mode = str(plan_mode or "").strip().lower()
@@ -1013,6 +1026,8 @@ def run_plan(
                 min_duration_seconds=min_dur,
                 max_duration_seconds=max_dur,
                 plan_mode=mode,
+                provider=llm_provider,
+                llm_session_id=session_id,
             )
             if api_error or not raw_res:
                 consecutive_empty += 1

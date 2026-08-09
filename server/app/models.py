@@ -31,9 +31,14 @@ class UserSecret(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), unique=True, index=True)
+    # 策划 LLM 密钥（官方 DeepSeek 或 OpenCode Go，由 plan_llm_provider 决定）
     deepseek_keys: Mapped[str] = mapped_column(Text, default="")
     dashscope_key: Mapped[str] = mapped_column(Text, default="")
     plan_decrypt_key: Mapped[str] = mapped_column(String(64), default="")
+    # deepseek | opencode_go
+    plan_llm_provider: Mapped[str] = mapped_column(String(32), default="deepseek")
+    # 空=通道默认模型
+    plan_llm_model: Mapped[str] = mapped_column(String(64), default="")
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, server_default=func.now(), onupdate=func.now()
     )

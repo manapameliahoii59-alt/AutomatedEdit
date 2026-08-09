@@ -109,6 +109,20 @@ def _ensure_daily_quota_columns() -> None:
                         "VARCHAR(64) NOT NULL DEFAULT ''"
                     )
                 )
+            if "plan_llm_provider" not in secret_cols:
+                conn.execute(
+                    text(
+                        "ALTER TABLE user_secrets ADD COLUMN plan_llm_provider "
+                        "VARCHAR(32) NOT NULL DEFAULT 'deepseek'"
+                    )
+                )
+            if "plan_llm_model" not in secret_cols:
+                conn.execute(
+                    text(
+                        "ALTER TABLE user_secrets ADD COLUMN plan_llm_model "
+                        "VARCHAR(64) NOT NULL DEFAULT ''"
+                    )
+                )
 
     if "users" in table_names:
         user_cols = {col["name"] for col in inspector.get_columns("users")}

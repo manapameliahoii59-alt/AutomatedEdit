@@ -4,7 +4,7 @@
 
 - JWT 登录（易投账号密码经 iocpx 第三方校验，首次登录自动注册本地用户）
 - 管理后台可控制用户**是否允许使用桌面端**（`允许使用桌面端` 开关），并查看用户**易投账号与明文密码**（用户每次登录成功后自动更新）
-- 按用户下发 DeepSeek / DashScope 秘钥
+- 按用户下发策划 LLM / DashScope 秘钥（官方 DeepSeek 或 OpenCode Go）
 - 客户端上报使用记录，并汇总为**每日活动**（登录/关闭时间、下载剧目、剪辑剧目）
 - 按用户保存客户端配置（下载集数、自动解压/识别/剪辑等），支持命名空间扩展
 - SQLAdmin 管理后台：`/admin`（用户、秘钥、用量）
@@ -89,7 +89,7 @@ source /www/server/pyporject_evn/项目名_venv/bin/activate
 
 ## 服务端代理策划
 
-策划逻辑与 DeepSeek 密钥**仅存在于服务端**。推荐在管理后台 **用户密钥** 为每位用户配置独立的 `DeepSeek Keys`（逗号分隔）；未配置时可选用 `.env` 中的 `DEEPSEEK_API_KEYS` 作为全局兜底。
+策划逻辑与 API 密钥**仅存在于服务端**。在管理后台 **用户** 编辑页为每位用户选择 **策划模型**（官方 DeepSeek 或 OpenCode Go 套餐），并填写对应 **策划 API Keys**（逗号分隔）。未配置用户 Key 时可选用 `.env` 中的 `DEEPSEEK_API_KEYS` 作为全局兜底。
 
 在 **用户** 页可设置 **使用期限**（`valid_until`）：留空表示永久有效；到期后桌面端登录与 API 均返回 **「无效」**。
 
@@ -104,6 +104,9 @@ source /www/server/pyporject_evn/项目名_venv/bin/activate
 ```env
 DEEPSEEK_API_URL=https://api.deepseek.com/chat/completions
 DEEPSEEK_MODEL=deepseek-v4-flash
+# OpenCode Go（用户选 Go 通道时使用）
+OPENCODE_GO_API_URL=https://opencode.ai/zen/go/v1/chat/completions
+OPENCODE_GO_MODEL=deepseek-v4-flash
 # 可选全局兜底（优先使用用户密钥表中的配置）
 # DEEPSEEK_API_KEYS=sk-xxx
 ```

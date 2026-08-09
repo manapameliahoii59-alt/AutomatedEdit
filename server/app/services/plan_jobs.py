@@ -14,12 +14,15 @@ from typing import Any
 from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
-from app.config import settings
 from app.database import SessionLocal
 from app.models import PlanJob
 from app.services.plan_crypto import encrypt_plan_payload
 from app.services.plan_director import run_plan
-from app.services.plan_secrets import ensure_user_secret, resolve_deepseek_keys
+from app.services.plan_secrets import (
+    PlanLlmConfig,
+    ensure_user_secret,
+    resolve_plan_llm_config,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -132,7 +135,12 @@ def _persist_job(
         db.close()
 
 
-def _run_job(job_id: str, payload: dict[str, Any], plan_key: str, api_keys_raw: str) -> None:
+def _run_job(
+    job_id: str,
+    payload: dict[str, Any],
+    plan_key: str,
+    llm: PlanLlmConfig,
+) -> None:
     _persist_job(job_id, status="running")
     last_progress_at = 0.0
 
@@ -149,9 +157,9 @@ def _run_job(job_id: str, payload: dict[str, Any], plan_key: str, api_keys_raw: 
             project_name=payload["project_name"],
             steps=payload["steps"],
             ordered_files=payload["ordered_files"],
-            api_keys_raw=api_keys_raw,
-            api_url=settings.deepseek_api_url,
-            model_name=settings.deepseek_model,
+            api_keys_raw=llm["keys"],
+            api_url=llm["api_url"],
+            model_name=llm["model"],
             progress_callback=on_progress,
             target_clips_count=payload.get("target_clips_count"),
             max_duration_seconds=payload.get("max_duration_seconds"),
@@ -159,6 +167,8 @@ def _run_job(job_id: str, payload: dict[str, Any], plan_key: str, api_keys_raw: 
             split_ab=payload.get("split_ab"),
             global_speed=payload.get("global_speed"),
             plan_mode=payload.get("plan_mode"),
+            provider=llm["provider"],
+            llm_session_id=job_id,
         )
         from app.services.plan_director import clamp_clip_count
 
@@ -193,12 +203,11 @@ def _run_job(job_id: str, payload: dict[str, Any], plan_key: str, api_keys_raw: 
 
 def create_plan_job(db: Session, user_id: int, payload: dict[str, Any]) -> PlanJobRecord:
     _cleanup_old_jobs()
-    ensure_user_secret(db, user_id)
-    api_keys_raw = resolve_deepseek_keys(db, user_id)
-    if not api_keys_raw:
+    row_secret = ensure_user_secret(db, user_id)
+    llm = resolve_plan_llm_config(db, user_id)
+    if not llm["keys"]:
         raise ValueError("未配置策划服务密钥，请联系管理员")
 
-    row_secret = ensure_user_secret(db, user_id)
     plan_key = row_secret.plan_decrypt_key
     job_id = uuid.uuid4().hex
     from app.services.plan_director import clamp_clip_count
@@ -238,7 +247,7 @@ def create_plan_job(db: Session, user_id: int, payload: dict[str, Any]) -> PlanJ
 
     thread = threading.Thread(
         target=_run_job,
-        args=(job_id, payload, plan_key, api_keys_raw),
+        args=(job_id, payload, plan_key, llm),
         daemon=True,
         name=f"plan-job-{job_id[:8]}",
     )
