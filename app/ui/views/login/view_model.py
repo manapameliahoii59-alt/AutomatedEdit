@@ -25,11 +25,13 @@ class LoginViewModel(ViewModel):
         def on_success(_result):
             self._handle_login_success(username, password, remember_me, auto_login)
             
+        # 登录必须跳过封禁闸：旧 token 探活失败会 block，否则永远进不了 login API
         task_manager.submit_task(
             self.auth_service.login,
             args=(username, password),
             on_success=on_success,
-            on_error=self._handle_error
+            on_error=self._handle_error,
+            check_access=False,
         )
 
     def _handle_login_success(self, username, password, remember_me, auto_login):

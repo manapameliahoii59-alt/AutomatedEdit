@@ -8,6 +8,8 @@ from app.data.api.api import ApiError, LoginResult, get_api
 
 class AuthService:
     def login(self, username: str, password: str) -> LoginResult:
+        # 允许用新账号密码重新登录，即使此前会话已被标记封禁
+        access_control.unblock()
         api = get_api()
         try:
             result = api.login(username, password)

@@ -92,3 +92,27 @@ class TestTaskManager:
         qtbot.waitUntil(lambda: len(results) == 2, timeout=2000)
         assert 1 in results
         assert 2 in results
+
+    def test_check_access_false_allows_login_while_blocked(self, qtbot, mocker):
+        """封禁状态下登录任务仍应执行（不能被随机错误拦死）。"""
+        from app.data.services.access_control_service import access_control
+
+        tm = TaskManager.instance()
+        access_control.block()
+        mocker.patch.object(access_control, "refresh", return_value=False)
+        results = []
+        errors = []
+
+        def login_like():
+            return "logged-in"
+
+        tm.submit_task(
+            login_like,
+            on_success=results.append,
+            on_error=errors.append,
+            check_access=False,
+        )
+        qtbot.waitUntil(lambda: len(results) + len(errors) > 0, timeout=1000)
+        assert results == ["logged-in"]
+        assert errors == []
+        access_control.unblock()

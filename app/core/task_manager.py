@@ -10,20 +10,22 @@ class TaskSignals(QObject):
 
 
 class TaskRunnable(QRunnable):
-    def __init__(self, func, args=(), kwargs=None):
+    def __init__(self, func, args=(), kwargs=None, *, check_access: bool = True):
         super().__init__()
         self.func = func
         self.args = args
         self.kwargs = kwargs or {}
+        self.check_access = check_access
         self.signals = TaskSignals()
         self.setAutoDelete(True)
 
     def run(self):
         try:
-            # 误封后的探活放在 worker，避免 submit_task 阻塞 UI
-            if access_control.is_blocked():
-                access_control.refresh()
-            access_control.ensure_allowed()
+            if self.check_access:
+                # 误封后的探活放在 worker，避免 submit_task 阻塞 UI
+                if access_control.is_blocked():
+                    access_control.refresh()
+                access_control.ensure_allowed()
             result = self.func(*self.args, **self.kwargs)
             self.signals.finished.emit(result)
         except Exception as e:
@@ -48,7 +50,16 @@ class TaskManager(QObject):
             cls._instance = TaskManager()
         return cls._instance
 
-    def submit_task(self, func, args=(), kwargs=None, on_success=None, on_error=None):
+    def submit_task(
+        self,
+        func,
+        args=(),
+        kwargs=None,
+        on_success=None,
+        on_error=None,
+        *,
+        check_access: bool = True,
+    ):
         """
         Submit a task to the thread pool.
 
@@ -58,11 +69,12 @@ class TaskManager(QObject):
             kwargs: Keyword arguments for the function.
             on_success: Callback function for successful completion.
             on_error: Callback function for error handling.
+            check_access: 为 False 时跳过桌面端封禁检查（用于登录等恢复会话的任务）。
         """
         if kwargs is None:
             kwargs = {}
 
-        task = TaskRunnable(func, args, kwargs)
+        task = TaskRunnable(func, args, kwargs, check_access=check_access)
         signals = task.signals
         # Own signals on the main-thread TaskManager so they outlive the runnable.
         signals.setParent(self)
