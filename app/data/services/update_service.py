@@ -253,7 +253,7 @@ def check_and_prompt_update(parent: QWidget | None = None, *, manual: bool = Fal
             msg = f"检查更新失败：{exc}" if manual else None
             return ("error", None, msg)
         except Exception:
-            return ("error", None, None)
+            return ("error", None, "检查更新失败，请稍后重试。" if manual else None)
 
     def _on_success(result):
         status, info, error_message = result
@@ -261,7 +261,20 @@ def check_and_prompt_update(parent: QWidget | None = None, *, manual: bool = Fal
             parent, manual=manual, status=status, info=info, error_message=error_message
         )
 
-    task_manager.submit_task(_do, on_success=_on_success)
+    def _on_error(msg: str):
+        if not manual:
+            return
+        from app.common.utils import show_dialog
+
+        show_dialog(parent, msg or "检查更新失败，请稍后重试。")
+
+    # 检查更新必须跳过封禁闸：被 block 时否则任务直接失败且原先无 on_error，表现为「点了没反应」
+    task_manager.submit_task(
+        _do,
+        on_success=_on_success,
+        on_error=_on_error,
+        check_access=False,
+    )
 
 
 def prompt_update_on_startup(parent: QWidget | None = None) -> None:
