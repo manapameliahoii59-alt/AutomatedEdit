@@ -37,19 +37,15 @@ DEFAULT_MIXED_CLIP_COUNT = 15
 # 成片全局倍速（写入策划方案 global_speed，渲染时加速）
 DEFAULT_GLOBAL_SPEED = 1.15
 MIN_GLOBAL_SPEED = 1.0
-MAX_GLOBAL_SPEED = 1.5
-# 策划设置下拉可选倍速
-GLOBAL_SPEED_CHOICES: tuple[float, ...] = (
-    1.0,
-    1.05,
-    1.1,
-    1.15,
-    1.2,
-    1.25,
-    1.3,
-    1.4,
-    1.5,
-)
+MAX_GLOBAL_SPEED = 3.0
+# 策划设置下拉可选倍速（1.0~3.0，步进 0.1）
+GLOBAL_SPEED_CHOICES: tuple[float, ...] = tuple(i / 10 for i in range(10, 31))
+
+
+def nearest_global_speed_choice(value: float) -> float:
+    """将倍速对齐到下拉最近档（0.1 步进）。"""
+    speed = clamp_global_speed(value)
+    return min(GLOBAL_SPEED_CHOICES, key=lambda choice: abs(choice - speed))
 
 # 默认 A:B = 6:9（长片 / 混合）
 _DEFAULT_A = 6
@@ -89,7 +85,7 @@ def clamp_plan_mode(value: Any) -> PlanMode:
 
 
 def clamp_global_speed(value: Any) -> float:
-    """成片倍速 clamp（1.0~1.5）；非法值回落默认 1.15。"""
+    """成片倍速 clamp（1.0~3.0）；非法值回落默认 1.15。"""
     try:
         n = float(value)
     except (TypeError, ValueError):

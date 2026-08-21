@@ -1,0 +1,61 @@
+{% extends "admin/base.html" %}
+{% from "admin/macros.html" import pager %}
+{% block title %}用户配置 · {{ app_name }}{% endblock %}
+{% block body %}
+<div class="head">
+  <div>
+    <h1>用户配置</h1>
+    <p>桌面端同步下来的配置快照，共 {{ total }} 条</p>
+  </div>
+  <form class="search" method="get">
+    <div class="el-input">
+      <div class="el-input__wrapper">
+        <input class="el-input__inner" name="q" value="{{ q }}" placeholder="搜索配置内容">
+      </div>
+    </div>
+    <button class="el-button el-button--primary" type="submit">搜索</button>
+  </form>
+</div>
+<div class="grid-card">
+  <table class="ssr-table" id="settings-ssr-table">
+    <thead>
+      <tr>
+        <th>ID</th>
+        <th>账号</th>
+        <th>配置</th>
+        <th>更新时间</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for row in rows %}
+      <tr>
+        <td>{{ row.id }}</td>
+        <td>{{ row.username }}</td>
+        <td class="ellipsis" title="{{ row.data }}">{{ row.data }}</td>
+        <td>{{ row.updated_at }}</td>
+      </tr>
+      {% else %}
+      <tr><td class="empty" colspan="4">暂无数据</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  <div id="settings-grid"></div>
+</div>
+{{ pager("/admin/settings", page, total_pages, total, q) }}
+{% endblock %}
+{% block scripts %}
+<script>
+  if (window.Vue && window.VXETable) {
+    mountAdminGrid("#settings-grid", {
+      fallback: "#settings-ssr-table",
+      data: {{ rows | tojson }},
+      columns: [
+        { field: "id", title: "ID", width: 80 },
+        { field: "username", title: "账号", minWidth: 160 },
+        { field: "data", title: "配置", minWidth: 280, showOverflow: true },
+        { field: "updated_at", title: "更新时间", width: 180 },
+      ],
+    });
+  }
+</script>
+{% endblock %}

@@ -12,8 +12,13 @@ from app.services.plan_crypto import generate_plan_decrypt_key
 
 PLAN_LLM_PROVIDER_DEEPSEEK = "deepseek"
 PLAN_LLM_PROVIDER_OPENCODE_GO = "opencode_go"
+PLAN_LLM_PROVIDER_XIAOMI = "xiaomi"
 PLAN_LLM_PROVIDERS = frozenset(
-    {PLAN_LLM_PROVIDER_DEEPSEEK, PLAN_LLM_PROVIDER_OPENCODE_GO}
+    {
+        PLAN_LLM_PROVIDER_DEEPSEEK,
+        PLAN_LLM_PROVIDER_OPENCODE_GO,
+        PLAN_LLM_PROVIDER_XIAOMI,
+    }
 )
 
 # 管理后台下拉：(value, label)；value = provider|model
@@ -33,6 +38,14 @@ PLAN_LLM_PRESET_CHOICES: tuple[tuple[str, str], ...] = (
     (
         f"{PLAN_LLM_PROVIDER_OPENCODE_GO}|deepseek-v4-pro",
         "OpenCode Go / deepseek-v4-pro",
+    ),
+    (
+        f"{PLAN_LLM_PROVIDER_OPENCODE_GO}|mimo-v2.5",
+        "OpenCode Go / MiMo-V2.5",
+    ),
+    (
+        f"{PLAN_LLM_PROVIDER_XIAOMI}|mimo-v2.5",
+        "小米 MiMo / mimo-v2.5",
     ),
 )
 _PLAN_LLM_PRESET_VALUES = {value for value, _label in PLAN_LLM_PRESET_CHOICES}
@@ -78,6 +91,8 @@ def normalize_plan_llm_model(value: str | None, *, provider: str) -> str:
         return model
     if provider == PLAN_LLM_PROVIDER_OPENCODE_GO:
         return (settings.opencode_go_model or "deepseek-v4-flash").strip()
+    if provider == PLAN_LLM_PROVIDER_XIAOMI:
+        return (settings.xiaomi_mimo_model or "mimo-v2.5").strip()
     return (settings.deepseek_model or "deepseek-v4-flash").strip()
 
 
@@ -110,7 +125,12 @@ def plan_llm_preset_label(provider: str, model: str) -> str:
             return label
     p = normalize_plan_llm_provider(provider)
     m = normalize_plan_llm_model(model, provider=p)
-    prefix = "OpenCode Go" if p == PLAN_LLM_PROVIDER_OPENCODE_GO else "官方 DeepSeek"
+    if p == PLAN_LLM_PROVIDER_OPENCODE_GO:
+        prefix = "OpenCode Go"
+    elif p == PLAN_LLM_PROVIDER_XIAOMI:
+        prefix = "小米 MiMo"
+    else:
+        prefix = "官方 DeepSeek"
     return f"{prefix} / {m}"
 
 
@@ -133,6 +153,11 @@ def resolve_plan_llm_config(db: Session, user_id: int) -> PlanLlmConfig:
         api_url = (
             settings.opencode_go_api_url
             or "https://opencode.ai/zen/go/v1/chat/completions"
+        ).strip()
+    elif provider == PLAN_LLM_PROVIDER_XIAOMI:
+        api_url = (
+            settings.xiaomi_mimo_api_url
+            or "https://api.xiaomimimo.com/v1/chat/completions"
         ).strip()
     else:
         api_url = (

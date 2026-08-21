@@ -43,7 +43,7 @@ class PlanJobCreateRequest(BaseModel):
     # short | long | mixed；缺省时由 split_ab 推断（兼容旧客户端）
     plan_mode: str | None = None
     # 成片全局倍速（缺省服务端用 1.15）
-    global_speed: float | None = Field(default=None, ge=1.0, le=1.5)
+    global_speed: float | None = Field(default=None, ge=1.0, le=3.0)
 
 
 class PlanJobCreateResponse(BaseModel):
@@ -177,7 +177,7 @@ class PlanSettings(BaseModel):
     short_max_duration_sec: int = Field(default=300, ge=120, le=360)
     mixed_clip_count: int = Field(default=15, ge=5, le=20)
     mixed_max_duration_sec: int = Field(default=720, ge=360, le=900)
-    global_speed: float = Field(default=1.15, ge=1.0, le=1.5)
+    global_speed: float = Field(default=1.15, ge=1.0, le=3.0)
 
     model_config = {"extra": "allow"}
 
@@ -200,7 +200,7 @@ class PlanSettings(BaseModel):
             spd = float(self.global_speed)
         except (TypeError, ValueError):
             spd = 1.15
-        self.global_speed = max(1.0, min(1.5, round(spd, 2)))
+        self.global_speed = max(1.0, min(3.0, round(spd, 2)))
         return self
 
 
@@ -212,7 +212,7 @@ class PlanSettingsPatch(BaseModel):
     short_max_duration_sec: int | None = Field(default=None, ge=120, le=360)
     mixed_clip_count: int | None = Field(default=None, ge=5, le=20)
     mixed_max_duration_sec: int | None = Field(default=None, ge=360, le=900)
-    global_speed: float | None = Field(default=None, ge=1.0, le=1.5)
+    global_speed: float | None = Field(default=None, ge=1.0, le=3.0)
 
     model_config = {"extra": "allow"}
 
@@ -461,6 +461,7 @@ class OverlayTextGroupSettings(BaseModel):
 class OverlayTextLibrarySettings(BaseModel):
     selected_id: str = ""
     groups: list[OverlayTextGroupSettings] = Field(default_factory=list)
+    no_text: bool = False
 
     model_config = {"extra": "allow"}
 
@@ -502,6 +503,8 @@ class ClipEditSettings(BaseModel):
     """自动化剪辑页配置（文件名标识 + 画面叠字/文字组）。"""
 
     export_name_tag: str = Field(default="", max_length=20)
+    export_date_format: str = "md"
+    export_seq_format: str = "pad2"
     overlay_title: OverlayTextStyleSettings = Field(
         default_factory=_default_overlay_title
     )
@@ -515,6 +518,16 @@ class ClipEditSettings(BaseModel):
     @model_validator(mode="after")
     def _clamp(self) -> "ClipEditSettings":
         self.export_name_tag = str(self.export_name_tag or "").strip()[:20]
+        date_fmt = str(self.export_date_format or "").strip()
+        self.export_date_format = (
+            date_fmt if date_fmt in {"md", "ymd", "ymd_dash", "none"} else "md"
+        )
+        seq_fmt = str(self.export_seq_format or "").strip()
+        self.export_seq_format = (
+            seq_fmt
+            if seq_fmt in {"pad2", "pad3", "plain", "paren_pad2", "paren_plain"}
+            else "pad2"
+        )
         if isinstance(self.overlay_text_library, dict):
             self.overlay_text_library = OverlayTextLibrarySettings.model_validate(
                 self.overlay_text_library
@@ -535,6 +548,8 @@ class ClipEditSettings(BaseModel):
 
 class ClipEditSettingsPatch(BaseModel):
     export_name_tag: str | None = Field(default=None, max_length=20)
+    export_date_format: str | None = None
+    export_seq_format: str | None = None
     overlay_title: OverlayTextStyleSettings | dict[str, Any] | None = None
     overlay_disclaimer: OverlayTextStyleSettings | dict[str, Any] | None = None
     overlay_text_library: OverlayTextLibrarySettings | dict[str, Any] | None = None
@@ -543,6 +558,18 @@ class ClipEditSettingsPatch(BaseModel):
 
     @model_validator(mode="after")
     def _normalize_overlays(self) -> "ClipEditSettingsPatch":
+        if self.export_date_format is not None:
+            date_fmt = str(self.export_date_format or "").strip()
+            self.export_date_format = (
+                date_fmt if date_fmt in {"md", "ymd", "ymd_dash", "none"} else "md"
+            )
+        if self.export_seq_format is not None:
+            seq_fmt = str(self.export_seq_format or "").strip()
+            self.export_seq_format = (
+                seq_fmt
+                if seq_fmt in {"pad2", "pad3", "plain", "paren_pad2", "paren_plain"}
+                else "pad2"
+            )
         if isinstance(self.overlay_title, dict):
             self.overlay_title = OverlayTextStyleSettings.model_validate(
                 self.overlay_title

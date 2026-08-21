@@ -25,7 +25,7 @@ MIN_TARGET_CLIPS_COUNT = 5
 MAX_SHORT_LONG_CLIPS_COUNT = 15
 DEFAULT_GLOBAL_SPEED = 1.15
 MIN_GLOBAL_SPEED = 1.0
-MAX_GLOBAL_SPEED = 1.5
+MAX_GLOBAL_SPEED = 3.0
 GROUP_A_RATIO_NUM = 6  # 默认 A:B = 6:9
 GROUP_A_BUFFER = 2
 GROUP_B_BUFFER = 3
@@ -81,7 +81,7 @@ def clamp_plan_duration_seconds(value: Any, *, default: int) -> int:
 
 
 def clamp_global_speed(value: Any) -> float:
-    """成片倍速 1.0~1.5；缺省/非法回落 1.15。"""
+    """成片倍速 1.0~3.0；缺省/非法回落 1.15。"""
     try:
         n = float(value)
     except (TypeError, ValueError):
@@ -858,9 +858,13 @@ def _call_deepseek(
             "Authorization": f"Bearer {api_key}",
             "Content-Type": "application/json",
         }
+        provider_key = str(provider or "").strip().lower()
         # OpenCode Go 部分模型需要会话亲和头
-        if str(provider or "").strip().lower() == "opencode_go" and llm_session_id:
+        if provider_key == "opencode_go" and llm_session_id:
             headers["x-opencode-session"] = str(llm_session_id)
+        # 小米 MiMo 官方文档用 api-key 头（同时保留 Bearer 以兼容网关）
+        if provider_key == "xiaomi":
+            headers["api-key"] = api_key
         payload = {
             "model": model_name,
             "messages": [

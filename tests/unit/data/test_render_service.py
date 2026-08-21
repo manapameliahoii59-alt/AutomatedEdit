@@ -2,7 +2,14 @@ import subprocess
 import time
 from unittest.mock import MagicMock
 
-from app.data.services.render_service import ClipSegment, RenderService
+from app.data.services.render_service import ClipSegment, RenderService, build_atempo_filter
+
+
+def test_build_atempo_filter_chains_above_2x():
+    assert build_atempo_filter(1.15) == "atempo=1.15"
+    assert build_atempo_filter(2.0) == "atempo=2"
+    assert build_atempo_filter(2.5) == "atempo=2,atempo=1.25"
+    assert build_atempo_filter(3.0) == "atempo=2,atempo=1.5"
 
 
 class TestBuildSegments:

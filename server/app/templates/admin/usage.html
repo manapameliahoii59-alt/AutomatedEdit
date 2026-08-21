@@ -1,0 +1,82 @@
+{% extends "admin/base.html" %}
+{% from "admin/macros.html" import pager %}
+{% block title %}使用记录 · {{ app_name }}{% endblock %}
+{% block body %}
+<div class="head">
+  <div>
+    <h1>使用记录</h1>
+    <p>共 {{ total }} 条</p>
+  </div>
+  <form class="search" method="get">
+    <div class="el-input">
+      <div class="el-input__wrapper">
+        <input class="el-input__inner" name="q" value="{{ q }}" placeholder="搜索事件 / 详情">
+      </div>
+    </div>
+    <button class="el-button el-button--primary" type="submit">搜索</button>
+  </form>
+</div>
+<div class="grid-card">
+  <table class="ssr-table" id="usage-ssr-table">
+    <thead>
+      <tr>
+        <th>ID</th>
+        <th>账号</th>
+        <th>事件</th>
+        <th>成功</th>
+        <th>详情</th>
+        <th>模式</th>
+        <th>耗时</th>
+        <th>版本</th>
+        <th>时间</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for row in rows %}
+      <tr>
+        <td>{{ row.id }}</td>
+        <td>{{ row.username }}</td>
+        <td>{{ row.event }}</td>
+        <td>
+          {% if row.success == "是" %}
+          <span class="tag tag-ok">是</span>
+          {% else %}
+          <span class="tag tag-off">否</span>
+          {% endif %}
+        </td>
+        <td class="ellipsis" title="{{ row.meta }}">{{ row.meta }}</td>
+        <td>{{ row.plan_mode }}</td>
+        <td>{{ row.duration_ms }}</td>
+        <td>{{ row.client_version }}</td>
+        <td>{{ row.created_at }}</td>
+      </tr>
+      {% else %}
+      <tr><td class="empty" colspan="9">暂无数据</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  <div id="usage-grid"></div>
+</div>
+{{ pager("/admin/usage", page, total_pages, total, q) }}
+{% endblock %}
+{% block scripts %}
+<script>
+  if (window.Vue && window.VXETable) {
+    mountAdminGrid("#usage-grid", {
+      fallback: "#usage-ssr-table",
+      data: {{ rows | tojson }},
+      columns: [
+        { field: "id", title: "ID", width: 80 },
+        { field: "username", title: "账号", minWidth: 140 },
+        { field: "event", title: "事件", width: 120 },
+        { field: "success", title: "成功", width: 90 },
+        { field: "meta", title: "详情", minWidth: 180, showOverflow: true },
+        { field: "plan_mode", title: "模式", width: 90 },
+        { field: "duration_ms", title: "耗时", width: 90 },
+        { field: "client_version", title: "版本", width: 100 },
+        { field: "created_at", title: "时间", width: 160 },
+      ],
+    });
+  }
+</script>
+{% endblock %}

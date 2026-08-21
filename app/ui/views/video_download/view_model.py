@@ -41,6 +41,25 @@ def _format_changdu_precheck_error(detail: str) -> str:
     return f"剧目查询前置检查失败：{text}"
 
 
+def _is_changdu_auth_expired_error(msg: str) -> bool:
+    """识别常读登录态失效（含 cookie 缺失、过期提示等）。"""
+    text = (msg or "").strip()
+    if not text:
+        return False
+    return any(
+        k in text
+        for k in (
+            "登录态已过期",
+            "登录可能已过期",
+            "缺少 adUserId",
+            "缺少 rootAdUserId",
+            "请重新登录",
+            "请先登录常读",
+            "未登录常读",
+        )
+    )
+
+
 @dataclass
 class VideoDownloadTarget:
     id: str
@@ -221,6 +240,18 @@ class VideoDownloadViewModel(ViewModel):
             return True
         return False
 
+    def _relogin_changdu_after_expired(self, detail: str = "") -> None:
+        """清除失效登录态并打开浏览器，引导用户重新登录。"""
+        clear_auth_file()
+        self.authStatusChanged.emit(False, "登录已过期")
+        if detail:
+            self._append_log(f"⚠️ 登录态失效：{detail}")
+        self.messageReceived.emit(
+            "登录态已过期，已自动清除。正在打开浏览器，请重新登录常读平台"
+        )
+        # 延后一拍，确保当前任务已卸完 busy 态后再开登录
+        QTimer.singleShot(0, self.login_changdu)
+
     def login_changdu(self) -> None:
         if self._active_tasks > 0:
             self.messageReceived.emit("当前有任务进行中，请完成后再登录")
@@ -248,7 +279,7 @@ class VideoDownloadViewModel(ViewModel):
 
     def check_auth(self) -> None:
         if not is_auth_file_present():
-            self.errorOccurred.emit("请先登录常读平台")
+            self._relogin_changdu_after_expired("未找到登录态")
             return
         if self._active_tasks > 0:
             self.messageReceived.emit("当前有任务进行中，请稍候")
@@ -271,14 +302,16 @@ class VideoDownloadViewModel(ViewModel):
                 return
             detail = str(result.get("message") or result.get("code") or "未知错误")
             msg = _format_changdu_precheck_error(detail)
-            if "登录态已过期" in msg:
-                self.authStatusChanged.emit(False, "登录已过期")
+            if _is_changdu_auth_expired_error(msg):
+                self._relogin_changdu_after_expired(msg)
+                return
             self.errorOccurred.emit(msg)
 
         def _on_error(msg: str):
             self._remove_task()
-            if any(k in msg for k in ("登录", "过期", "401", "403")):
-                self.authStatusChanged.emit(False, "登录已过期")
+            if _is_changdu_auth_expired_error(msg):
+                self._relogin_changdu_after_expired(msg)
+                return
             self.errorOccurred.emit(f"验证失败：{msg}")
 
         task_manager.submit_task(_do_check, on_success=_on_success, on_error=_on_error)
@@ -341,7 +374,7 @@ class VideoDownloadViewModel(ViewModel):
             self.errorOccurred.emit("请至少输入一个剧名（每行一个）")
             return
         if not is_auth_file_present():
-            self.errorOccurred.emit("请先登录常读平台")
+            self._relogin_changdu_after_expired("未找到登录态")
             return
         if self._active_tasks > 0:
             self.messageReceived.emit("当前有任务进行中，请稍候")
@@ -422,8 +455,9 @@ class VideoDownloadViewModel(ViewModel):
         def _on_error(msg: str):
             if self._finish_task_with_error(msg, cancelled_message="剧名验证已取消"):
                 return
-            if "登录态已过期" in msg or "登录可能已过期" in msg:
-                self.authStatusChanged.emit(False, "登录已过期")
+            if _is_changdu_auth_expired_error(msg):
+                self._relogin_changdu_after_expired(msg)
+                return
             self.errorOccurred.emit(f"剧名验证失败：{msg}")
 
         task_manager.submit_task(_do_lookup, on_success=_on_success, on_error=_on_error)
@@ -512,7 +546,7 @@ class VideoDownloadViewModel(ViewModel):
 
     def start_download(self, *, create_only: bool = False, download_only: bool = False) -> None:
         if not is_auth_file_present():
-            self.errorOccurred.emit("请先登录常读平台")
+            self._relogin_changdu_after_expired("未找到登录态")
             return
         if not download_only and not self._targets:
             self.errorOccurred.emit("请先添加下载剧目")

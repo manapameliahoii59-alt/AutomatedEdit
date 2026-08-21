@@ -1,0 +1,429 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}{{ app_name }} 后台{% endblock %}</title>
+  <link rel="stylesheet" href="/static/admin/vxe-table.css">
+  <style>
+    * { box-sizing: border-box; }
+    html, body { margin: 0; height: 100%; overflow: hidden; }
+    body {
+      font-family: "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei UI", sans-serif;
+      background: #f5f7fa;
+      color: #303133;
+    }
+    a { color: #409eff; text-decoration: none; }
+    a:hover { color: #79bbff; }
+    .admin-shell { display: flex; height: 100%; overflow: hidden; }
+    .admin-aside {
+      width: 220px;
+      flex: 0 0 220px;
+      background: #fff;
+      color: #303133;
+      display: flex;
+      flex-direction: column;
+      box-shadow: 4px 0 16px rgba(0, 0, 0, 0.08);
+      z-index: 2;
+      font-family: "Source Han Sans SC", "Noto Sans SC", "PingFang SC", "Microsoft YaHei", sans-serif;
+    }
+    .admin-brand {
+      padding: 20px 20px 16px;
+      font-size: 15px;
+      font-weight: 500;
+      letter-spacing: 0.04em;
+      color: #303133;
+    }
+    .admin-brand small {
+      display: block;
+      margin-top: 6px;
+      font-size: 12px;
+      font-weight: 400;
+      letter-spacing: 0.12em;
+      color: #909399;
+    }
+    .el-menu { flex: 1; padding: 8px 0; }
+    .el-menu-item {
+      display: block;
+      color: #4e4e4e;
+      height: 44px;
+      line-height: 44px;
+      padding: 0 20px;
+      font-size: 14px;
+      font-weight: 400;
+      letter-spacing: 0.06em;
+    }
+    .el-menu-item:hover { background: #f5f5f5; color: #303133; }
+    .el-menu-item.is-active {
+      background: #e8e8e8;
+      color: #1f1f1f;
+      font-weight: 500;
+    }
+    .admin-foot { padding: 12px 16px 20px; }
+    .admin-foot a {
+      color: #606266;
+      font-size: 12px;
+      letter-spacing: 0.06em;
+    }
+    .admin-foot a:hover { color: #303133; }
+    .admin-main {
+      flex: 1;
+      min-width: 0;
+      min-height: 0;
+      padding: 24px 28px 16px;
+      display: flex;
+      flex-direction: column;
+      overflow: auto;
+    }
+    .head {
+      flex: 0 0 auto;
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-end;
+      gap: 16px;
+      margin-bottom: 16px;
+    }
+    .head h1 { margin: 0; font-size: 20px; font-weight: 650; }
+    .head p { margin: 6px 0 0; color: #909399; font-size: 13px; }
+    .search { display: flex; gap: 8px; min-width: 280px; }
+    .search .el-input { width: 220px; }
+    .toolbar { display: flex; gap: 8px; margin: 0 0 12px; }
+    .pager {
+      flex: 0 0 auto;
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+      gap: 8px;
+      margin-top: 8px;
+      color: #676768;
+      font-size: 12px;
+    }
+    .grid-card {
+      flex: 1;
+      min-height: 0;
+      background: #fff;
+      border: 1px solid #e8e8e8;
+      border-radius: 2px;
+      padding: 0;
+      overflow: hidden;
+    }
+    .ssr-table {
+      display: none;
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 12px;
+      font-family: "Source Han Sans SC", "Microsoft YaHei UI", sans-serif;
+      color: #676768;
+    }
+    .ssr-table.is-fallback { display: table; }
+    .ssr-table th, .ssr-table td {
+      border: 1px solid #e8eaec;
+      padding: 2px 8px;
+      text-align: center;
+      vertical-align: middle;
+      height: 28px;
+    }
+    .ssr-table th {
+      background: #f8f8f9;
+      color: #000;
+      font-weight: 500;
+      white-space: nowrap;
+    }
+    .ssr-table tbody tr:hover td { background: #f5f5f5; }
+    .vxe-table--render-default.size--small .vxe-header--column {
+      height: 28px;
+      padding: 2px;
+      background-color: #f8f8f9 !important;
+      color: #000;
+      font-size: 12px;
+      font-weight: 500;
+    }
+    .vxe-table--render-default.size--small .vxe-body--column {
+      height: 28px;
+      padding: 2px 6px;
+      font-size: 12px;
+      font-family: "Source Han Sans SC", "Microsoft YaHei UI", sans-serif;
+      font-weight: 400;
+      color: #676768;
+    }
+    .vxe-table--render-default .vxe-body--row.row--hover,
+    .vxe-table--render-default .vxe-body--row.row--current {
+      background-color: #f5f5f5;
+    }
+    .vxe-table--render-default .vxe-cell--checkbox.is--checked .vxe-checkbox--icon,
+    .vxe-table--render-default .vxe-cell--checkbox.is--indeterminate .vxe-checkbox--icon {
+      color: #676768;
+    }
+    .ssr-table .ellipsis {
+      max-width: 280px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .ssr-table .empty { text-align: center; color: #909399; padding: 32px 12px; }
+    .tag {
+      display: inline-block;
+      padding: 0 8px;
+      height: 22px;
+      line-height: 22px;
+      font-size: 12px;
+      border-radius: 4px;
+      background: #f4f4f5;
+      color: #909399;
+    }
+    .tag-ok { background: #f0f9eb; color: #67c23a; }
+    .tag-off { background: #fef0f0; color: #f56c6c; }
+    .el-button {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      height: 32px;
+      padding: 0 16px;
+      border: 1px solid #dcdfe6;
+      border-radius: 4px;
+      background: #fff;
+      color: #606266;
+      cursor: pointer;
+      font-size: 14px;
+      line-height: 1;
+    }
+    .el-button:hover { color: #409eff; border-color: #c6e2ff; background: #ecf5ff; }
+    .el-button--primary { background: #409eff; border-color: #409eff; color: #fff; }
+    .el-button--primary:hover { background: #79bbff; border-color: #79bbff; color: #fff; }
+    .el-button.is-disabled, .el-button:disabled {
+      cursor: not-allowed;
+      color: #c0c4cc;
+      background: #fff;
+      border-color: #ebeef5;
+    }
+    .el-input { width: 100%; }
+    .el-input__wrapper {
+      display: flex;
+      align-items: center;
+      height: 32px;
+      padding: 0 11px;
+      border: 1px solid #dcdfe6;
+      border-radius: 4px;
+      background: #fff;
+    }
+    .el-input__inner, .admin-select, .el-textarea__inner {
+      border: 0;
+      outline: none;
+      width: 100%;
+      font-size: 14px;
+      color: #606266;
+      background: transparent;
+      font-family: inherit;
+    }
+    .el-input__inner { height: 30px; }
+    .admin-select {
+      height: 32px;
+      border: 1px solid #dcdfe6;
+      border-radius: 4px;
+      padding: 0 11px;
+      background: #fff;
+    }
+    .el-textarea__inner {
+      min-height: 96px;
+      padding: 8px 11px;
+      border: 1px solid #dcdfe6;
+      border-radius: 4px;
+      background: #fff;
+      resize: vertical;
+    }
+    .form-wrap { max-width: 760px; }
+    .block {
+      background: #fff;
+      border: 1px solid #ebeef5;
+      border-radius: 4px;
+      padding: 18px 20px 8px;
+      margin-bottom: 16px;
+    }
+    .block h2 {
+      margin: 0 0 16px;
+      font-size: 14px;
+      font-weight: 650;
+      color: #606266;
+    }
+    .form-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 16px 20px;
+    }
+    .form-grid .wide { grid-column: 1 / -1; }
+    label.lbl { display: block; font-size: 13px; margin-bottom: 6px; color: #606266; }
+    .hint { margin: 6px 0 12px; font-size: 12px; color: #909399; line-height: 1.5; }
+    .flash { margin-bottom: 16px; }
+    .el-alert {
+      padding: 8px 12px;
+      border-radius: 4px;
+      background: #f0f9eb;
+      color: #67c23a;
+      font-size: 13px;
+    }
+    .actions { display: flex; gap: 10px; margin-top: 8px; }
+    .form-check.form-switch { display: flex; align-items: center; min-height: 32px; }
+    .form-check-input {
+      appearance: none;
+      width: 40px;
+      height: 20px;
+      margin: 0;
+      border: 0;
+      border-radius: 10px;
+      background: #dcdfe6;
+      position: relative;
+      cursor: pointer;
+    }
+    .form-check-input::after {
+      content: "";
+      position: absolute;
+      top: 2px;
+      left: 2px;
+      width: 16px;
+      height: 16px;
+      background: #fff;
+      border-radius: 8px;
+    }
+    .form-switch.is-on .form-check-input { background: #409eff; }
+    .form-switch.is-on .form-check-input::after { left: 22px; }
+    @media (max-width: 900px) {
+      .admin-shell { flex-direction: column; }
+      .admin-aside { width: 100%; flex: none; }
+      .el-menu { display: flex; flex-wrap: wrap; }
+      .form-grid { grid-template-columns: 1fr; }
+      .search { min-width: 0; width: 100%; }
+      .head { flex-direction: column; align-items: stretch; }
+    }
+  </style>
+</head>
+<body>
+  <div class="admin-shell">
+    <aside class="admin-aside">
+      <div class="admin-brand">剪辑助手<small>管理后台</small></div>
+      <nav class="el-menu">
+        {% for item in nav %}
+        <a href="{{ item.href }}" class="el-menu-item{% if item.active %} is-active{% endif %}">{{ item.label }}</a>
+        {% endfor %}
+      </nav>
+      <div class="admin-foot"><a href="/admin/logout">退出登录</a></div>
+    </aside>
+    <main class="admin-main">
+      {% block body %}{% endblock %}
+    </main>
+  </div>
+  <script src="/static/admin/vue.global.prod.js"></script>
+  <script src="/static/admin/xe-utils.umd.min.js"></script>
+  <script src="/static/admin/vxe-table.umd.min.js"></script>
+  <script>
+    window.mountAdminGrid = function (selector, options) {
+      const el = document.querySelector(selector);
+      const fallback = options.fallback ? document.querySelector(options.fallback) : null;
+      const showFallback = function () {
+        if (!fallback) return;
+        fallback.classList.add("is-fallback");
+        fallback.querySelectorAll("input[type='checkbox']").forEach((node) => {
+          node.disabled = false;
+        });
+      };
+      const tableLib = window.VXETable;
+      const Grid = tableLib && (tableLib.VxeGrid || tableLib.Grid);
+      if (!el || !window.Vue || !tableLib || !Grid) {
+        showFallback();
+        return;
+      }
+      try {
+        const host = el.closest(".grid-card") || el;
+        const calcGridHeight = function () {
+          return Math.max(200, Math.floor(host.clientHeight) - 2);
+        };
+        const gridOptions = {
+          border: true,
+          showOverflow: true,
+          size: "small",
+          align: "center",
+          headerAlign: "center",
+          columns: options.columns || [],
+          data: options.data || [],
+          headerCellStyle: {
+            fontWeight: "500",
+            color: "#000000",
+            fontSize: "12px",
+            backgroundColor: "#f8f8f9",
+          },
+          headerRowStyle: {
+            fontSize: "12px",
+            fontFamily: "Source Han Sans SC, Microsoft YaHei UI, sans-serif",
+            fontWeight: 400,
+            color: "#676768",
+            height: "23px",
+            minHeight: "23px",
+            padding: "2px",
+          },
+          rowStyle: {
+            fontSize: "12px",
+            fontFamily: "Source Han Sans SC, Microsoft YaHei UI, sans-serif",
+            fontWeight: 400,
+            color: "#676768",
+          },
+          rowConfig: { keyField: "id", isCurrent: true, isHover: true },
+          columnConfig: { resizable: true },
+        };
+        if (options.formId) gridOptions.checkboxConfig = { highlight: true };
+        let gridRef = null;
+        const app = Vue.createApp({
+          data() {
+            return { gridHeight: calcGridHeight() };
+          },
+          mounted() {
+            const applyHeight = () => {
+              this.gridHeight = calcGridHeight();
+              this.$nextTick(() => {
+                if (gridRef && gridRef.recalculate) gridRef.recalculate();
+              });
+            };
+            this._onResize = applyHeight;
+            window.addEventListener("resize", applyHeight);
+            this.$nextTick(applyHeight);
+            requestAnimationFrame(applyHeight);
+          },
+          unmounted() {
+            window.removeEventListener("resize", this._onResize);
+          },
+          render() {
+            return Vue.h(Grid, Object.assign({}, gridOptions, {
+              height: this.gridHeight,
+              ref: function (vm) { gridRef = vm; },
+            }));
+          },
+        });
+        app.use(tableLib);
+        app.mount(el);
+        const ok = el.querySelector(".vxe-table") || el.querySelector("table");
+        if (!ok) {
+          showFallback();
+          return;
+        }
+        if (options.formId) {
+          document.getElementById(options.formId).addEventListener("submit", () => {
+            const records = gridRef && gridRef.getCheckboxRecords ? gridRef.getCheckboxRecords() : [];
+            const form = document.getElementById(options.formId);
+            form.querySelectorAll("input[name='user_ids'][data-vxe]").forEach((node) => node.remove());
+            records.forEach((row) => {
+              const input = document.createElement("input");
+              input.type = "hidden";
+              input.name = "user_ids";
+              input.setAttribute("data-vxe", "1");
+              input.value = row.id;
+              form.appendChild(input);
+            });
+          });
+        }
+      } catch (err) {
+        console.error(err);
+        showFallback();
+      }
+    };
+  </script>
+  {% block scripts %}{% endblock %}
+</body>
+</html>

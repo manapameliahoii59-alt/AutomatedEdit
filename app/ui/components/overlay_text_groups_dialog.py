@@ -18,7 +18,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
-from qfluentwidgets import BodyLabel, PushButton, isDarkTheme
+from qfluentwidgets import BodyLabel, PushButton, SwitchButton, isDarkTheme
 
 from app.common.overlay_text_settings import (
     DEFAULT_OVERLAY_GROUP_ID,
@@ -228,6 +228,20 @@ class OverlayTextGroupsDialog(QDialog):
         tip.setWordWrap(True)
         root.addWidget(tip)
 
+        no_text_row = QHBoxLayout()
+        no_text_label = BodyLabel("不设置文字", self)
+        no_text_label.setToolTip("打开后渲染成片不叠加剧名和提示文字")
+        self._no_text_switch = SwitchButton(self)
+        self._no_text_switch.setOnText("开")
+        self._no_text_switch.setOffText("关")
+        self._no_text_switch.setChecked(bool(self._lib.get("no_text")))
+        self._no_text_switch.setToolTip(no_text_label.toolTip())
+        self._no_text_switch.checkedChanged.connect(self._on_no_text_changed)
+        no_text_row.addWidget(no_text_label)
+        no_text_row.addWidget(self._no_text_switch)
+        no_text_row.addStretch(1)
+        root.addLayout(no_text_row)
+
         self._scroll = QScrollArea(self)
         self._scroll.setWidgetResizable(True)
         self._scroll.setFrameShape(QFrame.Shape.NoFrame)
@@ -243,8 +257,8 @@ class OverlayTextGroupsDialog(QDialog):
         root.addWidget(self._scroll, 1)
 
         action_row = QHBoxLayout()
-        add_btn = PushButton("新增文字组", self)
-        action_row.addWidget(add_btn)
+        self._add_btn = PushButton("新增文字组", self)
+        action_row.addWidget(self._add_btn)
         action_row.addStretch(1)
         root.addLayout(action_row)
 
@@ -254,14 +268,33 @@ class OverlayTextGroupsDialog(QDialog):
         )
         root.addWidget(buttons)
 
-        add_btn.clicked.connect(self._on_add)
+        self._add_btn.clicked.connect(self._on_add)
         buttons.accepted.connect(self._on_accept)
         buttons.rejected.connect(self.reject)
 
         self._rebuild_list()
+        self._apply_no_text_ui(bool(self._lib.get("no_text")))
 
     def result_library(self) -> OverlayTextLibrary:
         return clamp_overlay_library(self._saved or self._lib)
+
+    def _on_no_text_changed(self, checked: bool) -> None:
+        self._lib["no_text"] = bool(checked)
+        self._apply_no_text_ui(bool(checked))
+
+    def _apply_no_text_ui(self, no_text: bool) -> None:
+        enabled = not no_text
+        self._scroll.setEnabled(enabled)
+        self._add_btn.setEnabled(enabled)
+
+    def _reload_lib(self, *, selected_id: str | None = None) -> None:
+        no_text = bool(self._lib.get("no_text"))
+        sid = self._lib["selected_id"] if selected_id is None else selected_id
+        self._lib = load_overlay_library_from_cfg()
+        self._lib["no_text"] = no_text
+        self._lib["selected_id"] = sid
+        self._rebuild_list()
+        self._apply_no_text_ui(no_text)
 
     def _rebuild_list(self) -> None:
         while self._list_layout.count():
@@ -345,9 +378,7 @@ class OverlayTextGroupsDialog(QDialog):
         group["title"] = title  # type: ignore[assignment]
         group["disclaimer"] = disc  # type: ignore[assignment]
         upsert_overlay_group(group)
-        self._lib = load_overlay_library_from_cfg()
-        self._lib["selected_id"] = group["id"]
-        self._rebuild_list()
+        self._reload_lib(selected_id=group["id"])
 
     def _edit_group(self, group_id: str) -> None:
         group = self._find_group(group_id)
@@ -366,9 +397,7 @@ class OverlayTextGroupsDialog(QDialog):
         group = {**group, "title": title, "disclaimer": disc}  # type: ignore[misc]
         selected = self._lib["selected_id"]
         upsert_overlay_group(group)
-        self._lib = load_overlay_library_from_cfg()
-        self._lib["selected_id"] = selected
-        self._rebuild_list()
+        self._reload_lib(selected_id=selected)
 
     def _rename_group(self, group_id: str) -> None:
         group = self._find_group(group_id)
@@ -383,9 +412,7 @@ class OverlayTextGroupsDialog(QDialog):
         group = {**group, "name": name}
         selected = self._lib["selected_id"]
         upsert_overlay_group(group)
-        self._lib = load_overlay_library_from_cfg()
-        self._lib["selected_id"] = selected
-        self._rebuild_list()
+        self._reload_lib(selected_id=selected)
 
     def _delete_group(self, group_id: str) -> None:
         group = self._find_group(group_id)
@@ -395,9 +422,9 @@ class OverlayTextGroupsDialog(QDialog):
             show_toast(self, "「默认」文字组不可删除", title="画面文字")
             return
         delete_overlay_group(group["id"])
-        self._lib = load_overlay_library_from_cfg()
-        self._rebuild_list()
+        self._reload_lib()
 
     def _on_accept(self) -> None:
+        self._lib["no_text"] = bool(self._no_text_switch.isChecked())
         self._saved = save_overlay_library_to_cfg(self._lib)
         self.accept()

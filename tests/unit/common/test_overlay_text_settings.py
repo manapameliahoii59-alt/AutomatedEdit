@@ -646,6 +646,35 @@ def test_apply_overlay_skips_server_defaults_when_local_exists(monkeypatch):
     assert any(item is local_tag and value == "new" for item, value in sets)
 
 
+def test_apply_overlay_syncs_export_name_format(monkeypatch):
+    from app.common.overlay_text_settings import apply_overlay_from_clip_edit_dict
+
+    class _Item:
+        def __init__(self, value):
+            self.value = value
+
+    from app.common import config as config_mod
+
+    date_item = _Item("md")
+    seq_item = _Item("pad2")
+    monkeypatch.setattr(config_mod.cfg, "overlay_text_library_json", _Item(""))
+    monkeypatch.setattr(config_mod.cfg, "overlay_title_json", _Item(""))
+    monkeypatch.setattr(config_mod.cfg, "overlay_disclaimer_json", _Item(""))
+    monkeypatch.setattr(config_mod.cfg, "clip_export_name_tag", _Item(""))
+    monkeypatch.setattr(config_mod.cfg, "clip_export_date_format", date_item)
+    monkeypatch.setattr(config_mod.cfg, "clip_export_seq_format", seq_item)
+
+    def _fake_set(item, value):
+        item.value = value
+
+    monkeypatch.setattr("qfluentwidgets.qconfig.set", _fake_set)
+    apply_overlay_from_clip_edit_dict(
+        {"export_date_format": "ymd_dash", "export_seq_format": "plain"}
+    )
+    assert date_item.value == "ymd_dash"
+    assert seq_item.value == "plain"
+
+
 def test_apply_overlay_accepts_non_default_server_style(monkeypatch):
     import json
 
@@ -809,3 +838,57 @@ def test_build_overlay_filters_uses_selected_group(monkeypatch):
     filters = build_overlay_drawtext_filters("测试剧")
     assert any("textfile=" in f for f in filters)
     assert any("fontsize=22" in f for f in filters)
+
+
+def test_clamp_overlay_library_no_text():
+    from app.common.overlay_text_settings import (
+        DEFAULT_OVERLAY_GROUP_ID,
+        clamp_overlay_library,
+    )
+
+    empty = clamp_overlay_library({})
+    assert empty["no_text"] is False
+    assert empty["groups"][0]["id"] == DEFAULT_OVERLAY_GROUP_ID
+
+    on = clamp_overlay_library(
+        {"selected_id": DEFAULT_OVERLAY_GROUP_ID, "groups": [], "no_text": True}
+    )
+    assert on["no_text"] is True
+
+    from app.common.overlay_text_settings import _library_equals_default
+
+    assert _library_equals_default({}) is True
+    assert _library_equals_default({"no_text": True}) is False
+
+
+def test_build_overlay_plan_skips_when_no_text(monkeypatch):
+    from app.common.overlay_text_settings import build_overlay_plan
+
+    monkeypatch.setattr(
+        "app.common.overlay_text_settings.overlay_text_disabled_from_cfg",
+        lambda: True,
+    )
+    plan = build_overlay_plan("测剧", horizontal=False)
+    assert plan["drawtext_filters"] == []
+    assert plan["image_overlays"] == []
+
+
+def test_overlay_text_disabled_from_cfg(monkeypatch):
+    import json
+
+    from app.common import config as config_mod
+    from app.common.overlay_text_settings import overlay_text_disabled_from_cfg
+
+    class _Item:
+        def __init__(self, value):
+            self.value = value
+
+    monkeypatch.setattr(config_mod.cfg, "overlay_text_library_json", _Item(""))
+    assert overlay_text_disabled_from_cfg() is False
+
+    monkeypatch.setattr(
+        config_mod.cfg,
+        "overlay_text_library_json",
+        _Item(json.dumps({"no_text": True, "groups": []})),
+    )
+    assert overlay_text_disabled_from_cfg() is True

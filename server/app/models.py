@@ -24,6 +24,7 @@ class User(Base):
     settings: Mapped["UserSettings | None"] = relationship(back_populates="user", uselist=False)
     usage_events: Mapped[list["UsageEvent"]] = relationship(back_populates="user")
     daily_activities: Mapped[list["UserDailyActivity"]] = relationship(back_populates="user")
+    plan_jobs: Mapped[list["PlanJob"]] = relationship(back_populates="user")
 
 
 class UserSecret(Base):
@@ -31,11 +32,11 @@ class UserSecret(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), unique=True, index=True)
-    # 策划 LLM 密钥（官方 DeepSeek 或 OpenCode Go，由 plan_llm_provider 决定）
+    # 策划 LLM 密钥（官方 DeepSeek / OpenCode Go / 小米 MiMo，由 plan_llm_provider 决定）
     deepseek_keys: Mapped[str] = mapped_column(Text, default="")
     dashscope_key: Mapped[str] = mapped_column(Text, default="")
     plan_decrypt_key: Mapped[str] = mapped_column(String(64), default="")
-    # deepseek | opencode_go
+    # deepseek | opencode_go | xiaomi
     plan_llm_provider: Mapped[str] = mapped_column(String(32), default="deepseek")
     # 空=通道默认模型
     plan_llm_model: Mapped[str] = mapped_column(String(64), default="")
@@ -117,3 +118,5 @@ class PlanJob(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, server_default=func.now(), onupdate=func.now(), index=True
     )
+
+    user: Mapped["User | None"] = relationship(back_populates="plan_jobs")

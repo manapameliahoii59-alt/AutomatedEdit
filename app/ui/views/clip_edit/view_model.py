@@ -94,6 +94,25 @@ class ClipEditViewModel(ViewModel):
 
         task_manager.submit_task(_do, on_success=lambda _ok: None, on_error=_on_error)
 
+    def save_export_name_format(self, date_format: str, seq_format: str) -> None:
+        """本地已写入 cfg 后，后台同步文件名日期/序号格式到服务端。"""
+        api = get_api()
+        if not api._token:
+            return
+        patch = clip_edit_settings_patch(
+            export_date_format=date_format,
+            export_seq_format=seq_format,
+        )
+
+        def _do():
+            get_api().update_settings(patch)
+            return True
+
+        def _on_error(msg: str):
+            self.errorOccurred.emit(f"文件名格式同步失败：{msg}")
+
+        task_manager.submit_task(_do, on_success=lambda _ok: None, on_error=_on_error)
+
     def save_overlay_text_settings(
         self,
         *,

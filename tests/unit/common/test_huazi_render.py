@@ -140,6 +140,10 @@ def test_build_overlay_plan_huazi_image(monkeypatch, font_path, tmp_path):
         "app.common.overlay_text_settings.prepare_font_file",
         lambda *_a, **_k: font_path,
     )
+    monkeypatch.setattr(
+        "app.common.overlay_text_settings.overlay_text_disabled_from_cfg",
+        lambda: False,
+    )
 
     plan = build_overlay_plan("测剧", horizontal=False, cache_dir=str(tmp_path))
     assert plan["drawtext_filters"] == []

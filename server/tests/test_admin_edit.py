@@ -13,7 +13,7 @@ SERVER_ROOT = Path(__file__).resolve().parents[1]
 if str(SERVER_ROOT) not in sys.path:
     sys.path.insert(0, str(SERVER_ROOT))
 
-from app.admin_panel import AdminAuth, setup_admin
+from app.admin_panel import setup_admin
 from app.config import settings
 from app.database import Base
 from app.models import User
@@ -41,22 +41,18 @@ def admin_client(monkeypatch, tmp_path):
     monkeypatch.setattr("app.admin_panel.engine", engine)
 
     app = FastAPI()
-    admin = setup_admin(app)
-
-    class NoAuth(AdminAuth):
-        async def authenticate(self, request):
-            return True
-
-    admin.authentication_backend = NoAuth(secret_key="test")
+    setup_admin(app)
 
     with TestClient(app, raise_server_exceptions=True) as client:
-        client.post(
+        login = client.post(
             "/admin/login",
             data={
                 "username": settings.admin_username,
                 "password": settings.admin_password,
             },
+            follow_redirects=False,
         )
+        assert login.status_code == 302
         yield client
 
 
@@ -67,6 +63,10 @@ def test_user_edit_page_renders(admin_client):
     assert "策划 API Keys" in response.text
     assert "策划模型" in response.text
     assert "OpenCode Go" in response.text
+    assert "OpenCode Go / MiMo-V2.5" in response.text
+    assert 'value="opencode_go|mimo-v2.5"' in response.text
+    assert "小米 MiMo" in response.text
+    assert "mimo-v2.5" in response.text
     assert "form-check form-switch" in response.text
     assert 'role="switch"' in response.text
     assert 'class="form-check-input"' in response.text
@@ -130,3 +130,8 @@ def test_user_list_shows_deepseek_column(admin_client):
     assert response.status_code == 200
     assert "策划 API Keys" in response.text
     assert "策划模型" in response.text
+    assert "a@b.com" in response.text
+    assert "ssr-table" in response.text
+    assert "<td>a@b.com</td>" in response.text
+    assets = admin_client.get("/static/admin/vxe-table.umd.min.js")
+    assert assets.status_code == 200

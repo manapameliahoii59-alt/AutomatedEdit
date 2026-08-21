@@ -1,0 +1,16 @@
+{% macro pager(path, page, total_pages, total, q='') %}
+<div class="pager">
+  <span class="pager-total">共 {{ total }} 条</span>
+  {% if page > 1 %}
+  <a class="el-button" href="{{ path }}?page={{ page - 1 }}{% if q %}&q={{ q|urlencode }}{% endif %}">上一页</a>
+  {% else %}
+  <span class="el-button is-disabled">上一页</span>
+  {% endif %}
+  <span class="pager-num">{{ page }} / {{ total_pages }}</span>
+  {% if page < total_pages %}
+  <a class="el-button" href="{{ path }}?page={{ page + 1 }}{% if q %}&q={{ q|urlencode }}{% endif %}">下一页</a>
+  {% else %}
+  <span class="el-button is-disabled">下一页</span>
+  {% endif %}
+</div>
+{% endmacro %}

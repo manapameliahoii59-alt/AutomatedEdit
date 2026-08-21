@@ -19,6 +19,10 @@ class Settings(BaseSettings):
     opencode_go_api_url: str = "https://opencode.ai/zen/go/v1/chat/completions"
     opencode_go_model: str = "deepseek-v4-flash"
 
+    # 小米 MiMo 策划通道
+    xiaomi_mimo_api_url: str = "https://api.xiaomimimo.com/v1/chat/completions"
+    xiaomi_mimo_model: str = "mimo-v2.5"
+
     # 对外访问根地址（反代后建议配置，用于拼安装包下载链接）
     # 例：https://api.example.com
     public_base_url: str = ""

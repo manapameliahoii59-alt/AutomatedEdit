@@ -154,4 +154,23 @@ class SettingInterface(ScrollArea):
             self.changdu_account_card.setContent(changdu_account_summary())
 
     def __on_check_update(self):
-        check_and_prompt_update(self.window(), manual=True)
+        if getattr(self, "_checking_update", False):
+            return
+
+        def _set_busy(busy: bool) -> None:
+            self._checking_update = busy
+            btn = getattr(self.checkUpdateCard, "button", None)
+            if btn is not None:
+                btn.setEnabled(not busy)
+            if busy:
+                self.checkUpdateCard.setContent("正在检查更新…")
+            else:
+                self.checkUpdateCard.setContent(
+                    f"当前版本 {VERSION}，有新版本时可直接下载安装"
+                )
+
+        check_and_prompt_update(
+            self.window(),
+            manual=True,
+            on_busy=_set_busy,
+        )

@@ -81,12 +81,31 @@ def test_split_ab_ratio():
     assert split_ab_counts(20)[0] + split_ab_counts(20)[1] == 20
 
 
+def test_global_speed_choices_step():
+    from app.common.plan_settings import GLOBAL_SPEED_CHOICES
+
+    assert len(GLOBAL_SPEED_CHOICES) == 21
+    assert GLOBAL_SPEED_CHOICES[0] == 1.0
+    assert GLOBAL_SPEED_CHOICES[-1] == 3.0
+    assert round(GLOBAL_SPEED_CHOICES[1] - GLOBAL_SPEED_CHOICES[0], 1) == 0.1
+
+
+def test_nearest_global_speed_choice():
+    from app.common.plan_settings import nearest_global_speed_choice
+
+    assert nearest_global_speed_choice(1.15) in (1.1, 1.2)
+    assert nearest_global_speed_choice(2.04) == 2.0
+    assert nearest_global_speed_choice(2.96) == 3.0
+
+
 def test_clamp_global_speed():
     assert clamp_global_speed(1.15) == 1.15
     assert clamp_global_speed(1.0) == 1.0
     assert clamp_global_speed(1.5) == 1.5
+    assert clamp_global_speed(3.0) == 3.0
     assert clamp_global_speed(0.5) == 1.0
-    assert clamp_global_speed(2.0) == 1.5
+    assert clamp_global_speed(2.0) == 2.0
+    assert clamp_global_speed(4.0) == 3.0
     assert clamp_global_speed(None) == 1.15
     assert clamp_global_speed("bad") == 1.15
 

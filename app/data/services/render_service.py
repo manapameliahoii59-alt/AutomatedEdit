@@ -5,7 +5,7 @@ import subprocess
 import tempfile
 import time
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 from scenedetect import ContentDetector, detect
 
@@ -46,6 +46,26 @@ _DEFAULT_NVENC_PRESET = "p5"
 _DEFAULT_X264_PRESET = "superfast"
 _NVENC_PRESET_SET = {k for k, _ in NVENC_PRESET_CHOICES}
 _X264_PRESET_SET = {k for k, _ in X264_PRESET_CHOICES}
+
+
+def build_atempo_filter(speed: float) -> str:
+    """生成 atempo 链。单级通常限 0.5~2.0，超过则拆成多级（如 3x → 2.0,1.5）。"""
+    try:
+        rate = float(speed)
+    except (TypeError, ValueError):
+        rate = 1.0
+    if rate != rate or rate <= 0:
+        rate = 1.0
+    factors: list[float] = []
+    remaining = rate
+    while remaining > 2.0 + 1e-9:
+        factors.append(2.0)
+        remaining /= 2.0
+    while remaining < 0.5 - 1e-9:
+        factors.append(0.5)
+        remaining /= 0.5
+    factors.append(round(remaining, 4))
+    return ",".join(f"atempo={f:g}" for f in factors)
 
 
 class RenderCancelled(RuntimeError):
@@ -98,6 +118,7 @@ class RenderContext:
     episode_cache: dict[tuple[str, float], str] = field(default_factory=dict)
     probe_cache: dict[str, float | bool] = field(default_factory=dict)
     scene_cache: dict = field(default_factory=dict)
+    continued_card_hits: dict[str, bool] = field(default_factory=dict)
 
 
 class RenderService:
@@ -574,6 +595,60 @@ class RenderService:
         return segments
 
     @staticmethod
+    def _trim_first_episode_continued_card(
+        ffmpeg,
+        ffprobe,
+        ctx: RenderContext,
+        segments: list[ClipSegment],
+    ) -> list[ClipSegment]:
+        """第一集用到片尾且 OCR 命中「未完待续」时，裁掉最后 3 秒。"""
+        from app.common.config import cfg
+        from app.common.continued_card import (
+            covers_tail,
+            detect_continued_card,
+            is_first_episode,
+            trimmed_end,
+        )
+
+        if not bool(getattr(cfg.clip_trim_ep1_continued, "value", True)):
+            return segments
+
+        out: list[ClipSegment] = []
+        for segment in segments:
+            if not is_first_episode(segment.episode):
+                out.append(segment)
+                continue
+            src_path = os.path.join(ctx.project_path, segment.episode)
+            duration = RenderService._probe_duration(
+                ffprobe, src_path, ctx.probe_cache
+            )
+            if not covers_tail(segment.end, duration):
+                out.append(segment)
+                continue
+            cache_key = os.path.normcase(os.path.abspath(src_path))
+            if cache_key not in ctx.continued_card_hits:
+                ctx.continued_card_hits[cache_key] = detect_continued_card(
+                    ffmpeg, src_path, duration
+                )
+            if not ctx.continued_card_hits[cache_key]:
+                out.append(segment)
+                continue
+            cut_at = trimmed_end(duration)
+            if cut_at <= float(segment.start) + MIN_CUT_DURATION:
+                print(
+                    f"   ⚠️ 第一集片尾未完待续与入点重叠，跳过该段: {segment.episode}",
+                    flush=True,
+                )
+                continue
+            print(
+                f"   去掉第一集片尾未完待续: {segment.episode} "
+                f"裁至 {cut_at:.1f}s（片长 {duration:.1f}s）",
+                flush=True,
+            )
+            out.append(replace(segment, end=cut_at))
+        return out
+
+    @staticmethod
     def _estimate_segment_duration(
         ffprobe,
         ctx: RenderContext,
@@ -636,7 +711,10 @@ class RenderService:
             f"pad={w}:{h}:(ow-iw)/2:(oh-ih)/2:black,"
             f"setsar=1,setpts=1/{speed}*PTS"
         )
-        af = f"aresample=44100,aformat=channel_layouts=stereo,atempo={speed}"
+        af = (
+            "aresample=44100,aformat=channel_layouts=stereo,"
+            + build_atempo_filter(speed)
+        )
 
         has_audio = RenderService._has_audio_stream(ffprobe, src_path, ctx.probe_cache)
 
@@ -1103,6 +1181,12 @@ class RenderService:
         segments = RenderService.build_segments(config, cut_point)
         if not segments:
             print("⚠️ 无效片段配置，跳过", flush=True)
+            return False
+        segments = RenderService._trim_first_episode_continued_card(
+            ffmpeg, ffprobe, ctx, segments
+        )
+        if not segments:
+            print("⚠️ 去掉未完待续后无可用片段，跳过", flush=True)
             return False
 
         input_paths: list[str] = []

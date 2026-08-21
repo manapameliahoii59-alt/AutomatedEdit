@@ -1218,6 +1218,7 @@ class OverlayTextGroup(TypedDict):
 class OverlayTextLibrary(TypedDict):
     selected_id: str
     groups: list[OverlayTextGroup]
+    no_text: bool
 
 
 def _new_group_id() -> str:
@@ -1277,7 +1278,11 @@ def ensure_default_overlay_group(lib: OverlayTextLibrary) -> OverlayTextLibrary:
         if not str(found.get("name") or "").strip():
             found["name"] = DEFAULT_OVERLAY_GROUP_NAME
     selected = str(lib.get("selected_id") or "").strip()
-    return {"selected_id": selected, "groups": groups}
+    return {
+        "selected_id": selected,
+        "groups": groups,
+        "no_text": bool(lib.get("no_text")),
+    }
 
 
 def clamp_overlay_library(data: Any) -> OverlayTextLibrary:
@@ -1295,6 +1300,7 @@ def clamp_overlay_library(data: Any) -> OverlayTextLibrary:
     lib: OverlayTextLibrary = {
         "selected_id": str(src.get("selected_id") or "").strip(),
         "groups": groups,
+        "no_text": bool(src.get("no_text")),
     }
     return ensure_default_overlay_group(lib)
 
@@ -1489,6 +1495,8 @@ def _style_equals_default(style: Any, defaults: dict[str, Any]) -> bool:
 
 def _library_equals_default(lib: Any) -> bool:
     clamped = clamp_overlay_library(lib)
+    if clamped.get("no_text"):
+        return False
     if len(clamped["groups"]) != 1:
         return False
     g = clamped["groups"][0]
@@ -1561,11 +1569,27 @@ def apply_overlay_from_clip_edit_dict(data: dict | None) -> None:
             cfg.clip_export_name_tag,
             str(data.get("export_name_tag") or "").strip()[:20],
         )
+    if "export_date_format" in data:
+        from app.common.export_paths import clamp_export_date_format
+
+        qconfig.set(
+            cfg.clip_export_date_format,
+            clamp_export_date_format(data.get("export_date_format")),
+        )
+    if "export_seq_format" in data:
+        from app.common.export_paths import clamp_export_seq_format
+
+        qconfig.set(
+            cfg.clip_export_seq_format,
+            clamp_export_seq_format(data.get("export_seq_format")),
+        )
 
 
 def clip_edit_settings_patch(
     *,
     export_name_tag: str | None = None,
+    export_date_format: str | None = None,
+    export_seq_format: str | None = None,
     overlay_title: dict | None = None,
     overlay_disclaimer: dict | None = None,
     overlay_text_library: dict | None = None,
@@ -1573,6 +1597,14 @@ def clip_edit_settings_patch(
     clip: dict[str, Any] = {}
     if export_name_tag is not None:
         clip["export_name_tag"] = str(export_name_tag).strip()[:20]
+    if export_date_format is not None:
+        from app.common.export_paths import clamp_export_date_format
+
+        clip["export_date_format"] = clamp_export_date_format(export_date_format)
+    if export_seq_format is not None:
+        from app.common.export_paths import clamp_export_seq_format
+
+        clip["export_seq_format"] = clamp_export_seq_format(export_seq_format)
     if overlay_text_library is not None:
         lib = clamp_overlay_library(overlay_text_library)
         clip["overlay_text_library"] = lib
@@ -1936,6 +1968,16 @@ def _build_huazi_image_spec(
     return {"path": png.replace("\\", "/"), "x_expr": x_expr, "y_expr": y_expr}
 
 
+def overlay_text_disabled_from_cfg() -> bool:
+    """画面文字弹框「不设置文字」打开时为 True。"""
+    from app.common.config import cfg
+
+    raw = _parse_json_cfg(cfg.overlay_text_library_json.value)
+    if not isinstance(raw, dict):
+        return False
+    return bool(raw.get("no_text"))
+
+
 def build_overlay_plan(
     project_name: str,
     *,
@@ -1943,6 +1985,8 @@ def build_overlay_plan(
     cache_dir: str | None = None,
 ) -> OverlayPlan:
     """生成成片叠字计划：drawtext 链 + 综艺花字 PNG overlay。"""
+    if overlay_text_disabled_from_cfg():
+        return {"drawtext_filters": [], "image_overlays": []}
     orientation: Orientation = "landscape" if horizontal else "portrait"
     title = load_overlay_title_from_cfg()
     disc = load_overlay_disclaimer_from_cfg()

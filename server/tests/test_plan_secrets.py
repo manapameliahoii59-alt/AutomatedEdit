@@ -98,6 +98,48 @@ def test_plan_llm_preset_roundtrip():
     assert model == "deepseek-v4-flash"
     assert "OpenCode Go" in plan_llm_preset_label(provider, model)
 
+    go_mimo = encode_plan_llm_preset("opencode_go", "mimo-v2.5")
+    gp, gm = decode_plan_llm_preset(go_mimo)
+    assert gp == "opencode_go"
+    assert gm == "mimo-v2.5"
+    assert plan_llm_preset_label(gp, gm) == "OpenCode Go / MiMo-V2.5"
+
+    xiaomi = encode_plan_llm_preset("xiaomi", "mimo-v2.5")
+    xp, xm = decode_plan_llm_preset(xiaomi)
+    assert xp == "xiaomi"
+    assert xm == "mimo-v2.5"
+    assert "小米 MiMo" in plan_llm_preset_label(xp, xm)
+
+
+def test_resolve_plan_llm_config_xiaomi(monkeypatch):
+    from app.services.plan_secrets import resolve_plan_llm_config
+
+    class _XiaomiSecret:
+        deepseek_keys = "mimo-key"
+        plan_decrypt_key = "abcd" * 16
+        plan_llm_provider = "xiaomi"
+        plan_llm_model = "mimo-v2.5"
+
+    class _Db:
+        def query(self, *_args):
+            return self
+
+        def filter(self, *_args):
+            return self
+
+        def first(self):
+            return _XiaomiSecret()
+
+    monkeypatch.setattr(
+        "app.services.plan_secrets.settings.xiaomi_mimo_api_url",
+        "https://api.xiaomimimo.com/v1/chat/completions",
+    )
+    cfg = resolve_plan_llm_config(_Db(), 1)
+    assert cfg["provider"] == "xiaomi"
+    assert cfg["model"] == "mimo-v2.5"
+    assert cfg["keys"] == "mimo-key"
+    assert "xiaomimimo.com" in cfg["api_url"]
+
 
 def test_call_deepseek_payload_by_provider(monkeypatch):
     from app.services import plan_director
@@ -164,4 +206,24 @@ def test_call_deepseek_payload_by_provider(monkeypatch):
     assert err2 is None
     assert content2 == "{}"
     assert captured["json"].get("thinking") == {"type": "disabled"}
+    assert "x-opencode-session" not in captured["headers"]
+
+    content3, _e3, err3 = plan_director._call_deepseek(
+        api_url="https://api.xiaomimimo.com/v1/chat/completions",
+        model_name="mimo-v2.5",
+        compressed_script="x",
+        count=1,
+        group_type="U",
+        key_pool=pool,
+        min_duration_seconds=150,
+        max_duration_seconds=300,
+        plan_mode="long",
+        provider="xiaomi",
+        llm_session_id="",
+    )
+    assert err3 is None
+    assert content3 == "{}"
+    assert captured["json"]["model"] == "mimo-v2.5"
+    assert captured["json"].get("thinking") == {"type": "disabled"}
+    assert captured["headers"].get("api-key") == "sk-x"
     assert "x-opencode-session" not in captured["headers"]

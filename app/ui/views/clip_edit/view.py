@@ -64,9 +64,12 @@ from app.common.plan_settings import (
     max_duration_seconds_from_minutes,
     mixed_max_duration_minutes_from_seconds,
     mixed_max_duration_seconds_from_minutes,
+    nearest_global_speed_choice,
     short_max_duration_minutes_from_seconds,
     short_max_duration_seconds_from_minutes,
 )
+from app.ui.components.clip_settings_dialog import ClipSettingsDialog
+from app.ui.components.export_name_format_dialog import ExportNameFormatDialog
 from app.ui.components.outro_settings_dialog import OutroSettingsDialog
 from app.ui.components.overlay_text_groups_dialog import OverlayTextGroupsDialog
 from app.common.runtime import is_dev_runtime
@@ -222,6 +225,10 @@ class ClipEditPage(ScrollArea):
         self.export_name_tag_input.editingFinished.connect(self._save_export_name_tag)
         self.export_name_tag_input.textChanged.connect(self._update_export_name_preview)
         name_tag_row.addWidget(self.export_name_tag_input)
+        self.export_name_format_btn = PushButton("格式", self.scroll_widget)
+        self.export_name_format_btn.setToolTip("自定义文件名中的日期和序号格式")
+        self.export_name_format_btn.clicked.connect(self._open_export_name_format)
+        name_tag_row.addWidget(self.export_name_format_btn)
         self.export_name_preview_label = BodyLabel("", self.scroll_widget)
         self.export_name_preview_label.setWordWrap(True)
         name_tag_row.addWidget(self.export_name_preview_label, 1)
@@ -275,11 +282,17 @@ class ClipEditPage(ScrollArea):
             "上传多个横屏/竖屏片尾，勾选启用；未勾选自定义时用内置默认"
         )
         self.outro_btn.clicked.connect(self._open_outro_settings)
+        self.clip_settings_btn = PushButton(
+            FIF.SETTING, "设置", self.scroll_widget
+        )
+        self.clip_settings_btn.setToolTip("去掉未完待续等剪辑选项")
+        self.clip_settings_btn.clicked.connect(self._open_clip_settings)
         if self.encode_settings_btn is not None:
             batch_row.addWidget(self.encode_settings_btn)
         batch_row.addWidget(self.plan_settings_btn)
         batch_row.addWidget(self.overlay_text_btn)
         batch_row.addWidget(self.outro_btn)
+        batch_row.addWidget(self.clip_settings_btn)
         batch_row.addStretch(1)
         layout.addLayout(batch_row)
 
@@ -338,7 +351,7 @@ class ClipEditPage(ScrollArea):
             self.export_name_tag_input.blockSignals(True)
             self.export_name_tag_input.setText(tag)
             self.export_name_tag_input.blockSignals(False)
-            self._update_export_name_preview()
+        self._update_export_name_preview()
 
     def _refresh_table(self, projects: list[DramaProject]):
         checked_ids = set(self._get_checked_ids())
@@ -611,7 +624,7 @@ class ClipEditPage(ScrollArea):
         speed_combo = QComboBox(dlg)
         speed_combo.setMinimumWidth(200)
         for spd in GLOBAL_SPEED_CHOICES:
-            label = "原速（不加速）" if abs(spd - 1.0) < 1e-6 else f"{spd:.2f} 倍"
+            label = "原速（不加速）" if abs(spd - 1.0) < 1e-6 else f"{spd:.1f} 倍"
             if abs(spd - DEFAULT_GLOBAL_SPEED) < 1e-6:
                 label += "（默认）"
             speed_combo.addItem(label, spd)
@@ -747,7 +760,7 @@ class ClipEditPage(ScrollArea):
         long_radio.toggled.connect(_on_mode_toggled)
         mixed_radio.toggled.connect(_on_mode_toggled)
         _apply_mode(initial_mode)
-        _set_combo_value(speed_combo, initial_speed)
+        _set_combo_value(speed_combo, nearest_global_speed_choice(initial_speed))
 
         btn_row = QHBoxLayout()
         reset_btn = PushButton("重置默认", dlg)
@@ -837,7 +850,7 @@ class ClipEditPage(ScrollArea):
             active_max_min = values[PLAN_MODE_LONG]["max_min"]
             mode_label = "长片"
         speed_label = (
-            "原速" if abs(global_speed - 1.0) < 1e-6 else f"{global_speed:.2f}x"
+            "原速" if abs(global_speed - 1.0) < 1e-6 else f"{global_speed:.1f}x"
         )
         show_toast(
             self,
@@ -854,7 +867,22 @@ class ClipEditPage(ScrollArea):
             return
         lib = dlg.result_library()
         self.vm.save_overlay_text_library(lib)
-        show_toast(self, "画面文字组已保存", title="画面文字")
+        if lib.get("no_text"):
+            show_toast(self, "已关闭画面文字", title="画面文字")
+        else:
+            show_toast(self, "画面文字组已保存", title="画面文字")
+
+    def _open_clip_settings(self):
+        dlg = ClipSettingsDialog(self.window())
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            return
+        enabled = dlg.result_trim_ep1_continued()
+        qconfig.set(cfg.clip_trim_ep1_continued, enabled)
+        show_toast(
+            self,
+            f"去掉未完待续：{'开' if enabled else '关'}",
+            title="设置",
+        )
 
     def _open_outro_settings(self):
         dlg = OutroSettingsDialog(self.window())
@@ -903,6 +931,22 @@ class ClipEditPage(ScrollArea):
         qconfig.set(cfg.clip_export_name_tag, tag)
         self._update_export_name_preview()
         self.vm.save_export_name_tag(tag)
+
+    def _open_export_name_format(self):
+        dlg = ExportNameFormatDialog(
+            self.window(),
+            project_name=self._preview_project_name(),
+            tag=self.export_name_tag_input.text().strip(),
+        )
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            return
+        date_fmt = dlg.result_date_format()
+        seq_fmt = dlg.result_seq_format()
+        qconfig.set(cfg.clip_export_date_format, date_fmt)
+        qconfig.set(cfg.clip_export_seq_format, seq_fmt)
+        self._update_export_name_preview()
+        self.vm.save_export_name_format(date_fmt, seq_fmt)
+        show_toast(self, "文件名格式已保存", title="文件名格式")
 
     def _pick_export_dir(self):
         folder = QFileDialog.getExistingDirectory(
@@ -968,6 +1012,7 @@ class ClipEditPage(ScrollArea):
             self.export_browse_btn,
             self.export_open_btn,
             self.export_name_tag_input,
+            self.export_name_format_btn,
             self.batch_all_btn,
             self.batch_transcribe_btn,
             self.batch_plan_btn,
@@ -976,6 +1021,7 @@ class ClipEditPage(ScrollArea):
             self.plan_settings_btn,
             self.overlay_text_btn,
             self.outro_btn,
+            self.clip_settings_btn,
             self.table,
         ]
         if self.encode_settings_btn is not None:

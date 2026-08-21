@@ -25,16 +25,24 @@ class Config(MyQConfig):
     ffprobe_path = ConfigItem("Tools", "ffprobe_path", "")
     clip_export_dir = ConfigItem("Tools", "clip_export_dir", "")
     clip_export_name_tag = ConfigItem("Tools", "clip_export_name_tag", "")
+    # 成片文件名日期：md / ymd / ymd_dash / none
+    clip_export_date_format = ConfigItem("Tools", "clip_export_date_format", "md")
+    # 成片文件名序号：pad2 / plain / paren_pad2 / paren_plain / pad3
+    clip_export_seq_format = ConfigItem("Tools", "clip_export_seq_format", "pad2")
     # 自动化剪辑「导入剧目」对话框上次打开的目录
     clip_last_import_dir = ConfigItem("Tools", "clip_last_import_dir", "")
     # 画面叠字（剧名 / 提示）JSON —— 旧单套，仍作兼容读写
     overlay_title_json = ConfigItem("Tools", "overlay_title_json", "")
     overlay_disclaimer_json = ConfigItem("Tools", "overlay_disclaimer_json", "")
-    # 画面文字组库：{selected_id, groups:[{id,name,title,disclaimer}]}
+    # 画面文字组库：{selected_id, no_text, groups:[{id,name,title,disclaimer}]}
     overlay_text_library_json = ConfigItem("Tools", "overlay_text_library_json", "")
     # 渲染编码档位（默认：NVENC p5 / x264 superfast）
     encode_nvenc_preset = ConfigItem("Tools", "encode_nvenc_preset", "p5")
     encode_x264_preset = ConfigItem("Tools", "encode_x264_preset", "superfast")
+    # 渲染时检测并裁掉第一集片尾「未完待续」（仅命中才裁）
+    clip_trim_ep1_continued = ConfigItem(
+        "Tools", "clip_trim_ep1_continued", True, BoolValidator()
+    )
     # 策划：短片/长片/混合模式；长片条数与最长时长（最短固定 150s）
     plan_mode = ConfigItem("Tools", "plan_mode", "long")
     plan_clip_count = ConfigItem("Tools", "plan_clip_count", 15)
@@ -85,7 +93,7 @@ DEFAULT_API_BASE_URL = "http://129.204.86.63:7172"
 YEAR = datetime.datetime.now().year
 AUTHOR = "dragon"
 AUTHOR_EMAIL = "857134647@qq.com"
-VERSION = '0.0.5'
+VERSION = '0.0.6'
 APP_NAME = "剪辑助手"
 FEEDBACK_URL = f"mailto:{AUTHOR_EMAIL}"
 

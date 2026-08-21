@@ -11,7 +11,7 @@ from typing import Callable
 from urllib.parse import unquote, urlparse
 
 import requests
-from PySide6.QtCore import QObject, QUrl, Signal
+from PySide6.QtCore import QObject, Qt, QUrl, Signal
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import QProgressDialog, QWidget
 from qfluentwidgets import Dialog, qconfig
@@ -136,34 +136,45 @@ def _build_message(info: UpdateInfo) -> str:
 
 
 def _start_installer_download(parent: QWidget | None, info: UpdateInfo) -> None:
-    from app.common.utils import show_dialog, show_info_bar
+    from app.common.utils import show_dialog, show_toast
+    from shiboken6 import isValid
 
     if not info.download_url:
         show_dialog(parent, "未配置安装包下载地址，请联系管理员。")
         return
 
-    progress = QProgressDialog("正在下载安装包…", None, 0, 100, parent)
-    progress.setWindowTitle("下载更新")
+    host = parent.window() if parent is not None else parent
+    progress = QProgressDialog("正在下载安装包…", None, 0, 100, host)
+    progress.setWindowTitle(f"下载更新 {info.latest}")
     progress.setCancelButton(None)
     progress.setMinimumDuration(0)
     progress.setAutoClose(False)
     progress.setAutoReset(False)
+    progress.setMinimumWidth(360)
     progress.setValue(0)
+    progress.setWindowModality(Qt.WindowModality.ApplicationModal)
     progress.show()
+    progress.raise_()
+    progress.activateWindow()
 
     bridge = _DownloadProgressBridge(progress)
 
     def _on_progress(downloaded: int, total: int) -> None:
+        if not isValid(progress):
+            return
         if total > 0:
             progress.setMaximum(100)
-            progress.setValue(min(100, int(downloaded * 100 / total)))
+            pct = min(100, int(downloaded * 100 / total))
+            progress.setValue(pct)
             mb_d = downloaded / (1024 * 1024)
             mb_t = total / (1024 * 1024)
-            progress.setLabelText(f"正在下载安装包… {mb_d:.1f}/{mb_t:.1f} MB")
+            progress.setLabelText(
+                f"正在下载 {info.latest}… {mb_d:.1f}/{mb_t:.1f} MB（{pct}%）"
+            )
         else:
             progress.setMaximum(0)
             progress.setLabelText(
-                f"正在下载安装包… {downloaded / (1024 * 1024):.1f} MB"
+                f"正在下载 {info.latest}… {downloaded / (1024 * 1024):.1f} MB"
             )
 
     bridge.progress.connect(_on_progress)
@@ -175,9 +186,13 @@ def _start_installer_download(parent: QWidget | None, info: UpdateInfo) -> None:
             progress_callback=lambda d, t: bridge.progress.emit(d, t),
         )
 
+    def _close_progress() -> None:
+        if isValid(progress):
+            progress.close()
+            progress.deleteLater()
+
     def _on_success(path: Path):
-        progress.close()
-        progress.deleteLater()
+        _close_progress()
         try:
             _launch_installer(path)
         except Exception as exc:
@@ -190,12 +205,16 @@ def _start_installer_download(parent: QWidget | None, info: UpdateInfo) -> None:
         )
 
     def _on_error(msg: str):
-        progress.close()
-        progress.deleteLater()
+        _close_progress()
         show_dialog(parent, f"下载安装包失败：{msg}")
-        show_info_bar(parent, "下载失败", level="error")
+        show_toast(parent, "下载失败", level="error")
 
-    task_manager.submit_task(_do, on_success=_on_success, on_error=_on_error)
+    task_manager.submit_task(
+        _do,
+        on_success=_on_success,
+        on_error=_on_error,
+        check_access=False,
+    )
 
 
 def show_update_dialog(parent: QWidget | None, info: UpdateInfo) -> None:
@@ -243,8 +262,35 @@ def _handle_check_result(
         show_update_dialog(parent, info)
 
 
-def check_and_prompt_update(parent: QWidget | None = None, *, manual: bool = False) -> None:
-    """异步检查更新；网络在后台，弹窗在主线程。"""
+def check_and_prompt_update(
+    parent: QWidget | None = None,
+    *,
+    manual: bool = False,
+    on_busy: Callable[[bool], None] | None = None,
+) -> None:
+    """异步检查更新；网络在后台，弹窗在主线程。
+
+    manual=True 时显示顶部加载条；on_busy(True/False) 供设置页禁用「检查更新」按钮。
+    """
+    from shiboken6 import isValid
+
+    loading_bar = None
+    if manual and parent is not None:
+        from app.ui.components.bar import ProgressInfoBar
+
+        host = parent.window() if hasattr(parent, "window") else parent
+        loading_bar = ProgressInfoBar("检查更新", "正在检查是否有新版本…", host)
+        loading_bar.show()
+
+    if on_busy is not None:
+        on_busy(True)
+
+    def _finish_busy() -> None:
+        if loading_bar is not None and isValid(loading_bar):
+            loading_bar.close()
+            loading_bar.deleteLater()
+        if on_busy is not None:
+            on_busy(False)
 
     def _do():
         try:
@@ -256,12 +302,14 @@ def check_and_prompt_update(parent: QWidget | None = None, *, manual: bool = Fal
             return ("error", None, "检查更新失败，请稍后重试。" if manual else None)
 
     def _on_success(result):
+        _finish_busy()
         status, info, error_message = result
         _handle_check_result(
             parent, manual=manual, status=status, info=info, error_message=error_message
         )
 
     def _on_error(msg: str):
+        _finish_busy()
         if not manual:
             return
         from app.common.utils import show_dialog
