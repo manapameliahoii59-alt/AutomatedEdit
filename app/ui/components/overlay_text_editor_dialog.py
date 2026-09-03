@@ -127,17 +127,18 @@ class OverlayTextEditorDialog(QDialog):
 
             shared_form.addRow("文案：", text_edit)
             shared_form.addRow("排布：", layout_row)
+
+            font_combo = QComboBox(box)
+            for font_key, label, _filename in available_font_choices():
+                font_combo.addItem(label, font_key)
+            shared_form.addRow("字体：", font_combo)
             outer.addLayout(shared_form)
 
             tabs = QTabWidget(box)
 
-            # —— 基础：字体/字号/透明度/颜色/位置 ——
+            # —— 基础：字号/透明度/颜色/位置 ——
             basic_page = QWidget(tabs)
             basic_form = QFormLayout(basic_page)
-
-            font_combo = QComboBox(basic_page)
-            for font_key, label, _filename in available_font_choices():
-                font_combo.addItem(label, font_key)
 
             basic_size = _make_size_spin(basic_page)
 
@@ -163,7 +164,6 @@ class OverlayTextEditorDialog(QDialog):
 
             basic_x, basic_y = _make_pos_spins(basic_page)
 
-            basic_form.addRow("字体：", font_combo)
             basic_form.addRow("字号：", basic_size)
             basic_form.addRow("颜色：", color_row)
             basic_form.addRow("透明度：", opacity_spin)
@@ -203,6 +203,7 @@ class OverlayTextEditorDialog(QDialog):
                 "effect": effect_row,
                 "key": key,
                 "last_huazi": "none",
+                "huazi_font": None,
             }
 
         title_w = _build_section("剧名文字", "title")
@@ -222,14 +223,19 @@ class OverlayTextEditorDialog(QDialog):
             """花字样式自带字体/填色提示，UI 不暴露但静默写入。"""
             hz = get_huazi_style(effect_id)
             if hz is None:
+                widgets["huazi_font"] = None
                 return
             prefers = hz.get("prefer_fonts") or ()
             if prefers:
-                idx = widgets["font"].findData(prefers[0])
+                font_key = str(prefers[0])
+                widgets["huazi_font"] = font_key
+                idx = widgets["font"].findData(font_key)
                 if idx >= 0:
                     widgets["font"].blockSignals(True)
                     widgets["font"].setCurrentIndex(idx)
                     widgets["font"].blockSignals(False)
+            else:
+                widgets["huazi_font"] = None
             preview_color = str(hz.get("preview_color") or "").strip()
             if preview_color:
                 widgets["color"].blockSignals(True)
@@ -271,10 +277,16 @@ class OverlayTextEditorDialog(QDialog):
                     widgets["last_huazi"] = effect
                     widgets["tabs"].setCurrentIndex(_MODE_HUAZI)
                     widgets["effect"].set_effect(effect)
+                    hz = get_huazi_style(effect)
+                    prefers = (hz or {}).get("prefer_fonts") or ()
+                    widgets["huazi_font"] = (
+                        str(prefers[0]) if prefers else view.get("font")
+                    )
                 else:
                     # 旧辉光特效在本弹框不再可选，回基础纯字
                     widgets["tabs"].setCurrentIndex(_MODE_BASIC)
                     widgets["effect"].set_effect("none")
+                    widgets["huazi_font"] = None
 
                 idx = widgets["font"].findData(view.get("font"))
                 widgets["font"].setCurrentIndex(idx if idx >= 0 else 0)
@@ -320,14 +332,21 @@ class OverlayTextEditorDialog(QDialog):
                 effect = clamp_text_effect(widgets["effect"].current_effect())
                 if is_huazi_effect(effect):
                     widgets["last_huazi"] = effect
+                # 字体花字：优先用样式绑定字体（可能不在「字体」下拉里）
+                hz = get_huazi_style(effect) if is_huazi_effect(effect) else None
+                prefers = (hz or {}).get("prefer_fonts") or ()
+                font_key = (
+                    widgets.get("huazi_font")
+                    or (prefers[0] if prefers else None)
+                    or widgets["font"].currentData()
+                )
                 patch = {
                     "layout": layout,
                     "fontsize": widgets["huazi_fontsize"].value(),
                     "x_pct": widgets["huazi_x_pct"].value(),
                     "y_pct": widgets["huazi_y_pct"].value(),
                     "effect": effect if is_huazi_effect(effect) else "none",
-                    # 字体/颜色沿用控件上静默值；透明度花字页不调，保留原值
-                    "font": widgets["font"].currentData(),
+                    "font": font_key,
                     "color": widgets["color"].text().strip(),
                 }
             else:

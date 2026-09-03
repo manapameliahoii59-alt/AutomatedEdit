@@ -105,21 +105,26 @@ class DailyActivityOut(BaseModel):
 
 
 class DailyQuotaOut(BaseModel):
-    """今日策划/剪辑配额与使用情况。"""
+    """今日策划/剪辑/下载配额与使用情况。"""
 
     activity_date: date
     plan_count: int
     clip_count: int
+    download_count: int = 0
     plan_limit: int
     clip_limit: int
+    download_limit: int = 0
+    download_enabled: bool = True
     planned_dramas: list[str]
     clipped_dramas: list[str]
+    downloaded_dramas: list[str] = []
     can_plan: bool
     can_clip: bool
+    can_download: bool = True
 
 
 class QuotaCheckRequest(BaseModel):
-    action: str = Field(pattern="^(plan|clip)$")
+    action: str = Field(pattern="^(plan|clip|download)$")
     drama_name: str = Field(min_length=1, max_length=256)
 
 

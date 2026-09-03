@@ -55,7 +55,8 @@ class UsageService:
                     try:
                         api.report_usage("download_drama", meta=text)
                     except ApiError:
-                        pass
+                        continue
+                QuotaService.instance().mark_downloaded(text)
 
         _run_in_background(_do)
 

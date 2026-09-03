@@ -304,14 +304,35 @@ def test_more_drama_styles_and_fonts():
     )
 
     assert len(EFFECT_CHOICES) >= 20
-    assert len(FONT_CHOICES) >= 18
+    assert len(FONT_CHOICES) >= 27
     assert clamp_font_key("sthupo") == "sthupo"
     assert clamp_font_key("simyou") == "simyou"
+    assert clamp_font_key("qingkebenyue") == "qingkebenyue"
+    assert clamp_font_key("sourcehanserif") == "sourcehanserif"
     assert clamp_text_effect("manga_yellow") == "manga_yellow"
     assert clamp_text_effect("purple_dream") == "purple_dream"
     # 本机至少能列出核心字体
     keys = {k for k, _l, _f in available_font_choices()}
     assert {"msyh", "simhei", "simkai"} <= keys
+
+
+def test_bundled_source_han_serif_resolves_when_present():
+    from pathlib import Path
+
+    from app.common.overlay_text_settings import (
+        bundled_fonts_dir,
+        resolve_font_source_path,
+    )
+
+    path = bundled_fonts_dir() / "NotoSerifSC-Medium.otf"
+    if not path.is_file():
+        return
+    resolved = resolve_font_source_path("sourcehanserif")
+    assert resolved and path.resolve() == Path(resolved).resolve()
+
+
+def test_more_drama_styles_fonts_tail():
+    from app.common.overlay_text_settings import clamp_text_effect
 
     manga = clamp_overlay_style(
         {"text": "漫", "effect": "manga_yellow", "glow_color": ""},

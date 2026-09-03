@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import random
 import time
 import uuid
 import zipfile
@@ -29,7 +30,8 @@ from app.data.models.drama_project import DramaProject
 
 DEFAULT_FROM_EP = 1
 DEFAULT_TO_EP = 15
-DEFAULT_CONCURRENT_DOWNLOADS = 3
+DEFAULT_CONCURRENT_DOWNLOADS = 2
+DEFAULT_CREATE_DELAY_SEC = 4.5
 DEFAULT_DOWNLOAD_TIMEOUT_MIN = 10
 DEFAULT_DOWNLOAD_RETRIES = 2
 DEFAULT_MIN_SPEED_KBPS = 300
@@ -106,6 +108,20 @@ def _interruptible_sleep(
         if remaining <= 0:
             return
         time.sleep(min(step, remaining))
+
+
+def _human_delay(
+    base_sec: float,
+    cancel_check: Callable[[], bool] | None,
+    *,
+    jitter_min: float = 0.6,
+    jitter_max: float = 2.2,
+) -> None:
+    """在基础间隔上叠加随机抖动，避免机械节奏。"""
+    if base_sec <= 0:
+        return
+    delay = base_sec + random.uniform(jitter_min, jitter_max)
+    _interruptible_sleep(delay, cancel_check)
 
 
 def _abort_if_cancelled(
@@ -214,7 +230,7 @@ class BatchDownloadOptions:
     stop_on_error: bool = False
     create_only: bool = False
     download_only: bool = False
-    delay_sec: float = 3
+    delay_sec: float = DEFAULT_CREATE_DELAY_SEC
     timeout_min: int = DEFAULT_TRANSCODE_TIMEOUT_MIN
     concurrency: int = DEFAULT_CONCURRENT_DOWNLOADS
     download_timeout_min: int = DEFAULT_DOWNLOAD_TIMEOUT_MIN
@@ -552,7 +568,7 @@ def phase1_create_tasks(
                 raise
 
         if i < len(targets) - 1 and opts.delay_sec > 0:
-            _interruptible_sleep(opts.delay_sec, opts.cancel_check)
+            _human_delay(opts.delay_sec, opts.cancel_check)
 
     for pass_no in range(1, PHASE1_CREATE_RETRY_PASSES + 1):
         if not failed:
@@ -601,7 +617,7 @@ def phase1_create_tasks(
                     raise
 
             if retry_i < len(failed) - 1 and opts.delay_sec > 0:
-                _interruptible_sleep(opts.delay_sec, opts.cancel_check)
+                _human_delay(opts.delay_sec, opts.cancel_check)
 
         failed = still_failed
 
@@ -646,6 +662,8 @@ def _download_prepared_with_retry(
     last_err: Exception | None = None
     for attempt in range(1, opts.download_retries + 1):
         try:
+            # 并行启动前稍作错峰，避免多条 CDN 请求同时打出
+            _human_delay(0.8, opts.cancel_check, jitter_min=0.2, jitter_max=1.5)
             dl_stats = client.download_zip_from_url(
                 prepared["downloadUrl"],
                 prepared["destPath"],

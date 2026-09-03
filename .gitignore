@@ -77,6 +77,10 @@ server/.env
 .env.local_plan
 tools/ffmpeg/win/*.exe
 tools/outro/*.mp4
+tools/fonts/*.ttf
+tools/fonts/*.otf
+tools/fonts/*.ttc
+!tools/fonts/README.md
 logs
 resource_rc.py
 ui_view/ui_login_window.py

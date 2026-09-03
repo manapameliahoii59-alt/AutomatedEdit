@@ -40,7 +40,6 @@ from app.common.overlay_text_settings import (
     clamp_text_effect,
     clamp_text_layout,
     effect_style,
-    font_filename,
     nearest_position_preset,
     pct_for_position_preset,
     position_for_orientation,
@@ -80,20 +79,30 @@ _PREVIEW_FONT_FAMILY = {
     "stfangso": "STFangsong",
     "fzstk": "FZShuTi",
     "fzytk": "FZYaoTi",
+    "qingkebenyue": "QingKeBenYue",
+    "meihuakai": "MeiHuaKai",
+    "houxiandai": "WenYue HouXianDaiTi",
+    "sourcehanserif": "Noto Serif SC",
+    "ruoyan": "RuoYan",
+    "tiantianquan": "TianTianQuan",
+    "kuaile": "KuaiLeTi",
+    "qingxue": "QingXue",
+    "menghuai": "MengHuai",
 }
 _LOADED_FONT_FAMILY: dict[str, str] = {}
 
 
 def _preview_font_family(font_key: str) -> str:
     """按字体文件加载，保证剧名/提示选不同字时预览真的不一样。"""
+    from app.common.overlay_text_settings import resolve_font_source_path
+
     key = clamp_font_key(font_key)
     cached = _LOADED_FONT_FAMILY.get(key)
     if cached:
         return cached
-    windir = os.environ.get("WINDIR", "C:/Windows")
-    path = os.path.join(windir, "Fonts", font_filename(key))
+    path = resolve_font_source_path(key)
     family = _PREVIEW_FONT_FAMILY.get(key, "Microsoft YaHei")
-    if os.path.isfile(path):
+    if path and os.path.isfile(path):
         fid = QFontDatabase.addApplicationFont(path)
         if fid >= 0:
             families = QFontDatabase.applicationFontFamilies(fid)
@@ -554,11 +563,12 @@ class OverlayTextPreview(QWidget):
         border: str,
     ) -> None:
         from app.common.huazi_render import render_huazi_image
+        from app.common.overlay_text_settings import resolve_font_source_path
 
         font_key = clamp_font_key(style.get("font") or "msyh")
-        windir = os.environ.get("WINDIR", "C:/Windows")
-        font_path = os.path.join(windir, "Fonts", font_filename(font_key))
-        if not os.path.isfile(font_path):
+        font_path = resolve_font_source_path(font_key) or ""
+        if not font_path or not os.path.isfile(font_path):
+            windir = os.environ.get("WINDIR", "C:/Windows")
             font_path = os.path.join(windir, "Fonts", "msyh.ttc")
         try:
             img = render_huazi_image(

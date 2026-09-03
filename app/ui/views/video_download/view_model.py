@@ -27,6 +27,7 @@ from app.data.services.changdu_login_service import (
 from app.data.services.changdu_paths import resolve_video_download_root
 from app.data.services.series_list_client import SeriesListClient
 from app.data.services.usage_service import UsageService
+from app.data.services.quota_service import QuotaService
 
 MAX_DOWNLOAD_EPISODE = 15
 
@@ -544,6 +545,29 @@ class VideoDownloadViewModel(ViewModel):
             t.status = status
         self.targetsChanged.emit(self._targets)
 
+    def _ensure_can_download(self) -> bool:
+        names = [t.name for t in self._targets if (t.name or "").strip()]
+        qs = QuotaService.instance()
+        if not names:
+            quota = qs.refresh()
+            if not quota.download_enabled:
+                self.errorOccurred.emit("当前无法使用视频下载")
+                return False
+            return True
+        allowed, message = qs.can_download(names)
+        if not allowed:
+            self.errorOccurred.emit(message or "当前无法使用视频下载")
+            return False
+        probe = next(
+            (n for n in names if n not in qs.get_quota().downloaded_dramas),
+            names[0],
+        )
+        ok, remote_msg = qs.check_remote("download", probe)
+        if not ok:
+            self.errorOccurred.emit(remote_msg or "当前无法使用视频下载")
+            return False
+        return True
+
     def start_download(self, *, create_only: bool = False, download_only: bool = False) -> None:
         if not is_auth_file_present():
             self._relogin_changdu_after_expired("未找到登录态")
@@ -553,6 +577,8 @@ class VideoDownloadViewModel(ViewModel):
             return
         if self._active_tasks > 0:
             self.messageReceived.emit("当前有任务进行中，请稍候")
+            return
+        if not self._ensure_can_download():
             return
 
         self._add_task("正在下载", "视频下载任务进行中，请稍候…")

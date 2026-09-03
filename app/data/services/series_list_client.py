@@ -13,6 +13,13 @@ from typing import Any, Callable
 import requests
 from playwright.sync_api import Browser, BrowserContext, Page, sync_playwright
 
+from app.data.services.changdu_browser import (
+    LAUNCH_ARGS,
+    STEALTH_INIT_SCRIPT,
+    browser_context_kwargs,
+    format_cookie_header,
+    zip_download_headers,
+)
 from app.data.services.changdu_paths import AUTH_FILE, DEFAULT_DOWNLOAD_DIR
 
 SERIES_LIST_PATH = "/novelsale/distributor/content/series/list/v1/"
@@ -63,6 +70,7 @@ class SeriesListClient:
         self.ad_user_id: str | None = None
         self.root_ad_user_id: str | None = None
         self.app_info: dict[str, Any] | None = None
+        self._cookie_header: str = ""
         self._owner_thread_id: int | None = None
         self._closed = False
 
@@ -87,21 +95,16 @@ class SeriesListClient:
             self._playwright = sync_playwright().start()
             self.browser = self._playwright.chromium.launch(
                 headless=self.headless,
-                args=["--disable-blink-features=AutomationControlled"],
+                args=list(LAUNCH_ARGS),
             )
             self.context = self.browser.new_context(
-                storage_state=str(self.auth_file),
-                user_agent=(
-                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-                    "(KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36"
-                ),
+                **browser_context_kwargs(storage_state=str(self.auth_file))
             )
             self.page = self.context.new_page()
-            self.page.add_init_script(
-                "Object.defineProperty(navigator, 'webdriver', { get: () => undefined });"
-            )
+            self.page.add_init_script(STEALTH_INIT_SCRIPT)
 
             cookies = self.context.cookies()
+            self._cookie_header = format_cookie_header(cookies)
             self.ad_user_id = next((c["value"] for c in cookies if c["name"] == "adUserId"), None)
             self.root_ad_user_id = next(
                 (c["value"] for c in cookies if c["name"] == "rootAdUserId"), None
@@ -666,7 +669,12 @@ class SeriesListClient:
         monitor_thread.start()
 
         try:
-            response = requests.get(url, stream=True, timeout=(30, 120))
+            response = requests.get(
+                url,
+                stream=True,
+                timeout=(30, 120),
+                headers=zip_download_headers(cookie=self._cookie_header or None),
+            )
             response.raise_for_status()
             content_length = response.headers.get("Content-Length")
             if content_length and str(content_length).isdigit():
@@ -739,6 +747,7 @@ class SeriesListClient:
         resolved = Path(dest_path) if dest_path else self._resolve_download_path(
             task.get("book_name") or download_id, download_dir
         )
+        self._refresh_cookie_header()
         return {
             "downloadId": download_id,
             "bookName": task.get("book_name"),
@@ -746,6 +755,15 @@ class SeriesListClient:
             "downloadUrl": download_url,
             "destPath": resolved,
         }
+
+    def _refresh_cookie_header(self) -> None:
+        """在 Playwright 线程刷新 Cookie，供 zip 下载请求头使用。"""
+        if self.context is None:
+            return
+        try:
+            self._cookie_header = format_cookie_header(self.context.cookies())
+        except Exception:
+            pass
 
     def download_task_zip(
         self,

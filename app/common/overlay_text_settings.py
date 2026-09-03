@@ -2,13 +2,16 @@
 
 from __future__ import annotations
 
+import builtins
 import hashlib
 import json
 import math
 import os
 import shutil
+import sys
 import tempfile
 import uuid
+from pathlib import Path
 from typing import Any, Literal, TypedDict
 
 Orientation = Literal["portrait", "landscape"]
@@ -18,9 +21,20 @@ VAlign = Literal["t", "c", "b"]
 # 具体取值见 _EFFECT_STYLES；未知 id 会 clamp 为 none
 TextEffect = str
 
-# 字体 key -> (显示名, Windows Fonts 文件名)
-# 仅本机存在的会出现在下拉（核心字体始终保留）
+# 字体 key -> (显示名, 主文件名)
+# 解析顺序：tools/fonts → 工程根 → Windows Fonts → 用户 Fonts
+# 仅实际找得到文件的会出现在下拉（核心字体始终保留）
 FONT_CHOICES: tuple[tuple[str, str, str], ...] = (
+    # 短剧/剪映常用标题字体（靠前；文件在 tools/fonts）
+    ("qingkebenyue", "清刻本悦", "QingKeBenYue.ttf"),
+    ("meihuakai", "梅花楷", "MeiHuaKai.ttf"),
+    ("houxiandai", "后现代体", "HouXianDai.otf"),
+    ("sourcehanserif", "思源中宋", "NotoSerifSC-Medium.otf"),
+    ("ruoyan", "若烟体", "RuoYan.ttf"),
+    ("tiantianquan", "甜甜圈", "TianTianQuan.ttf"),
+    ("kuaile", "快乐体", "KuaiLeTi.ttf"),
+    ("qingxue", "晴雪体", "QingXue.ttf"),
+    ("menghuai", "梦槐体", "MengHuai.ttf"),
     ("msyh", "微软雅黑", "msyh.ttc"),
     ("msyhbd", "微软雅黑粗体", "msyhbd.ttc"),
     ("msyhl", "微软雅黑细体", "msyhl.ttc"),
@@ -45,6 +59,31 @@ FONT_CHOICES: tuple[tuple[str, str, str], ...] = (
     ("fzstk", "方正舒体", "FZSTK.TTF"),
     ("fzytk", "方正姚体", "FZYTK.TTF"),
 )
+
+# 同款字体的常见别名文件名（系统安装名 / 厂商原名）
+_FONT_FILE_ALIASES: dict[str, tuple[str, ...]] = {
+    "qingkebenyue": (
+        "FZQingKeBenYueSongS.TTF",
+        "FZQingKeBenYueSongJF.TTF",
+        "方正清刻本悦宋简体.ttf",
+    ),
+    "meihuakai": ("Xique-MeihuaKai.ttf", "喜鹊梅花楷.ttf", "MeihuaKai.ttf"),
+    "houxiandai": (
+        "WenYue-HouXianDaiTi-W4-75-J.otf",
+        "WenYue_HouXianDaiTi_J-W4_75.otf",
+        "文悦后现代体.otf",
+    ),
+    "sourcehanserif": (
+        "SourceHanSerifSC-Medium.otf",
+        "NotoSerifCJKsc-Medium.otf",
+        "NotoSerifSC-Medium.ttf",
+    ),
+    "ruoyan": ("RuoYanTi.ttf", "若烟体.ttf"),
+    "tiantianquan": ("AaTianTianQuan.ttf", "甜甜圈.ttf", "Donut.ttf"),
+    "kuaile": ("KuaiLeTi.ttf", "快乐体.ttf", "HappyFont.ttf"),
+    "qingxue": ("QingXueTi.ttf", "晴雪体.ttf"),
+    "menghuai": ("MengHuaiTi.ttf", "梦槐体.ttf"),
+}
 
 _FONT_BY_KEY = {k: (label, filename) for k, label, filename in FONT_CHOICES}
 DEFAULT_FONT = "msyh"
@@ -573,14 +612,53 @@ def font_label(font_key: str) -> str:
     return _FONT_BY_KEY[clamp_font_key(font_key)][0]
 
 
-def available_font_choices() -> list[tuple[str, str, str]]:
-    """本机 Fonts 目录中实际存在的字体（核心字体始终保留）。"""
+def _app_base_dir() -> Path:
+    if getattr(builtins, "__compiled__", False):
+        return Path(sys.executable).resolve().parent
+    return Path(__file__).resolve().parent.parent.parent
+
+
+def bundled_fonts_dir() -> Path:
+    return _app_base_dir() / "tools" / "fonts"
+
+
+def _font_candidate_names(font_key: str) -> tuple[str, ...]:
+    key = str(font_key or "").strip().lower()
+    primary = font_filename(key) if key in _FONT_BY_KEY else ""
+    alts = _FONT_FILE_ALIASES.get(key, ())
+    names: list[str] = []
+    for name in (primary, *alts):
+        n = str(name or "").strip()
+        if n and n not in names:
+            names.append(n)
+    return tuple(names)
+
+
+def resolve_font_source_path(font_key: str) -> str | None:
+    """定位字体文件：tools/fonts → 工程根 → Windows Fonts → 用户 Fonts。"""
     windir = os.environ.get("WINDIR", "C:/Windows")
-    fonts_dir = os.path.join(windir, "Fonts")
+    local = os.environ.get("LOCALAPPDATA", "")
+    search_dirs = [
+        bundled_fonts_dir(),
+        _app_base_dir(),
+        Path(windir) / "Fonts",
+        Path(local) / "Microsoft" / "Windows" / "Fonts" if local else None,
+    ]
+    for name in _font_candidate_names(font_key):
+        for directory in search_dirs:
+            if directory is None:
+                continue
+            path = directory / name
+            if path.is_file():
+                return str(path)
+    return None
+
+
+def available_font_choices() -> list[tuple[str, str, str]]:
+    """本机 / 内置目录中实际存在的字体（核心字体始终保留）。"""
     out: list[tuple[str, str, str]] = []
     for key, label, filename in FONT_CHOICES:
-        path = os.path.join(fonts_dir, filename)
-        if key in _CORE_FONTS or os.path.isfile(path):
+        if key in _CORE_FONTS or resolve_font_source_path(key):
             out.append((key, label, filename))
     return out
 
@@ -1732,11 +1810,11 @@ def prepare_font_file(font_key: str, work_dir: str | None = None) -> str:
     key = resolve_drawtext_font_key(font_key)
     filename = font_filename(key)
     windir = os.environ.get("WINDIR", "C:/Windows")
-    system_font = os.path.join(windir, "Fonts", filename)
+    resolved = resolve_font_source_path(key)
 
-    # 1) ASCII 临时目录（drawtext 最稳）
+    # 1) ASCII 临时目录（drawtext 最稳）；缓存名用主文件名，避免中文别名
     ascii_dest = os.path.join(_ascii_font_cache_dir(), filename)
-    src_for_ascii = system_font if os.path.isfile(system_font) else None
+    src_for_ascii = resolved
     if work_dir:
         # 工程缓存里可能是旧的不可用字体副本；回退后文件名已变，按新文件名取
         work_copy = os.path.join(work_dir, filename)
@@ -1754,16 +1832,16 @@ def prepare_font_file(font_key: str, work_dir: str | None = None) -> str:
     if os.path.isfile(ascii_dest) and not _path_has_non_ascii(ascii_dest):
         return ascii_dest.replace("\\", "/")
 
-    # 2) 系统 Fonts（通常为 C:/Windows/Fonts，ASCII）
-    if os.path.isfile(system_font) and not _path_has_non_ascii(system_font):
-        return system_font.replace("\\", "/")
+    # 2) 已解析到的源文件（系统 Fonts / tools/fonts，通常为 ASCII）
+    if resolved and os.path.isfile(resolved) and not _path_has_non_ascii(resolved):
+        return resolved.replace("\\", "/")
 
     # 3) 工程缓存仅当路径本身是 ASCII 时才用
     if work_dir:
         dest = os.path.join(work_dir, filename)
-        if not os.path.isfile(dest) and os.path.isfile(system_font):
+        if not os.path.isfile(dest) and resolved and os.path.isfile(resolved):
             try:
-                shutil.copy2(system_font, dest)
+                shutil.copy2(resolved, dest)
             except OSError:
                 pass
         if os.path.isfile(dest) and not _path_has_non_ascii(dest):
@@ -1944,10 +2022,9 @@ def _build_huazi_image_spec(
     font_path = prepare_font_file(orient["font"], work_dir=cache_dir)
     # prepare_font_file 可能返回相对文件名；渲染需要可读绝对/存在路径
     if not os.path.isfile(font_path):
-        windir = os.environ.get("WINDIR", "C:/Windows")
-        system_font = os.path.join(windir, "Fonts", font_filename(orient["font"]))
-        if os.path.isfile(system_font):
-            font_path = system_font
+        resolved = resolve_font_source_path(orient["font"])
+        if resolved and os.path.isfile(resolved):
+            font_path = resolved
     try:
         png = render_huazi_png_file(
             layout_text,

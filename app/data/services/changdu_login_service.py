@@ -5,6 +5,11 @@ from playwright.sync_api import Frame, Page, sync_playwright
 
 from app.common.aes import aes_decrypt
 from app.common.config import cfg
+from app.data.services.changdu_browser import (
+    LAUNCH_ARGS,
+    STEALTH_INIT_SCRIPT,
+    browser_context_kwargs,
+)
 from app.data.services.changdu_paths import AUTH_FILE, ensure_changdu_dirs
 
 HOME_URL = "https://www.changdupingtai.com/page/home?show=true"
@@ -71,9 +76,13 @@ def run_changdu_login(auth_file: Path | None = None) -> Path:
 
     try:
         with sync_playwright() as playwright:
-            browser = playwright.chromium.launch(headless=False)
-            context = browser.new_context()
+            browser = playwright.chromium.launch(
+                headless=False,
+                args=list(LAUNCH_ARGS),
+            )
+            context = browser.new_context(**browser_context_kwargs())
             page = context.new_page()
+            page.add_init_script(STEALTH_INIT_SCRIPT)
             page.goto(HOME_URL, timeout=60_000)
             if credentials:
                 _try_autofill_changdu_login(page, credentials[0], credentials[1])

@@ -265,6 +265,7 @@
     .form-check.form-switch { display: flex; align-items: center; min-height: 32px; }
     .form-check-input {
       appearance: none;
+      -webkit-appearance: none;
       width: 40px;
       height: 20px;
       margin: 0;
@@ -273,6 +274,8 @@
       background: #dcdfe6;
       position: relative;
       cursor: pointer;
+      outline: none;
+      transition: background 0.15s ease;
     }
     .form-check-input::after {
       content: "";
@@ -283,9 +286,17 @@
       height: 16px;
       background: #fff;
       border-radius: 8px;
+      pointer-events: none;
+      transition: left 0.15s ease;
     }
-    .form-switch.is-on .form-check-input { background: #409eff; }
-    .form-switch.is-on .form-check-input::after { left: 22px; }
+    .form-check-input:checked,
+    .form-switch.is-on .form-check-input {
+      background: #409eff;
+    }
+    .form-check-input:checked::after,
+    .form-switch.is-on .form-check-input::after {
+      left: 22px;
+    }
     @media (max-width: 900px) {
       .admin-shell { flex-direction: column; }
       .admin-aside { width: 100%; flex: none; }

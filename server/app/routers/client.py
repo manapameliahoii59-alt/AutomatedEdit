@@ -23,7 +23,13 @@ from app.schemas import (
 )
 from app.services.client_version import build_client_version_out
 from app.services.daily_activity import record_daily_activity
-from app.services.daily_quota import assert_can_record, build_daily_quota, can_clip_drama, can_plan_drama
+from app.services.daily_quota import (
+    assert_can_record,
+    build_daily_quota,
+    can_clip_drama,
+    can_download_drama,
+    can_plan_drama,
+)
 from app.services.plan_jobs import create_plan_job, get_plan_job
 from app.services.plan_secrets import ensure_user_secret
 from app.services.user_settings import get_user_settings, patch_user_settings
@@ -42,12 +48,17 @@ def _quota_to_schema(quota) -> DailyQuotaOut:
         activity_date=date.fromisoformat(quota.activity_date),
         plan_count=quota.plan_count,
         clip_count=quota.clip_count,
+        download_count=quota.download_count,
         plan_limit=quota.plan_limit,
         clip_limit=quota.clip_limit,
+        download_limit=quota.download_limit,
+        download_enabled=quota.download_enabled,
         planned_dramas=quota.planned_dramas,
         clipped_dramas=quota.clipped_dramas,
+        downloaded_dramas=quota.downloaded_dramas,
         can_plan=quota.can_plan,
         can_clip=quota.can_clip,
+        can_download=quota.can_download,
     )
 
 
@@ -148,7 +159,7 @@ def report_usage(
     else:
         activity_meta = meta
 
-    if body.event in {"plan_drama", "clip_drama"}:
+    if body.event in {"plan_drama", "clip_drama", "download_drama"}:
         assert_can_record(db, user, body.event, activity_meta)
 
     event = UsageEvent(
@@ -183,8 +194,10 @@ def check_quota(
     quota = build_daily_quota(db, user)
     if body.action == "plan":
         allowed, message = can_plan_drama(db, user, body.drama_name)
-    else:
+    elif body.action == "clip":
         allowed, message = can_clip_drama(db, user, body.drama_name)
+    else:
+        allowed, message = can_download_drama(db, user, body.drama_name)
     return QuotaCheckOut(
         allowed=allowed,
         message=message,

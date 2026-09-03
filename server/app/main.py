@@ -42,6 +42,7 @@ def _ensure_daily_quota_columns() -> None:
         with engine.begin() as conn:
             added_plan_limit = False
             added_clip_limit = False
+            added_download_limit = False
             if "daily_plan_limit" not in user_cols:
                 conn.execute(
                     text(
@@ -58,6 +59,21 @@ def _ensure_daily_quota_columns() -> None:
                     )
                 )
                 added_clip_limit = True
+            if "daily_download_limit" not in user_cols:
+                conn.execute(
+                    text(
+                        "ALTER TABLE users ADD COLUMN daily_download_limit INT "
+                        "NOT NULL DEFAULT 30"
+                    )
+                )
+                added_download_limit = True
+            if "download_enabled" not in user_cols:
+                conn.execute(
+                    text(
+                        "ALTER TABLE users ADD COLUMN download_enabled TINYINT(1) "
+                        "NOT NULL DEFAULT 1"
+                    )
+                )
             if added_plan_limit:
                 conn.execute(
                     text(
@@ -70,6 +86,13 @@ def _ensure_daily_quota_columns() -> None:
                     text(
                         "UPDATE users SET daily_clip_limit = 30 "
                         "WHERE daily_clip_limit = 0"
+                    )
+                )
+            if added_download_limit:
+                conn.execute(
+                    text(
+                        "UPDATE users SET daily_download_limit = 30 "
+                        "WHERE daily_download_limit = 0"
                     )
                 )
 

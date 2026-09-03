@@ -280,9 +280,11 @@ def users_list(
                 "password": user.plain_password or "",
                 "role": user.role,
                 "is_active": user.is_active,
+                "download_enabled": getattr(user, "download_enabled", True),
                 "valid_until": user.valid_until.isoformat() if user.valid_until else "永久",
                 "plan_limit": user.daily_plan_limit,
                 "clip_limit": user.daily_clip_limit,
+                "download_limit": getattr(user, "daily_download_limit", 30),
                 "plan_label": label,
                 "keys_preview": _keys_preview(keys),
                 "created_at": _fmt_dt(user.created_at),
@@ -344,9 +346,11 @@ def user_edit_save(
     username: Annotated[str, Form()] = "",
     role: Annotated[str, Form()] = "user",
     is_active: Annotated[str | None, Form()] = None,
+    download_enabled: Annotated[str | None, Form()] = None,
     valid_until: Annotated[str | None, Form()] = None,
     daily_plan_limit: Annotated[str | None, Form()] = None,
     daily_clip_limit: Annotated[str | None, Form()] = None,
+    daily_download_limit: Annotated[str | None, Form()] = None,
     plan_llm_preset: Annotated[str | None, Form()] = None,
     deepseek_keys: Annotated[str | None, Form()] = None,
     dashscope_key: Annotated[str | None, Form()] = None,
@@ -359,11 +363,16 @@ def user_edit_save(
     user.username = name
     user.role = (role or "user").strip() or "user"
     user.is_active = bool(is_active)
+    user.download_enabled = bool(download_enabled)
     user.valid_until = _parse_valid_until(valid_until)
     if daily_plan_limit is not None and str(daily_plan_limit).strip() != "":
         user.daily_plan_limit = _parse_int(daily_plan_limit, user.daily_plan_limit)
     if daily_clip_limit is not None and str(daily_clip_limit).strip() != "":
         user.daily_clip_limit = _parse_int(daily_clip_limit, user.daily_clip_limit)
+    if daily_download_limit is not None and str(daily_download_limit).strip() != "":
+        user.daily_download_limit = _parse_int(
+            daily_download_limit, user.daily_download_limit
+        )
     db.commit()
 
     preset = (plan_llm_preset or "").strip()

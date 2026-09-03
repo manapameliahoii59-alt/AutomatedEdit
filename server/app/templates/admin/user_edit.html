@@ -35,9 +35,15 @@
         </select>
       </div>
       <div>
-        <label class="lbl">允许使用桌面端</label>
-        <div class="form-check form-switch m-0{% if user.is_active %} is-on{% endif %}">
-          <input class="form-check-input" type="checkbox" role="switch" name="is_active" value="y"{% if user.is_active %} checked{% endif %}>
+        <label class="lbl" for="is_active">允许使用桌面端</label>
+        <div class="form-check form-switch m-0">
+          <input class="form-check-input" id="is_active" type="checkbox" role="switch" name="is_active" value="y"{% if user.is_active %} checked{% endif %}>
+        </div>
+      </div>
+      <div>
+        <label class="lbl" for="download_enabled">允许使用视频下载</label>
+        <div class="form-check form-switch m-0">
+          <input class="form-check-input" id="download_enabled" type="checkbox" role="switch" name="download_enabled" value="y"{% if user.download_enabled %} checked{% endif %}>
         </div>
       </div>
       <div>
@@ -61,6 +67,14 @@
         <div class="el-input">
           <div class="el-input__wrapper">
             <input class="el-input__inner" id="daily_clip_limit" name="daily_clip_limit" value="{{ user.daily_clip_limit }}">
+          </div>
+        </div>
+      </div>
+      <div>
+        <label class="lbl" for="daily_download_limit">每日下载上限（0=不限）</label>
+        <div class="el-input">
+          <div class="el-input__wrapper">
+            <input class="el-input__inner" id="daily_download_limit" name="daily_download_limit" value="{{ user.daily_download_limit }}">
           </div>
         </div>
       </div>

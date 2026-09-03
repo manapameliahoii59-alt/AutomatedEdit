@@ -15,8 +15,10 @@ class User(Base):
     plain_password: Mapped[str] = mapped_column(String(128), default="")
     role: Mapped[str] = mapped_column(String(16), default="user")
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    download_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     daily_plan_limit: Mapped[int] = mapped_column(Integer, default=30)
     daily_clip_limit: Mapped[int] = mapped_column(Integer, default=30)
+    daily_download_limit: Mapped[int] = mapped_column(Integer, default=30)
     valid_until: Mapped[date | None] = mapped_column(Date, nullable=True, default=None)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 

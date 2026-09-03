@@ -60,6 +60,8 @@ def test_user_edit_page_renders(admin_client):
     response = admin_client.get("/admin/user/edit/1")
     assert response.status_code == 200, response.text[:2000]
     assert "允许使用桌面端" in response.text
+    assert "允许使用视频下载" in response.text
+    assert "每日下载上限" in response.text
     assert "策划 API Keys" in response.text
     assert "策划模型" in response.text
     assert "OpenCode Go" in response.text
@@ -106,7 +108,8 @@ def test_user_edit_toggle_is_active(admin_client):
 
     check_resp = admin_client.get("/admin/user/edit/1")
     assert check_resp.status_code == 200
-    assert "checked" not in check_resp.text
+    assert 'id="is_active"' in check_resp.text
+    assert 'id="is_active" type="checkbox" role="switch" name="is_active" value="y" checked' not in check_resp.text
 
     save_resp = admin_client.post(
         "/admin/user/edit/1",
@@ -122,7 +125,54 @@ def test_user_edit_toggle_is_active(admin_client):
 
     check_resp = admin_client.get("/admin/user/edit/1")
     assert check_resp.status_code == 200
-    assert "checked" in check_resp.text
+    assert 'id="is_active" type="checkbox" role="switch" name="is_active" value="y" checked' in check_resp.text
+
+
+def test_user_edit_download_controls(admin_client):
+    save_resp = admin_client.post(
+        "/admin/user/edit/1",
+        data={
+            "username": "a@b.com",
+            "role": "user",
+            "is_active": "y",
+            "daily_download_limit": "5",
+            "save": "Save",
+        },
+        follow_redirects=False,
+    )
+    assert save_resp.status_code == 302
+
+    check_resp = admin_client.get("/admin/user/edit/1")
+    assert check_resp.status_code == 200
+    assert 'id="download_enabled"' in check_resp.text
+    assert (
+        'id="download_enabled" type="checkbox" role="switch" '
+        'name="download_enabled" value="y" checked'
+    ) not in check_resp.text
+    assert 'id="daily_download_limit"' in check_resp.text
+    assert 'name="daily_download_limit" value="5"' in check_resp.text
+
+    save_resp = admin_client.post(
+        "/admin/user/edit/1",
+        data={
+            "username": "a@b.com",
+            "role": "user",
+            "is_active": "y",
+            "download_enabled": "y",
+            "daily_download_limit": "12",
+            "save": "Save",
+        },
+        follow_redirects=False,
+    )
+    assert save_resp.status_code == 302
+
+    check_resp = admin_client.get("/admin/user/edit/1")
+    assert check_resp.status_code == 200
+    assert (
+        'id="download_enabled" type="checkbox" role="switch" '
+        'name="download_enabled" value="y" checked'
+    ) in check_resp.text
+    assert 'name="daily_download_limit" value="12"' in check_resp.text
 
 
 def test_user_list_shows_deepseek_column(admin_client):

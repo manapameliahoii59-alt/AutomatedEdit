@@ -11,7 +11,13 @@ if str(SERVER_ROOT) not in sys.path:
 
 from app.models import User
 from app.services.daily_activity import record_daily_activity
-from app.services.daily_quota import assert_can_record, build_daily_quota, can_clip_drama, can_plan_drama
+from app.services.daily_quota import (
+    assert_can_record,
+    build_daily_quota,
+    can_clip_drama,
+    can_download_drama,
+    can_plan_drama,
+)
 
 
 class _FakeRow:
@@ -42,12 +48,19 @@ class _FakeSession:
             self.row._persisted = True
 
 
-def _user(plan_limit: int = 0, clip_limit: int = 0) -> User:
+def _user(
+    plan_limit: int = 0,
+    clip_limit: int = 0,
+    download_limit: int = 0,
+    download_enabled: bool = True,
+) -> User:
     return User(
         username="demo",
         password_hash="x",
         daily_plan_limit=plan_limit,
         daily_clip_limit=clip_limit,
+        daily_download_limit=download_limit,
+        download_enabled=download_enabled,
     )
 
 
@@ -104,3 +117,39 @@ def test_repeat_same_drama_allowed(monkeypatch):
 
     assert can_plan_drama(db, user, "剧A")[0] is True
     assert can_clip_drama(db, user, "剧A")[0] is True
+
+
+def test_download_disabled(monkeypatch):
+    monkeypatch.setattr("app.services.daily_activity._today", lambda: date(2026, 7, 7))
+    db = _FakeSession()
+    user = _user(download_enabled=False)
+    allowed, message = can_download_drama(db, user, "剧A")
+    assert allowed is False
+    assert "未开通" in message
+
+
+def test_download_limit_enforced(monkeypatch):
+    monkeypatch.setattr("app.services.daily_activity._today", lambda: date(2026, 7, 7))
+    db = _FakeSession()
+    user = _user(download_limit=1)
+    record_daily_activity(db, 1, "download_drama", "剧A")
+
+    allowed, message = can_download_drama(db, user, "剧B")
+    assert allowed is False
+    assert "下载" in message
+
+    with pytest.raises(HTTPException) as exc:
+        assert_can_record(db, user, "download_drama", "剧B")
+    assert exc.value.status_code == 429
+
+    assert can_download_drama(db, user, "剧A")[0] is True
+
+
+def test_build_daily_quota_includes_download(monkeypatch):
+    monkeypatch.setattr("app.services.daily_activity._today", lambda: date(2026, 7, 7))
+    db = _FakeSession()
+    user = _user(download_limit=30)
+    quota = build_daily_quota(db, user)
+    assert quota.download_limit == 30
+    assert quota.download_enabled is True
+    assert quota.can_download is True

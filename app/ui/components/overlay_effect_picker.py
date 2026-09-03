@@ -34,19 +34,31 @@ from app.common.overlay_text_settings import (
 def _huazi_card_pixmap(effect_id: str) -> QPixmap | None:
     """为综艺花字卡片生成小缩略图。"""
     from app.common.huazi_render import render_huazi_image
-    from app.common.huazi_styles import is_huazi_effect
+    from app.common.huazi_styles import get_huazi_style, is_huazi_effect
+    from app.common.overlay_text_settings import resolve_font_source_path
 
     if not is_huazi_effect(effect_id):
         return None
-    windir = os.environ.get("WINDIR", "C:/Windows")
-    font_path = os.path.join(windir, "Fonts", "msyhbd.ttc")
-    if not os.path.isfile(font_path):
-        font_path = os.path.join(windir, "Fonts", font_filename("msyh"))
-    if not os.path.isfile(font_path):
+    hz = get_huazi_style(effect_id)
+    font_path = ""
+    if hz:
+        for key in hz.get("prefer_fonts") or ():
+            font_path = resolve_font_source_path(str(key)) or ""
+            if font_path:
+                break
+    if not font_path:
+        windir = os.environ.get("WINDIR", "C:/Windows")
+        font_path = os.path.join(windir, "Fonts", "msyhbd.ttc")
+        if not os.path.isfile(font_path):
+            font_path = os.path.join(windir, "Fonts", font_filename("msyh"))
+    if not font_path or not os.path.isfile(font_path):
         return None
     try:
+        sample = (hz or {}).get("label") or "花字"
+        if len(sample) > 4:
+            sample = sample[:4]
         img = render_huazi_image(
-            "花字",
+            sample,
             effect_id,
             font_path=font_path,
             fontsize=28,

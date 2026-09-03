@@ -378,6 +378,31 @@ def bundle_outro() -> None:
         print(f"Warning: no outro mp4 files in {src_dir}")
 
 
+def bundle_overlay_fonts() -> None:
+    """打包叠字/花字用的内置字体（tools/fonts）。"""
+    src_dir = PROJECT_ROOT / "tools" / "fonts"
+    dst_dir = DIST_DIR / "tools" / "fonts"
+    if not src_dir.is_dir():
+        print(f"Warning: {src_dir} not found, skipping overlay fonts bundle")
+        return
+    dst_dir.mkdir(parents=True, exist_ok=True)
+    found = False
+    for src in src_dir.iterdir():
+        if not src.is_file():
+            continue
+        if src.suffix.lower() not in {".ttf", ".otf", ".ttc"}:
+            continue
+        dst = dst_dir / src.name
+        try:
+            shutil.copy2(src, dst)
+            print(f"Bundled font {src.name}")
+            found = True
+        except OSError as exc:
+            print(f"Warning: failed to bundle font {src.name}: {exc}")
+    if not found:
+        print(f"Warning: no font files in {src_dir}")
+
+
 def bundle_vc_runtime() -> None:
     """用系统 VC++ 运行库替换 Nuitka 打包版本，避免 torch c10.dll 初始化失败。"""
     system32 = Path(os.environ.get("SystemRoot", r"C:\Windows")) / "System32"
@@ -597,6 +622,7 @@ def main():
     bundle_vc_runtime()
     bundle_ffmpeg()
     bundle_outro()
+    bundle_overlay_fonts()
     bundle_playwright_browsers()
     bundle_config()
     cleanup_dist()

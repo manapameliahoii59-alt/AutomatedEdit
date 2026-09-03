@@ -4,9 +4,11 @@ from app.data.services.series_list_client import SeriesListClient
 class TestDownloadZipProgress:
     def test_progress_callback_receives_total_and_updates(self, monkeypatch, tmp_path):
         client = SeriesListClient.__new__(SeriesListClient)
+        client._cookie_header = "adUserId=demo"
         dest = tmp_path / "demo.zip"
         chunks = [b"a" * 1024, b"b" * 1024, b"c" * 1024]
         progress_calls: list[tuple[int, int | None, float]] = []
+        captured: dict = {}
 
         class FakeResponse:
             headers = {"Content-Length": str(sum(len(c) for c in chunks))}
@@ -19,9 +21,14 @@ class TestDownloadZipProgress:
             def iter_content(chunk_size=0):
                 yield from chunks
 
+        def fake_get(*args, **kwargs):
+            captured["args"] = args
+            captured["kwargs"] = kwargs
+            return FakeResponse()
+
         monkeypatch.setattr(
             "app.data.services.series_list_client.requests.get",
-            lambda *args, **kwargs: FakeResponse(),
+            fake_get,
         )
 
         result = client.download_zip_from_url(
@@ -43,3 +50,16 @@ class TestDownloadZipProgress:
         assert progress_calls[0][0] == 0
         assert progress_calls[0][1] == sum(len(c) for c in chunks)
         assert progress_calls[-1][0] == sum(len(c) for c in chunks)
+        headers = captured["kwargs"].get("headers") or {}
+        assert "Mozilla" in headers.get("User-Agent", "")
+        assert "changdupingtai.com" in headers.get("Referer", "")
+        assert headers.get("Cookie") == "adUserId=demo"
+
+
+def test_zip_download_headers_defaults():
+    from app.data.services.changdu_browser import zip_download_headers
+
+    headers = zip_download_headers()
+    assert "User-Agent" in headers
+    assert headers["Referer"].endswith("/sale/download-center")
+    assert "Cookie" not in headers
