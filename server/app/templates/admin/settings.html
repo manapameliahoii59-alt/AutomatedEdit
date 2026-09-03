@@ -2,10 +2,86 @@
 {% from "admin/macros.html" import pager %}
 {% block title %}用户配置 · {{ app_name }}{% endblock %}
 {% block body %}
+<style>
+  .json-dialog-mask {
+    display: none;
+    position: fixed;
+    inset: 0;
+    z-index: 2000;
+    background: rgba(0, 0, 0, 0.45);
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+  }
+  .json-dialog-mask.is-open { display: flex; }
+  .json-dialog {
+    width: min(920px, 100%);
+    max-height: min(80vh, 720px);
+    background: #fff;
+    border-radius: 6px;
+    box-shadow: 0 12px 32px rgba(0, 0, 0, 0.18);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+  .json-dialog__head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 14px 18px;
+    border-bottom: 1px solid #ebeef5;
+  }
+  .json-dialog__head h2 {
+    margin: 0;
+    font-size: 16px;
+    font-weight: 600;
+    color: #303133;
+  }
+  .json-dialog__meta {
+    margin: 2px 0 0;
+    font-size: 12px;
+    color: #909399;
+  }
+  .json-dialog__close {
+    border: 0;
+    background: transparent;
+    color: #909399;
+    font-size: 20px;
+    line-height: 1;
+    cursor: pointer;
+    padding: 4px 8px;
+  }
+  .json-dialog__close:hover { color: #303133; }
+  .json-dialog__body {
+    flex: 1;
+    min-height: 0;
+    overflow: auto;
+    padding: 16px 18px;
+    background: #fafafa;
+  }
+  .json-dialog__body pre {
+    margin: 0;
+    white-space: pre-wrap;
+    word-break: break-word;
+    font-family: Consolas, "Courier New", monospace;
+    font-size: 12px;
+    line-height: 1.55;
+    color: #303133;
+  }
+  .json-dialog__foot {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+    padding: 12px 18px;
+    border-top: 1px solid #ebeef5;
+  }
+  .settings-data-cell { cursor: pointer; }
+</style>
 <div class="head">
   <div>
     <h1>用户配置</h1>
-    <p>桌面端同步下来的配置快照，共 {{ total }} 条</p>
+    <p>桌面端同步下来的配置快照，共 {{ total }} 条 · 双击「配置」可查看完整 JSON</p>
   </div>
   <form class="search" method="get">
     <div class="el-input">
@@ -31,7 +107,11 @@
       <tr>
         <td>{{ row.id }}</td>
         <td>{{ row.username }}</td>
-        <td class="ellipsis" title="{{ row.data }}">{{ row.data }}</td>
+        <td
+          class="ellipsis settings-data-cell js-settings-data"
+          title="双击查看完整配置"
+          data-id="{{ row.id }}"
+        >{{ row.data_preview }}</td>
         <td>{{ row.updated_at }}</td>
       </tr>
       {% else %}
@@ -42,20 +122,121 @@
   <div id="settings-grid"></div>
 </div>
 {{ pager("/admin/settings", page, total_pages, total, q) }}
+
+<div class="json-dialog-mask" id="settings-json-dialog" role="dialog" aria-modal="true" aria-labelledby="settings-json-title">
+  <div class="json-dialog">
+    <div class="json-dialog__head">
+      <div>
+        <h2 id="settings-json-title">用户配置</h2>
+        <p class="json-dialog__meta" id="settings-json-meta"></p>
+      </div>
+      <button type="button" class="json-dialog__close" id="settings-json-close" aria-label="关闭">×</button>
+    </div>
+    <div class="json-dialog__body">
+      <pre id="settings-json-body"></pre>
+    </div>
+    <div class="json-dialog__foot">
+      <button type="button" class="el-button" id="settings-json-copy">复制 JSON</button>
+      <button type="button" class="el-button el-button--primary" id="settings-json-ok">关闭</button>
+    </div>
+  </div>
+</div>
 {% endblock %}
 {% block scripts %}
 <script>
-  if (window.Vue && window.VXETable) {
-    mountAdminGrid("#settings-grid", {
-      fallback: "#settings-ssr-table",
-      data: {{ rows | tojson }},
-      columns: [
-        { field: "id", title: "ID", width: 80 },
-        { field: "username", title: "账号", minWidth: 160 },
-        { field: "data", title: "配置", minWidth: 280, showOverflow: true },
-        { field: "updated_at", title: "更新时间", width: 180 },
-      ],
+  (function () {
+    const rows = {{ rows | tojson }};
+    const rowById = {};
+    rows.forEach(function (row) {
+      rowById[String(row.id)] = row;
     });
-  }
+
+    const mask = document.getElementById("settings-json-dialog");
+    const titleEl = document.getElementById("settings-json-title");
+    const metaEl = document.getElementById("settings-json-meta");
+    const bodyEl = document.getElementById("settings-json-body");
+    const closeBtn = document.getElementById("settings-json-close");
+    const okBtn = document.getElementById("settings-json-ok");
+    const copyBtn = document.getElementById("settings-json-copy");
+    let currentText = "";
+
+    function prettyJson(raw) {
+      const text = (raw == null ? "" : String(raw)).trim() || "{}";
+      try {
+        return JSON.stringify(JSON.parse(text), null, 2);
+      } catch (_err) {
+        return text;
+      }
+    }
+
+    function openSettingsDialog(row) {
+      if (!row) return;
+      const username = row.username || "";
+      const updated = row.updated_at || "";
+      currentText = prettyJson(row.data);
+      titleEl.textContent = username ? ("用户配置 · " + username) : "用户配置";
+      metaEl.textContent = updated ? ("更新时间：" + updated) : "JSON 格式化预览";
+      bodyEl.textContent = currentText;
+      mask.classList.add("is-open");
+    }
+
+    function closeSettingsDialog() {
+      mask.classList.remove("is-open");
+    }
+
+    closeBtn.addEventListener("click", closeSettingsDialog);
+    okBtn.addEventListener("click", closeSettingsDialog);
+    mask.addEventListener("click", function (ev) {
+      if (ev.target === mask) closeSettingsDialog();
+    });
+    document.addEventListener("keydown", function (ev) {
+      if (ev.key === "Escape" && mask.classList.contains("is-open")) {
+        closeSettingsDialog();
+      }
+    });
+    copyBtn.addEventListener("click", async function () {
+      try {
+        await navigator.clipboard.writeText(currentText);
+        copyBtn.textContent = "已复制";
+        setTimeout(function () { copyBtn.textContent = "复制 JSON"; }, 1200);
+      } catch (_err) {
+        copyBtn.textContent = "复制失败";
+        setTimeout(function () { copyBtn.textContent = "复制 JSON"; }, 1200);
+      }
+    });
+
+    document.querySelectorAll(".js-settings-data").forEach(function (cell) {
+      cell.addEventListener("dblclick", function () {
+        openSettingsDialog(rowById[cell.getAttribute("data-id") || ""]);
+      });
+    });
+
+    if (window.Vue && window.VXETable) {
+      mountAdminGrid("#settings-grid", {
+        fallback: "#settings-ssr-table",
+        data: rows,
+        columns: [
+          { field: "id", title: "ID", width: 80 },
+          { field: "username", title: "账号", minWidth: 160 },
+          {
+            field: "data_preview",
+            title: "配置",
+            minWidth: 280,
+            showOverflow: true,
+            className: "settings-data-cell",
+          },
+          { field: "updated_at", title: "更新时间", width: 180 },
+        ],
+        events: {
+          onCellDblclick: function ({ row, column }) {
+            const field = column && (column.field || column.property);
+            if (field === "data_preview" || field === "data") {
+              openSettingsDialog(row);
+            }
+          },
+        },
+      });
+    }
+  })();
 </script>
 {% endblock %}

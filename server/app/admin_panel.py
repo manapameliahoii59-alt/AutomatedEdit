@@ -553,7 +553,8 @@ def settings_list(
         return {
             "id": row.id,
             "username": username,
-            "data": preview,
+            "data": data,
+            "data_preview": preview,
             "updated_at": _fmt_dt(row.updated_at),
         }
 

@@ -10,7 +10,7 @@ from datetime import datetime
 from typing import Any, Callable
 
 import httpx
-from fuzzywuzzy import process
+from fuzzywuzzy import fuzz, process
 
 MIN_DURATION_SECONDS = 150
 DEFAULT_MAX_DURATION_SECONDS = 720
@@ -42,6 +42,11 @@ MIN_START_GAP_SECONDS = 1.1
 MIN_BEFORE_SPEECH_SECONDS = 0.3
 # 短片：上一句结束后再空出的字幕/余韵缓冲（不得贴 prev_end 起切）
 POST_UTTERANCE_PAD_SECONDS = 0.3
+# 切点尾垫：台词结束后保留的余韵（旧 0.3 → 0.5，避免尾音/混响被切）
+POST_CUT_PAD_SECONDS = 0.5
+# 模型引用台词可能横跨多条 ASR 分段：向后拼接检查的最大段数 / 完整包含阈值
+CUT_SPAN_MAX_EXTRA = 3
+CUT_SPAN_MIN_SCORE = 85
 # 短片：同一开场起点最多占用目标条数的比例（2/5）
 SAME_SHORT_START_RATIO_NUM = 2
 SAME_SHORT_START_RATIO_DEN = 5
@@ -160,7 +165,7 @@ def _compute_clip_duration(s_idx, l_idx, start_time, cut_point, ordered_files, e
         return 0
     if s_idx == l_idx:
         return max(0, cut_point - start_time)
-    phys_end = cut_point - 0.3
+    phys_end = cut_point - POST_CUT_PAD_SECONDS
     first_ep = ordered_files[s_idx]
     duration = max(0, episode_end_times.get(first_ep, 0) - start_time)
     for x in range(s_idx + 1, l_idx):
@@ -189,6 +194,39 @@ def _find_cut_index(steps, target_text, texts=None):
             if s["text"] == best[0]:
                 return i
     return -1
+
+
+def _resolve_cut_span(
+    steps: list[dict],
+    c_idx: int,
+    cut_text: str,
+    *,
+    step_texts: list[str] | None = None,
+) -> int:
+    """模型引用的台词可能横跨多条 ASR 分段（ASR 常把一句话拆成两段）：
+    从 c_idx 向后拼接同集连续分段，返回引用完整覆盖到的最后一段索引；
+    未覆盖更多段则原样返回 c_idx（保守回退，不连续引用不跨段）。"""
+    if not cut_text or c_idx < 0 or c_idx >= len(steps):
+        return c_idx
+    if step_texts is None:
+        step_texts = [str(s.get("text") or "") for s in steps]
+    src = steps[c_idx].get("source_file")
+    combined = str(step_texts[c_idx] or "")
+    last = c_idx
+    for k in range(1, CUT_SPAN_MAX_EXTRA + 1):
+        j = c_idx + k
+        if j >= len(steps) or steps[j].get("source_file") != src:
+            break
+        combined += str(step_texts[j] or "")
+        # 长度接近 + 引用完整包含于拼接文本 → 句子延续到第 j 段；
+        # 仅凭 partial_ratio 不够：短段文本必然是长引用的子串（=100 分）
+        if (
+            len(combined) >= len(cut_text) - 1
+            and fuzz.partial_ratio(cut_text, combined) >= CUT_SPAN_MIN_SCORE
+        ):
+            last = j
+            break
+    return last
 
 
 def _step_bounds(step: dict, *, prev_end: float = 0.0) -> tuple[float, float]:
@@ -239,6 +277,22 @@ def _target_utterance_index(ep_steps: list[tuple[float, float]], t: float) -> in
         if t < start:
             return i
     return target_idx
+
+
+def _cut_point_after(steps: list[dict], c_idx: int) -> float:
+    """切点 = 该句结束 + 尾垫；下一句更早开始时钳制到其句首前。"""
+    phys_end = float(steps[c_idx].get("end") or 0)
+    cut = phys_end + POST_CUT_PAD_SECONDS
+    for start, _end in _episode_utterances(steps, steps[c_idx].get("source_file")):
+        if start > phys_end + 1e-6:
+            clamped = start - MIN_BEFORE_SPEECH_SECONDS
+            if clamped < phys_end:
+                # ASR 重叠兜底：钳制点已落回本句，只保留最小尾垫
+                cut = phys_end + 0.1
+            else:
+                cut = min(cut, clamped)
+            break
+    return round(cut, 3)
 
 
 def _short_start_windows(
@@ -489,6 +543,8 @@ def _normalize_short_ends(
             continue
         if steps[c_idx].get("source_file") != l_ep:
             continue
+        # 引用可能横跨多条 ASR 分段：末覆盖段才是句尾
+        c_idx = _resolve_cut_span(steps, c_idx, cut_text, step_texts=step_texts)
         phys_end = float(steps[c_idx].get("end") or 0)
         fp = f"{l_ep}_{round(phys_end)}"
         if fp in seen_fp:
@@ -499,7 +555,7 @@ def _normalize_short_ends(
                 "le": l_ep,
                 "l_idx": ordered_files.index(l_ep),
                 "phys_end": phys_end,
-                "cut_point": phys_end + 0.3,
+                "cut_point": _cut_point_after(steps, c_idx),
                 "hook": hook,
                 "ct": cut_text,
             }
@@ -1115,8 +1171,12 @@ def run_plan(
                     if steps[c_idx].get("source_file") != l_ep:
                         continue
 
+                    # 引用可能横跨多条 ASR 分段：末覆盖段才是句尾
+                    c_idx = _resolve_cut_span(
+                        steps, c_idx, cut_text, step_texts=step_texts
+                    )
                     phys_end = steps[c_idx].get("end", 0)
-                    cut_point = phys_end + 0.3
+                    cut_point = _cut_point_after(steps, c_idx)
                     if cut_point <= start_time:
                         continue
 

@@ -164,6 +164,29 @@ def test_pct_for_position_preset_nine_grid():
     assert step_position_preset("br", dcol=1, drow=1) == "br"
 
 
+def test_top_left_pct_respects_literal_y_when_v_align_top():
+    """v_align=t 时 y_pct 字面生效；v_align=b 才会贴底（避免两段字一起被吸到底边重叠）。"""
+    from app.common.overlay_text_settings import top_left_pct_for_align
+
+    free = {"x_pct": 33.1, "y_pct": 70.0, "h_align": "l", "v_align": "t"}
+    fx, fy = top_left_pct_for_align(free, box_w_ratio=0.3, box_h_ratio=0.05)
+    assert abs(fx - 33.1) < 0.01
+    assert abs(fy - 70.0) < 0.01
+
+    disc = {"x_pct": 20.0, "y_pct": 88.0, "h_align": "l", "v_align": "t"}
+    dx, dy = top_left_pct_for_align(disc, box_w_ratio=0.25, box_h_ratio=0.03)
+    assert abs(dx - 20.0) < 0.01
+    assert abs(dy - 88.0) < 0.01
+    # 自由定位下两者 y 不同，不会因贴底而重叠
+    assert abs(fy - dy) > 5.0
+
+    snapped = {"x_pct": 33.1, "y_pct": 70.0, "h_align": "l", "v_align": "b"}
+    _sx, sy = top_left_pct_for_align(
+        snapped, box_w_ratio=0.3, box_h_ratio=0.05, margin_pct=1.5
+    )
+    assert abs(sy - (100.0 - 5.0 - 1.5)) < 0.05
+
+
 def test_glow_layer_count_is_dense_near_edge():
     """近缘密采样：层数约为圈数×步数，不再含中心雾。"""
     n = glow_layer_count("glow")

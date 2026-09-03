@@ -137,6 +137,46 @@ class TestSceneCache:
         assert calls[1]["end_time"] == 33.0
 
 
+class _FakeScene:
+    def __init__(self, seconds: float):
+        self._seconds = seconds
+
+    def get_seconds(self) -> float:
+        return self._seconds
+
+
+class TestOptimizeCutSpeechFloor:
+    """台词完整优先：吸附不得把切点提前到台词结束点（AI 切点 - 尾垫）之前。"""
+
+    AI_CUT = 100.3  # = 台词结束 100.0 + 服务端尾垫 0.3
+
+    def _run(self, monkeypatch, scenes, ai_cut=AI_CUT):
+        monkeypatch.setattr(
+            RenderService,
+            "_get_scene_list",
+            staticmethod(
+                lambda path, cache, *, ai_cut_time: [
+                    (_FakeScene(s),) for s in scenes
+                ]
+            ),
+        )
+        return RenderService._optimize_cut("a.mp4", ai_cut, {})
+
+    def test_scene_inside_speech_cannot_pull_cut_earlier(self, monkeypatch):
+        # 99.2 在台词中间（< 100.0 下限），只能吸附到 101.0
+        assert self._run(monkeypatch, [99.2, 101.0]) == 101.0
+
+    def test_scene_at_speech_end_still_snaps(self, monkeypatch):
+        # 100.0 恰为台词结束点（= 下限），允许吸附
+        assert self._run(monkeypatch, [99.0, 100.0]) == 100.0
+
+    def test_no_allowed_scene_keeps_ai_cut(self, monkeypatch):
+        assert self._run(monkeypatch, [99.5, 99.9]) == self.AI_CUT
+
+    def test_nearest_scene_after_cut_wins(self, monkeypatch):
+        assert self._run(monkeypatch, [100.1, 101.4]) == 100.1
+
+
 class TestRunFfmpeg:
     def test_quiet_ffmpeg_cmd_adds_silence_flags(self):
         cmd = RenderService._quiet_ffmpeg_cmd(["ffmpeg", "-y", "-i", "a.mp4", "out.mp4"])

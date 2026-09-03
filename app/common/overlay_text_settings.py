@@ -718,9 +718,9 @@ def _clamp_orient_style(
         "h_align": clamp_h_align(
             src.get("h_align", defaults_orient.get("h_align", ""))
         ),
-        "v_align": clamp_v_align(
-            src.get("v_align", defaults_orient.get("v_align", ""))
-        ),
+        # 垂直始终按 y_pct 字面定位。曾用九宫格把「靠近底部」写成 v_align=b，
+        # 导致剧名/提示再次打开时一起贴底重叠；不再持久化垂直几何对齐。
+        "v_align": "t",
         "font": clamp_font_key(_pick("font", defaults_orient.get("font", DEFAULT_FONT))),
         "fontsize": clamp_overlay_fontsize(
             _pick("fontsize", defaults_orient.get("fontsize", 16)),

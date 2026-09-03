@@ -369,6 +369,7 @@
           columnConfig: { resizable: true },
         };
         if (options.formId) gridOptions.checkboxConfig = { highlight: true };
+        const extraEvents = options.events || {};
         let gridRef = null;
         const app = Vue.createApp({
           data() {
@@ -390,7 +391,7 @@
             window.removeEventListener("resize", this._onResize);
           },
           render() {
-            return Vue.h(Grid, Object.assign({}, gridOptions, {
+            return Vue.h(Grid, Object.assign({}, gridOptions, extraEvents, {
               height: this.gridHeight,
               ref: function (vm) { gridRef = vm; },
             }));

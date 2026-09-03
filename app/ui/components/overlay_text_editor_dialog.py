@@ -25,12 +25,12 @@ from app.common.huazi_styles import get_huazi_style, is_huazi_effect
 from app.common.overlay_text_settings import (
     OVERLAY_FONTSIZE_MAX,
     OVERLAY_FONTSIZE_MIN,
-    align_for_position_preset,
     available_font_choices,
+    clamp_h_align,
     clamp_text_effect,
     default_overlay_disclaimer,
     default_overlay_title,
-    nearest_position_preset,
+    position_for_orientation,
     set_position_for_orientation,
     style_for_orientation,
     update_orient_style,
@@ -308,7 +308,9 @@ class OverlayTextEditorDialog(QDialog):
                 widgets["layout_h"].blockSignals(False)
                 widgets["layout_v"].blockSignals(False)
 
-        def _read_shared(widgets: dict, style: dict) -> dict:
+        def _read_shared(
+            widgets: dict, style: dict, *, free_pos: bool = False
+        ) -> dict:
             out = dict(style)
             out["text"] = widgets["text"].text()
             layout = (
@@ -339,12 +341,15 @@ class OverlayTextEditorDialog(QDialog):
                     "x_pct": widgets["x_pct"].value(),
                     "y_pct": widgets["y_pct"].value(),
                 }
-            preset = nearest_position_preset(
-                float(patch["x_pct"]), float(patch["y_pct"])
-            )
-            h_a, v_a = align_for_position_preset(preset)
-            patch["h_align"] = h_a
-            patch["v_align"] = v_a
+            # 垂直始终按 y_pct 字面定位，避免「靠近底部」被写成 v_align=b
+            # 后再次打开时贴底重叠。水平对齐仅在九宫格跳格时保留居中/右。
+            if free_pos:
+                patch["h_align"] = "l"
+                patch["v_align"] = "t"
+            else:
+                orient = position_for_orientation(out, state["orientation"])
+                patch["h_align"] = clamp_h_align(orient.get("h_align")) or "l"
+                patch["v_align"] = "t"
             return update_orient_style(
                 out,
                 state["orientation"],
@@ -361,6 +366,14 @@ class OverlayTextEditorDialog(QDialog):
                 return
             state["title"] = _read_shared(title_w, state["title"])
             state["disclaimer"] = _read_shared(disc_w, state["disclaimer"])
+            _refresh_preview()
+
+        def _on_pos_spin_changed(widgets: dict, _value=None):
+            """位置旋钮视为自由定位，清除该组的九宫格几何对齐。"""
+            if state["syncing"]:
+                return
+            key = widgets["key"]
+            state[key] = _read_shared(widgets, state[key], free_pos=True)
             _refresh_preview()
 
         def _sync_pos_spins(
@@ -433,11 +446,19 @@ class OverlayTextEditorDialog(QDialog):
             widgets["fontsize"].valueChanged.connect(_on_param_changed)
             widgets["color"].textChanged.connect(_on_param_changed)
             widgets["opacity"].valueChanged.connect(_on_param_changed)
-            widgets["x_pct"].valueChanged.connect(_on_param_changed)
-            widgets["y_pct"].valueChanged.connect(_on_param_changed)
+            widgets["x_pct"].valueChanged.connect(
+                lambda _v, w=widgets: _on_pos_spin_changed(w)
+            )
+            widgets["y_pct"].valueChanged.connect(
+                lambda _v, w=widgets: _on_pos_spin_changed(w)
+            )
             widgets["huazi_fontsize"].valueChanged.connect(_on_param_changed)
-            widgets["huazi_x_pct"].valueChanged.connect(_on_param_changed)
-            widgets["huazi_y_pct"].valueChanged.connect(_on_param_changed)
+            widgets["huazi_x_pct"].valueChanged.connect(
+                lambda _v, w=widgets: _on_pos_spin_changed(w)
+            )
+            widgets["huazi_y_pct"].valueChanged.connect(
+                lambda _v, w=widgets: _on_pos_spin_changed(w)
+            )
             widgets["effect"].effectChanged.connect(
                 lambda eid, w=widgets: _on_effect_changed(w, eid)
             )

@@ -14,6 +14,7 @@ uv run pytest                              # all tests (coverage on by default)
 - **Test**: `uv run pytest` — coverage via `--cov=app` (excludes `app/ui/generated/*`, `tests/*`; configured in both `pytest.ini` and `pyproject.toml`)
 - **Server tests**: `cd server; pytest` — root `uv run pytest` (`testpaths=tests`) does NOT pick up `server/tests/`. No MySQL needed: they use in-memory SQLite / fake sessions.
 - **Server run**: `cd server; uvicorn app.main:app --port 8000` — `Settings` loads `env_file=".env"` relative to CWD, so it must be started from `server/` (copy `server/.env.example` → `server/.env` first).
+- **Single test**: `uv run pytest tests/unit/core/test_navigation.py -k test_lazy_loading --no-cov` — coverage is forced on by `addopts`, so use `--no-cov` to skip it.
 - **No lint/typecheck config** exists in the repo.
 - **Build**: `uv run python scripts/build.py` (Nuitka → `out/entry.dist/`; `--quick-test` skips Nuitka but still exercises the bundle/copy steps)
 - **Release**: `iscc scripts/pack_installer.iss` then `uv run python scripts/write_release_version.py --changelog "..."` (writes `release/version.json`; upload whole `release/` dir to server, no API restart needed)
@@ -26,6 +27,7 @@ uv run pytest                              # all tests (coverage on by default)
   - Config: `config.json` loaded by `qfluentwidgets.qconfig` via `app/common/config.py`; `VERSION`/`APP_NAME` ("剪辑助手") also live there — bump `VERSION` AND the `MyAppVersion` in `scripts/pack_installer.iss` on release
 - **Server** (`server/`): FastAPI + MySQL + SQLAdmin (`/admin`), separate dependency tree (`requirements.txt`, not uv)
   - Entrypoint: `server/app/main.py`; planning logic + DeepSeek keys live server-side only
+  - Server setup details (user creation via `scripts/create_user.py`, remote DB, 宝塔 paths): see `server/README.md`
   - Prod deploys via 宝塔 + Supervisor, **single worker required** (plan jobs execute in-process)
 
 ## Critical quirks
@@ -36,7 +38,7 @@ uv run pytest                              # all tests (coverage on by default)
 - **`config.json` is gitignored** — `cfg = Config()` at module level loads it; defaults apply if missing.
 - **AES encryption** (`app/common/aes.py`) used for stored passwords in config.
 - **`tools/ffmpeg/win/*.exe` and `tools/outro/*.mp4` are gitignored** — `scripts/build.py` skips bundling with a warning if missing (ffmpeg can be sourced via `FFMPEG_SOURCE_DIR` env var).
-- **UI tests need `qapp` fixture** (provided by `pytest-qt`). No `conftest.py` exists anywhere yet.
+- **UI tests need `qapp`/`qtbot` fixtures** (provided by `pytest-qt`). No `conftest.py` exists anywhere yet.
 
 ## Test structure
 - `tests/unit/` — standard unit tests (mirror `app/` layout: common/core/data/ui)

@@ -22,6 +22,9 @@ MIN_CUT_DURATION = 0.3
 CACHE_DIR_NAME = ".render_cache"
 # 切点优化只扫 AI 切点前后若干秒，避免整集 ContentDetector
 SCENE_SCAN_RADIUS = 3.0
+# 切点吸附下限：AI 切点 = 台词结束 + 尾垫（服务端 POST_CUT_PAD_SECONDS），
+# 吸附不得早于台词结束点，否则最后一句话会被剪到一半
+CUT_SPEECH_PAD_SECONDS = 0.3
 
 # NVENC: p1 最慢最好 → p7 最快；默认 p5
 NVENC_PRESET_CHOICES: tuple[tuple[str, str], ...] = (
@@ -843,8 +846,13 @@ class RenderService:
                 video_path, scene_cache, ai_cut_time=float(ai_cut_time)
             )
             nearest = ai_cut_time
+            # 台词完整优先：吸附下限 = AI 切点 - 尾垫（即台词结束点），
+            # 句中转场不得把切点提前，否则最后一句话会被剪到一半
+            floor = ai_cut_time - CUT_SPEECH_PAD_SECONDS
             for scene in scene_list:
                 cut = scene[0].get_seconds()
+                if cut < floor:
+                    continue
                 diff = abs(cut - ai_cut_time)
                 if diff <= tolerance:
                     nearest = cut

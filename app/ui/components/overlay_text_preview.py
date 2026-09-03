@@ -192,13 +192,8 @@ class _DraggableLabel(QLabel):
         h = max(1, canvas.height())
         x_pct = 100.0 * x / w
         y_pct = 100.0 * y / h
-        bw = self.width() / w
-        bh = self.height() / h
-        preset = nearest_position_preset(
-            x_pct, y_pct, box_w_ratio=bw, box_h_ratio=bh
-        )
-        h_align, v_align = align_for_position_preset(preset)
-        self.dragged.emit(self._which, x_pct, y_pct, h_align, v_align)
+        # 自由拖拽按左上角百分比落点；九宫格对齐仅由方向键跳格写入
+        self.dragged.emit(self._which, x_pct, y_pct, "l", "t")
         event.accept()
 
     def mouseReleaseEvent(self, event: QMouseEvent) -> None:
