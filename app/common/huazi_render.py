@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 import tempfile
 from functools import lru_cache
@@ -269,9 +270,168 @@ def list_huazi_styles() -> list[HuaziStyle]:
     return list(HUAZI_STYLES.values())
 
 
+# 提示文字局部变色：书名号竖排变换（与 apply_text_layout 同规则）
+_RICH_VERTICAL_MARKS = str.maketrans({"《": "︽", "》": "︾"})
+
+
+def _resolve_span_colors(
+    text: str,
+    spans: list[dict] | None,
+    base_rgba: tuple[int, int, int, int],
+) -> tuple[str, list[tuple[int, int, int, int]]]:
+    """按「追加变色段」生成成片文字与逐字颜色。
+
+    变色文字按声明顺序拼接在文案末尾（不再要求与文案匹配），
+    各段整体用各自颜色；返回 (组合后完整文案, 逐字颜色)。
+    """
+    parts: list[tuple[str, tuple[int, int, int, int]]] = [(text, base_rgba)]
+    for span in spans or []:
+        if not isinstance(span, dict):
+            continue
+        sub = str(span.get("text") or "").replace("\r", "")
+        if not sub:
+            continue
+        rgba = _parse_color(str(span.get("color") or "#FFFF00"), base_rgba[3] / 255.0)
+        parts.append((sub, rgba))
+    combined = "".join(p for p, _ in parts)
+    colors: list[tuple[int, int, int, int]] = []
+    for piece, rgba in parts:
+        colors.extend([rgba] * len(piece))
+    return combined, colors
+
+
+def render_rich_text_image(
+    text: str,
+    spans: list[dict] | None,
+    *,
+    font_path: str,
+    fontsize: int,
+    color: str = "#FFFFFF",
+    opacity: float = 1.0,
+    layout: str = "horizontal",
+    line_pitch: float | None = None,
+) -> Image.Image:
+    """局部变色富文本 → 透明 RGBA。
+
+    文案 + 变色文字（按顺序拼接在文案后）逐段染色。
+    横排：同色连续字符合并为一段绘制（字符逐个计量推进）；
+    竖排：逐字下排、每字独立着色（空格→全角空格、书名号→竖式，1:1 变换）。
+    line_pitch：竖排行步进像素；缺省用 fontsize + 0.12*fontsize（与成片
+    drawtext 竖排步进一致），预览可传入自身行距以保持加规则前后布局不变。
+    """
+    raw, colors = _resolve_span_colors(
+        (text or "").replace("\r", ""), spans, _parse_color(color, opacity)
+    )
+    fs = max(8, int(fontsize))
+    font = _load_font(font_path, fs)
+    spacing = max(0, int(round(fs * 0.12)))
+    vertical = str(layout or "").strip().lower() == "vertical"
+    measure = ImageDraw.Draw(Image.new("RGBA", (8, 8)))
+    pad = 2
+    pitch = float(line_pitch) if line_pitch and line_pitch > 0 else (fs + spacing)
+    ascent, descent = font.getmetrics()
+    line_h = max(1, ascent + descent)
+
+    if vertical:
+        seq = [
+            ("　" if ch == " " else ch.translate(_RICH_VERTICAL_MARKS))
+            for ch in raw
+        ]
+        widths = [
+            max(1, int(round(measure.textlength(ch if ch.strip() else "　", font=font))))
+            for ch in seq
+        ]
+        n = max(1, len(seq))
+        w = max(widths) + pad * 2
+        # pitch 可能为浮点（预览传入 Qt lineSpacing），画布尺寸必须取整
+        h = int(round(n * pitch)) + pad * 2
+        img = Image.new("RGBA", (max(1, w), max(1, h)), (0, 0, 0, 0))
+        d = ImageDraw.Draw(img)
+        y = float(pad)
+        for ch, cw, rgba in zip(seq, widths, colors):
+            if ch.strip():
+                d.text((pad + (max(widths) - cw) / 2.0, y), ch, font=font, fill=rgba)
+            y += pitch
+        return img
+
+    # 横排：同色连续字符合并为一段
+    w = int(round(sum(measure.textlength(ch, font=font) for ch in raw))) + pad * 2
+    h = line_h + pad * 2
+    img = Image.new("RGBA", (max(1, w), max(1, h)), (0, 0, 0, 0))
+    d = ImageDraw.Draw(img)
+    runs: list[tuple[float, str, tuple[int, int, int, int]]] = []
+    x = float(pad)
+    cur_text = ""
+    cur_rgba: tuple[int, int, int, int] | None = None
+    for ch, rgba in zip(raw, colors):
+        if cur_rgba is None:
+            cur_rgba = rgba
+        if rgba != cur_rgba:
+            runs.append((x, cur_text, cur_rgba))
+            x += sum(measure.textlength(c, font=font) for c in cur_text)
+            cur_text = ""
+            cur_rgba = rgba
+        cur_text += ch
+    if cur_text:
+        runs.append((x, cur_text, cur_rgba))
+    for rx, rtext, rrgba in runs:
+        d.text((rx, pad), rtext, font=font, fill=rrgba)
+    return img
+
+
+def render_rich_text_png_file(
+    text: str,
+    spans: list[dict],
+    *,
+    font_path: str,
+    fontsize: int,
+    color: str = "#FFFFFF",
+    opacity: float = 1.0,
+    layout: str = "horizontal",
+    line_pitch: float | None = None,
+    cache_dir: str | None = None,
+) -> str:
+    """渲染局部变色富文本并落盘 PNG，返回路径（同参数复用缓存文件）。"""
+    key_src = "|".join(
+        [
+            "rich",
+            text,
+            json.dumps(spans, ensure_ascii=False, sort_keys=True),
+            font_path,
+            str(int(fontsize)),
+            f"{float(opacity):.3f}",
+            layout,
+            "" if line_pitch is None else f"{float(line_pitch):.2f}",
+        ]
+    )
+    digest = hashlib.sha1(key_src.encode("utf-8")).hexdigest()[:16]
+    out_dir = cache_dir or tempfile.gettempdir()
+    os.makedirs(out_dir, exist_ok=True)
+    path = os.path.join(out_dir, f"rich_{digest}.png")
+    if os.path.isfile(path) and os.path.getsize(path) > 0:
+        return path
+
+    img = render_rich_text_image(
+        text,
+        spans,
+        font_path=font_path,
+        fontsize=fontsize,
+        color=color,
+        opacity=opacity,
+        layout=layout,
+        line_pitch=line_pitch,
+    )
+    tmp_path = path + ".tmp"
+    img.save(tmp_path, format="PNG")
+    os.replace(tmp_path, path)
+    return path
+
+
 __all__ = [
     "is_huazi_effect",
     "render_huazi_image",
     "render_huazi_png_file",
+    "render_rich_text_image",
+    "render_rich_text_png_file",
     "list_huazi_styles",
 ]

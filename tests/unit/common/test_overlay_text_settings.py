@@ -1009,6 +1009,206 @@ def test_apply_clip_edit_dict_restores_output_resolution(monkeypatch):
     assert item.value == "source"
 
 
+def test_overlay_group_disclaimer2_migration_and_defaults():
+    from app.common.overlay_text_settings import (
+        clamp_overlay_library,
+        make_overlay_group,
+    )
+
+    # 新建组：disclaimer2 默认空文案（不渲染）
+    g = make_overlay_group(name="t")
+    assert g["disclaimer2"]["text"] == ""
+    assert g["disclaimer2"]["portrait"]["y_pct"] == 91.5
+
+    # 旧库（组内无 disclaimer2）clamp 后自动补默认，存量行为不变
+    lib = clamp_overlay_library(
+        {
+            "selected_id": "",
+            "groups": [
+                {
+                    "id": "g1",
+                    "name": "旧组",
+                    "title": {"text": "《{name}》"},
+                    "disclaimer": {"text": "内容纯属虚构"},
+                }
+            ],
+        }
+    )
+    g1 = next(g for g in lib["groups"] if g["id"] == "g1")
+    assert g1["disclaimer2"]["text"] == ""
+
+
+def test_build_overlay_plan_renders_disclaimer2(monkeypatch):
+    from app.common.overlay_text_settings import (
+        build_overlay_plan,
+        make_overlay_group,
+        save_overlay_library_to_cfg,
+    )
+
+    class _Item:
+        def __init__(self, value):
+            self.value = value
+
+    from app.common import config as config_mod
+
+    monkeypatch.setattr(config_mod.cfg, "overlay_title_json", _Item(""))
+    monkeypatch.setattr(config_mod.cfg, "overlay_disclaimer_json", _Item(""))
+    monkeypatch.setattr(config_mod.cfg, "overlay_text_library_json", _Item(""))
+
+    def _fake_set(item, value):
+        item.value = value
+
+    monkeypatch.setattr("qfluentwidgets.qconfig.set", _fake_set)
+
+    def _active_filters():
+        return build_overlay_plan("测试剧", horizontal=False)["drawtext_filters"]
+
+    # 三个文本位都有文案 → 各产出一条 drawtext（横排单行、无特效）
+    g = make_overlay_group(
+        name="三段",
+        title={"text": "《{name}》", "fontsize": 22},
+        disclaimer={"text": "内容纯属虚构", "fontsize": 14},
+        disclaimer2={"text": "仅供学习交流", "fontsize": 12},
+    )
+    save_overlay_library_to_cfg({"selected_id": g["id"], "groups": [g]})
+    filters = _active_filters()
+    assert len(filters) == 3
+    assert any("y=h*0.915000" in f and "fontsize=12" in f for f in filters)
+    assert any("y=h*0.969000" in f and "fontsize=14" in f for f in filters)
+    assert any("y=h*0.945000" in f and "fontsize=22" in f for f in filters)
+
+    # 提示2 为空 → 不渲染（存量组行为不变）
+    g2 = make_overlay_group(
+        name="两段",
+        title={"text": "《{name}》"},
+        disclaimer={"text": "内容纯属虚构"},
+    )
+    save_overlay_library_to_cfg({"selected_id": g2["id"], "groups": [g2]})
+    filters2 = _active_filters()
+    assert len(filters2) == 2
+    assert not any("y=h*0.915000" in f for f in filters2)
+
+
+def test_clamp_color_spans():
+    from app.common.overlay_text_settings import clamp_color_spans
+
+    # 合法规则保留（颜色归一大写）
+    spans = clamp_color_spans(
+        [{"text": "请勿带入现实", "color": "#ffff00"}, {"text": "虚构"}]
+    )
+    assert spans == [
+        {"text": "请勿带入现实", "color": "#FFFF00"},
+        {"text": "虚构", "color": "#FFFF00"},
+    ]
+
+    # 空子串/非法项丢弃；非 list → 空；上限 8
+    assert clamp_color_spans([{"text": "  "}, "x", {"color": "#FF0000"}]) == []
+    assert clamp_color_spans("not-a-list") == []
+    assert clamp_color_spans(None) == []
+    many = [{"text": f"片段{i}", "color": "#FF0000"} for i in range(12)]
+    assert len(clamp_color_spans(many)) == 8
+
+
+def test_color_spans_survive_clamp_chain():
+    from app.common.overlay_text_settings import (
+        clamp_overlay_style,
+        style_for_orientation,
+        update_orient_style,
+    )
+
+    style = {
+        "text": "内容纯属虚构 请勿带入现实",
+        "fontsize": 14,
+        "color_spans": [{"text": "请勿带入现实", "color": "#FFFF00"}],
+    }
+    clamped = clamp_overlay_style(style, {"text": "", "color_spans": []})
+    assert clamped["color_spans"] == [{"text": "请勿带入现实", "color": "#FFFF00"}]
+
+    view = style_for_orientation(style, "portrait")
+    assert view["color_spans"] == [{"text": "请勿带入现实", "color": "#FFFF00"}]
+
+    # 编辑弹框写回路径（update_orient_style → clamp）不丢字段
+    updated = update_orient_style(
+        style,
+        "portrait",
+        {"fontsize": 16},
+        defaults={"text": "", "color_spans": []},
+    )
+    assert updated["color_spans"] == [{"text": "请勿带入现实", "color": "#FFFF00"}]
+
+
+def test_build_overlay_plan_rich_text_spans(monkeypatch, tmp_path):
+    """有变色规则且非花字 → 走富文本 PNG；花字优先；无规则零回归。"""
+    from app.common.overlay_text_settings import (
+        build_overlay_plan,
+        make_overlay_group,
+        save_overlay_library_to_cfg,
+    )
+
+    class _Item:
+        def __init__(self, value):
+            self.value = value
+
+    from app.common import config as config_mod
+
+    monkeypatch.setattr(config_mod.cfg, "overlay_title_json", _Item(""))
+    monkeypatch.setattr(config_mod.cfg, "overlay_disclaimer_json", _Item(""))
+    monkeypatch.setattr(config_mod.cfg, "overlay_text_library_json", _Item(""))
+
+    def _fake_set(item, value):
+        item.value = value
+
+    monkeypatch.setattr("qfluentwidgets.qconfig.set", _fake_set)
+
+    def _save_and_build(group):
+        save_overlay_library_to_cfg({"selected_id": group["id"], "groups": [group]})
+        return build_overlay_plan(
+            "测试剧", horizontal=False, cache_dir=str(tmp_path)
+        )
+
+    # 变色提示 → 该条不再产出 drawtext，改为 image_overlays（PNG 已落盘）
+    g = make_overlay_group(
+        name="变色组",
+        title={"text": "《{name}》", "fontsize": 22},
+        disclaimer={
+            "text": "内容纯属虚构 请勿带入现实",
+            "fontsize": 14,
+            "color_spans": [{"text": "请勿带入现实", "color": "#FFFF00"}],
+        },
+    )
+    plan = _save_and_build(g)
+    assert len(plan["drawtext_filters"]) == 1  # 仅剩剧名
+    assert len(plan["image_overlays"]) == 1
+    import os
+
+    assert os.path.isfile(plan["image_overlays"][0]["path"])
+
+    # 花字特效自带配色 → 忽略变色规则，走花字 PNG
+    g_huazi = make_overlay_group(
+        name="花字组",
+        title={"text": "《{name}》", "fontsize": 22},
+        disclaimer={
+            "text": "内容纯属虚构",
+            "fontsize": 14,
+            "effect": "hz_pop_yellow",
+            "color_spans": [{"text": "纯属虚构", "color": "#FF0000"}],
+        },
+    )
+    plan_h = _save_and_build(g_huazi)
+    assert len(plan_h["drawtext_filters"]) == 1  # 仅剧名
+    assert len(plan_h["image_overlays"]) == 1  # 花字 PNG（非富文本）
+
+    # 无规则 → 原 drawtext 路径（零回归）
+    g_plain = make_overlay_group(
+        name="普通组",
+        title={"text": "《{name}》", "fontsize": 22},
+        disclaimer={"text": "内容纯属虚构", "fontsize": 14},
+    )
+    plan_p = _save_and_build(g_plain)
+    assert len(plan_p["drawtext_filters"]) == 2
+    assert len(plan_p["image_overlays"]) == 0
+
+
 def test_overlay_text_disabled_from_cfg(monkeypatch):
     import json
 

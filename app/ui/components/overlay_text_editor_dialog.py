@@ -3,17 +3,21 @@
 from __future__ import annotations
 
 from PySide6.QtGui import QColor
+from PySide6.QtCore import Qt, QTimer
 from PySide6.QtWidgets import (
     QButtonGroup,
+    QCheckBox,
     QColorDialog,
     QComboBox,
     QDialog,
     QDialogButtonBox,
     QDoubleSpinBox,
     QFormLayout,
+    QFrame,
     QGroupBox,
     QHBoxLayout,
     QRadioButton,
+    QScrollArea,
     QSpinBox,
     QTabWidget,
     QVBoxLayout,
@@ -29,6 +33,7 @@ from app.common.overlay_text_settings import (
     clamp_h_align,
     clamp_text_effect,
     default_overlay_disclaimer,
+    default_overlay_disclaimer2,
     default_overlay_title,
     position_for_orientation,
     set_position_for_orientation,
@@ -51,6 +56,7 @@ class OverlayTextEditorDialog(QDialog):
         *,
         title_style: dict | None = None,
         disclaimer_style: dict | None = None,
+        disclaimer2_style: dict | None = None,
         project_name: str = "示例剧名",
         window_title: str = "编辑文字组",
     ):
@@ -59,6 +65,7 @@ class OverlayTextEditorDialog(QDialog):
         self.setMinimumSize(900, 560)
         self._result_title: dict | None = None
         self._result_disclaimer: dict | None = None
+        self._result_disclaimer2: dict | None = None
 
         root = QHBoxLayout(self)
         root.setSpacing(12)
@@ -84,6 +91,9 @@ class OverlayTextEditorDialog(QDialog):
         state = {
             "title": dict(title_style or default_overlay_title()),
             "disclaimer": dict(disclaimer_style or default_overlay_disclaimer()),
+            "disclaimer2": dict(
+                disclaimer2_style or default_overlay_disclaimer2()
+            ),
             "orientation": "portrait",
             "syncing": False,
         }
@@ -106,13 +116,149 @@ class OverlayTextEditorDialog(QDialog):
             size_spin.setRange(OVERLAY_FONTSIZE_MIN, OVERLAY_FONTSIZE_MAX)
             return size_spin
 
-        def _build_section(title: str, key: str) -> dict:
+        def _make_center_row(
+            parent: QWidget, spin: QWidget
+        ) -> tuple[QWidget, QCheckBox]:
+            """位置行：数值旋钮 + 「居中」开关；开启后旋钮禁用并居中排布。"""
+            host = QWidget(parent)
+            lay = QHBoxLayout(host)
+            lay.setContentsMargins(0, 0, 0, 0)
+            lay.setSpacing(4)
+            check = QCheckBox("居中", host)
+            lay.addWidget(spin, 1)
+            lay.addWidget(check)
+            return host, check
+
+        def _build_section(
+            title: str, key: str, *, enable_color_spans: bool = False
+        ) -> dict:
             box = QGroupBox(title, self)
             outer = QVBoxLayout(box)
 
             shared_form = QFormLayout()
             text_edit = LineEdit(box)
             text_edit.setClearButtonEnabled(True)
+
+            shared_form.addRow("文案：", text_edit)
+
+            # 局部变色规则：[{text, color}]，仅提示位启用
+            color_spans_rows: list[dict] = []
+            spans_add = None
+            spans_clear = None
+            if enable_color_spans:
+                spans_scroll_cap = 3 * 44 + 8
+
+                def _fit_button(btn: PushButton, label: str) -> None:
+                    btn.setText(label)
+                    btn.setFixedWidth(
+                        btn.fontMetrics().horizontalAdvance(label) + 26
+                    )
+
+                spans_field = QWidget(box)
+                spans_field_layout = QVBoxLayout(spans_field)
+                spans_field_layout.setContentsMargins(0, 0, 0, 0)
+                spans_field_layout.setSpacing(4)
+
+                # 变色行列表放进滚动区：行数多时滚动查看，避免上下压缩行高
+                scroll = QScrollArea(spans_field)
+                scroll.setWidgetResizable(True)
+                scroll.setFrameShape(QFrame.Shape.NoFrame)
+                scroll.setHorizontalScrollBarPolicy(
+                    Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+                )
+                scroll.setVerticalScrollBarPolicy(
+                    Qt.ScrollBarPolicy.ScrollBarAsNeeded
+                )
+
+                spans_host = QWidget()
+                spans_layout = QVBoxLayout(spans_host)
+                spans_layout.setContentsMargins(0, 0, 0, 0)
+                spans_layout.setSpacing(4)
+                scroll.setWidget(spans_host)
+
+                def _sync_scroll_height() -> None:
+                    def _apply():
+                        if not color_spans_rows:
+                            scroll.hide()
+                            return
+                        scroll.show()
+                        needed = spans_host.sizeHint().height()
+                        scroll.setFixedHeight(
+                            max(1, min(needed, spans_scroll_cap))
+                        )
+
+                    QTimer.singleShot(0, _apply)
+
+                _sync_scroll_height()
+
+                def _add_span_row(text_val: str = "", color_val: str = "#FFFF00"):
+                    if len(color_spans_rows) >= 8:
+                        return
+                    row = QWidget(spans_host)
+                    h = QHBoxLayout(row)
+                    h.setContentsMargins(0, 0, 0, 0)
+                    h.setSpacing(4)
+                    span_edit = LineEdit(row)
+                    span_edit.setPlaceholderText("要变色的文字")
+                    span_edit.setText(text_val)
+                    color_btn = PushButton(row)
+                    _fit_button(color_btn, "选色")
+                    del_btn = PushButton(row)
+                    _fit_button(del_btn, "删")
+                    entry = {"text": span_edit, "row": row, "color": color_val}
+
+                    def _pick(_checked=False):
+                        cur = QColor(str(entry["color"] or "#FFFF00"))
+                        chosen = QColorDialog.getColor(cur, self, "选择变色颜色")
+                        if chosen.isValid():
+                            entry["color"] = chosen.name().upper()
+                            _on_param_changed()
+
+                    def _remove():
+                        if entry in color_spans_rows:
+                            color_spans_rows.remove(entry)
+                        spans_layout.removeWidget(row)
+                        row.deleteLater()
+                        _on_param_changed()
+                        _sync_scroll_height()
+
+                    def _on_span_text_changed(_t):
+                        # 变色文字会按顺序拼接在文案末尾并染色，无需回填文案
+                        _on_param_changed()
+
+                    color_btn.clicked.connect(_pick)
+                    del_btn.clicked.connect(_remove)
+                    span_edit.textChanged.connect(_on_span_text_changed)
+                    h.addWidget(span_edit, 1)
+                    h.addWidget(color_btn)
+                    h.addWidget(del_btn)
+                    spans_layout.addWidget(row)
+                    color_spans_rows.append(entry)
+                    _sync_scroll_height()
+
+                def _clear_span_rows():
+                    for entry in list(color_spans_rows):
+                        spans_layout.removeWidget(entry["row"])
+                        entry["row"].deleteLater()
+                    color_spans_rows.clear()
+                    _sync_scroll_height()
+
+                def _on_add_span_clicked():
+                    _add_span_row()
+
+                add_span_btn = PushButton("+ 添加变色文字", spans_field)
+                add_span_btn.setToolTip(
+                    "输入的文字会整体染色，并**追加到文案末尾**（按添加顺序）。\n"
+                    "例：文案「内容纯属虚构」，点选色把「请勿带入现实」设为黄色，\n"
+                    "渲染为「内容纯属虚构请勿带入现实」，后半段为黄色。\n"
+                    "花字样式自带配色，变色不生效。"
+                )
+                add_span_btn.clicked.connect(_on_add_span_clicked)
+                spans_field_layout.addWidget(add_span_btn)
+                spans_field_layout.addWidget(scroll)
+                shared_form.addRow("变色文字：", spans_field)
+                spans_add = _add_span_row
+                spans_clear = _clear_span_rows
 
             layout_row = QHBoxLayout()
             h_radio = QRadioButton("横向", box)
@@ -124,8 +270,6 @@ class OverlayTextEditorDialog(QDialog):
             layout_row.addWidget(h_radio)
             layout_row.addWidget(v_radio)
             layout_row.addStretch(1)
-
-            shared_form.addRow("文案：", text_edit)
             shared_form.addRow("排布：", layout_row)
 
             font_combo = QComboBox(box)
@@ -163,12 +307,14 @@ class OverlayTextEditorDialog(QDialog):
             opacity_spin.setDecimals(2)
 
             basic_x, basic_y = _make_pos_spins(basic_page)
+            basic_x_host, basic_x_center = _make_center_row(basic_page, basic_x)
+            basic_y_host, basic_y_center = _make_center_row(basic_page, basic_y)
 
             basic_form.addRow("字号：", basic_size)
             basic_form.addRow("颜色：", color_row)
             basic_form.addRow("透明度：", opacity_spin)
-            basic_form.addRow("位置 X：", basic_x)
-            basic_form.addRow("位置 Y：", basic_y)
+            basic_form.addRow("位置 X：", basic_x_host)
+            basic_form.addRow("位置 Y：", basic_y_host)
             tabs.addTab(basic_page, "基础")
 
             # —— 花字：字号/位置/样式（无字体颜色发光） ——
@@ -176,15 +322,16 @@ class OverlayTextEditorDialog(QDialog):
             huazi_form = QFormLayout(huazi_page)
             huazi_size = _make_size_spin(huazi_page)
             huazi_x, huazi_y = _make_pos_spins(huazi_page)
+            huazi_x_host, huazi_x_center = _make_center_row(huazi_page, huazi_x)
+            huazi_y_host, huazi_y_center = _make_center_row(huazi_page, huazi_y)
             effect_row = OverlayEffectSelectRow(huazi_page, huazi_only=True)
             huazi_form.addRow("花字：", effect_row)
             huazi_form.addRow("大小：", huazi_size)
-            huazi_form.addRow("位置 X：", huazi_x)
-            huazi_form.addRow("位置 Y：", huazi_y)
+            huazi_form.addRow("位置 X：", huazi_x_host)
+            huazi_form.addRow("位置 Y：", huazi_y_host)
             tabs.addTab(huazi_page, "花字")
 
             outer.addWidget(tabs)
-            right.addWidget(box)
             return {
                 "box": box,
                 "tabs": tabs,
@@ -197,24 +344,43 @@ class OverlayTextEditorDialog(QDialog):
                 "opacity": opacity_spin,
                 "x_pct": basic_x,
                 "y_pct": basic_y,
+                "x_center": basic_x_center,
+                "y_center": basic_y_center,
                 "huazi_fontsize": huazi_size,
                 "huazi_x_pct": huazi_x,
                 "huazi_y_pct": huazi_y,
+                "huazi_x_center": huazi_x_center,
+                "huazi_y_center": huazi_y_center,
                 "effect": effect_row,
                 "key": key,
                 "last_huazi": "none",
                 "huazi_font": None,
+                "spans_enabled": enable_color_spans,
+                "spans_rows": color_spans_rows,
+                "spans_add": spans_add,
+                "spans_clear": spans_clear,
             }
 
         title_w = _build_section("剧名文字", "title")
-        disc_w = _build_section("提示文字", "disclaimer")
+        disc_w = _build_section("提示文字", "disclaimer", enable_color_spans=True)
+        disc2_w = _build_section(
+            "提示文字2", "disclaimer2", enable_color_spans=True
+        )
+        # 三个文本位用页签承载：任一页参数修改都会实时刷新预览
+        section_tabs = QTabWidget(self)
+        section_tabs.addTab(title_w["box"], "剧名")
+        section_tabs.addTab(disc_w["box"], "提示文字")
+        section_tabs.addTab(disc2_w["box"], "提示文字2")
+        right.addWidget(section_tabs, 1)
+
+        _sections = {"title": title_w, "disclaimer": disc_w, "disclaimer2": disc2_w}
 
         def _section_defaults(key: str) -> dict:
-            return (
-                default_overlay_title()
-                if key == "title"
-                else default_overlay_disclaimer()
-            )
+            if key == "title":
+                return default_overlay_title()
+            if key == "disclaimer2":
+                return default_overlay_disclaimer2()
+            return default_overlay_disclaimer()
 
         def _is_huazi_mode(widgets: dict) -> bool:
             return widgets["tabs"].currentIndex() == _MODE_HUAZI
@@ -253,6 +419,10 @@ class OverlayTextEditorDialog(QDialog):
                 "huazi_fontsize",
                 "huazi_x_pct",
                 "huazi_y_pct",
+                "x_center",
+                "y_center",
+                "huazi_x_center",
+                "huazi_y_center",
             ):
                 widgets[key].blockSignals(True)
             widgets["effect"].blockSignals(True)
@@ -301,6 +471,24 @@ class OverlayTextEditorDialog(QDialog):
                 widgets["y_pct"].setValue(y_pct)
                 widgets["huazi_x_pct"].setValue(x_pct)
                 widgets["huazi_y_pct"].setValue(y_pct)
+                # 居中开关与当前横/竖锚点一致；开启时对应百分比旋钮禁用
+                x_center = (view.get("h_align") or "") == "c"
+                y_center = (view.get("v_align") or "") == "c"
+                widgets["x_center"].setChecked(x_center)
+                widgets["y_center"].setChecked(y_center)
+                widgets["huazi_x_center"].setChecked(x_center)
+                widgets["huazi_y_center"].setChecked(y_center)
+                widgets["x_pct"].setEnabled(not x_center)
+                widgets["y_pct"].setEnabled(not y_center)
+                widgets["huazi_x_pct"].setEnabled(not x_center)
+                widgets["huazi_y_pct"].setEnabled(not y_center)
+                if widgets.get("spans_enabled"):
+                    widgets["spans_clear"]()
+                    for sp in style.get("color_spans") or []:
+                        widgets["spans_add"](
+                            str(sp.get("text") or ""),
+                            str(sp.get("color") or "#FFFF00"),
+                        )
             finally:
                 widgets["tabs"].blockSignals(False)
                 for key in (
@@ -312,6 +500,10 @@ class OverlayTextEditorDialog(QDialog):
                     "huazi_fontsize",
                     "huazi_x_pct",
                     "huazi_y_pct",
+                    "x_center",
+                    "y_center",
+                    "huazi_x_center",
+                    "huazi_y_center",
                 ):
                     widgets[key].blockSignals(False)
                 widgets["effect"].blockSignals(False)
@@ -325,6 +517,15 @@ class OverlayTextEditorDialog(QDialog):
         ) -> dict:
             out = dict(style)
             out["text"] = widgets["text"].text()
+            if widgets.get("spans_enabled"):
+                out["color_spans"] = [
+                    {
+                        "text": r["text"].text().strip(),
+                        "color": str(r["color"] or "").strip() or "#FFFF00",
+                    }
+                    for r in widgets.get("spans_rows", [])
+                    if r["text"].text().strip()
+                ]
             layout = (
                 "vertical" if widgets["layout_v"].isChecked() else "horizontal"
             )
@@ -360,15 +561,15 @@ class OverlayTextEditorDialog(QDialog):
                     "x_pct": widgets["x_pct"].value(),
                     "y_pct": widgets["y_pct"].value(),
                 }
-            # 垂直始终按 y_pct 字面定位，避免「靠近底部」被写成 v_align=b
-            # 后再次打开时贴底重叠。水平对齐仅在九宫格跳格时保留居中/右。
-            if free_pos:
-                patch["h_align"] = "l"
-                patch["v_align"] = "t"
+            # 位置锚点：X/Y 各自的「居中」开关决定；居中时对应百分比禁用
+            if _is_huazi_mode(widgets):
+                x_center = widgets["huazi_x_center"].isChecked()
+                y_center = widgets["huazi_y_center"].isChecked()
             else:
-                orient = position_for_orientation(out, state["orientation"])
-                patch["h_align"] = clamp_h_align(orient.get("h_align")) or "l"
-                patch["v_align"] = "t"
+                x_center = widgets["x_center"].isChecked()
+                y_center = widgets["y_center"].isChecked()
+            patch["h_align"] = "c" if x_center else "l"
+            patch["v_align"] = "c" if y_center else "t"
             return update_orient_style(
                 out,
                 state["orientation"],
@@ -378,13 +579,25 @@ class OverlayTextEditorDialog(QDialog):
 
         def _refresh_preview():
             preview.set_orientation(state["orientation"])
-            preview.set_styles(state["title"], state["disclaimer"])
+            preview.set_styles(
+                state["title"], state["disclaimer"], state["disclaimer2"]
+            )
 
         def _on_param_changed(_value=None):
             if state["syncing"]:
                 return
             state["title"] = _read_shared(title_w, state["title"])
             state["disclaimer"] = _read_shared(disc_w, state["disclaimer"])
+            state["disclaimer2"] = _read_shared(disc2_w, state["disclaimer2"])
+            _refresh_preview()
+
+        def _sync_from_ui():
+            """从各页控件重新读取当前值，保证预览状态与右侧表单一致。"""
+            if state["syncing"]:
+                return
+            state["title"] = _read_shared(title_w, state["title"])
+            state["disclaimer"] = _read_shared(disc_w, state["disclaimer"])
+            state["disclaimer2"] = _read_shared(disc2_w, state["disclaimer2"])
             _refresh_preview()
 
         def _on_pos_spin_changed(widgets: dict, _value=None):
@@ -465,6 +678,38 @@ class OverlayTextEditorDialog(QDialog):
             widgets["fontsize"].valueChanged.connect(_on_param_changed)
             widgets["color"].textChanged.connect(_on_param_changed)
             widgets["opacity"].valueChanged.connect(_on_param_changed)
+
+            def _apply_centers():
+                # 以当前页(基础/花字)的开关为准，两页始终保持一致
+                if _is_huazi_mode(widgets):
+                    x_center = widgets["huazi_x_center"].isChecked()
+                    y_center = widgets["huazi_y_center"].isChecked()
+                else:
+                    x_center = widgets["x_center"].isChecked()
+                    y_center = widgets["y_center"].isChecked()
+                for chk, on in (
+                    (widgets["x_center"], x_center),
+                    (widgets["huazi_x_center"], x_center),
+                    (widgets["y_center"], y_center),
+                    (widgets["huazi_y_center"], y_center),
+                ):
+                    chk.blockSignals(True)
+                    chk.setChecked(on)
+                    chk.blockSignals(False)
+                widgets["x_pct"].setEnabled(not x_center)
+                widgets["huazi_x_pct"].setEnabled(not x_center)
+                widgets["y_pct"].setEnabled(not y_center)
+                widgets["huazi_y_pct"].setEnabled(not y_center)
+                _on_param_changed()
+
+            for key in (
+                "x_center",
+                "y_center",
+                "huazi_x_center",
+                "huazi_y_center",
+            ):
+                widgets[key].toggled.connect(lambda _c: _apply_centers())
+
             widgets["x_pct"].valueChanged.connect(
                 lambda _v, w=widgets: _on_pos_spin_changed(w)
             )
@@ -487,6 +732,7 @@ class OverlayTextEditorDialog(QDialog):
 
         _wire(title_w)
         _wire(disc_w)
+        _wire(disc2_w)
 
         def _on_orientation_toggled(_checked=False):
             if not portrait_radio.isChecked() and not landscape_radio.isChecked():
@@ -494,6 +740,7 @@ class OverlayTextEditorDialog(QDialog):
             if not state["syncing"]:
                 state["title"] = _read_shared(title_w, state["title"])
                 state["disclaimer"] = _read_shared(disc_w, state["disclaimer"])
+                state["disclaimer2"] = _read_shared(disc2_w, state["disclaimer2"])
             state["orientation"] = (
                 "landscape" if landscape_radio.isChecked() else "portrait"
             )
@@ -501,6 +748,7 @@ class OverlayTextEditorDialog(QDialog):
             try:
                 _fill_section(title_w, state["title"])
                 _fill_section(disc_w, state["disclaimer"])
+                _fill_section(disc2_w, state["disclaimer2"])
             finally:
                 state["syncing"] = False
             _refresh_preview()
@@ -521,8 +769,8 @@ class OverlayTextEditorDialog(QDialog):
         def _on_preview_pos(
             which: str, x_pct: float, y_pct: float, h_align: str, v_align: str
         ):
-            key = "title" if which == "title" else "disclaimer"
-            state[key] = set_position_for_orientation(
+            key = which if which in ("disclaimer", "disclaimer2") else "title"
+            state[key] = set_position_for_orientation(  # type: ignore[index]
                 state[key],
                 state["orientation"],
                 x_pct,
@@ -530,7 +778,7 @@ class OverlayTextEditorDialog(QDialog):
                 h_align=h_align,
                 v_align=v_align,
             )
-            widgets = title_w if key == "title" else disc_w
+            widgets = _sections[key]
             state["syncing"] = True
             try:
                 x_w, y_w = _active_pos_widgets(widgets)
@@ -541,18 +789,34 @@ class OverlayTextEditorDialog(QDialog):
                 widgets["y_pct"].setValue(y_pct)
                 widgets["huazi_x_pct"].setValue(x_pct)
                 widgets["huazi_y_pct"].setValue(y_pct)
+                # 预览拖拽/跳格产生的锚点同步到「居中」开关
+                x_center = h_align == "c"
+                y_center = v_align == "c"
+                for chk, on in (
+                    (widgets["x_center"], x_center),
+                    (widgets["huazi_x_center"], x_center),
+                    (widgets["y_center"], y_center),
+                    (widgets["huazi_y_center"], y_center),
+                ):
+                    chk.blockSignals(True)
+                    chk.setChecked(on)
+                    chk.blockSignals(False)
+                widgets["x_pct"].setEnabled(not x_center)
+                widgets["y_pct"].setEnabled(not y_center)
+                widgets["huazi_x_pct"].setEnabled(not x_center)
+                widgets["huazi_y_pct"].setEnabled(not y_center)
             finally:
                 state["syncing"] = False
 
         def _on_preview_fontsize(which: str, fontsize: int):
-            key = "title" if which == "title" else "disclaimer"
-            state[key] = update_orient_style(
+            key = which if which in ("disclaimer", "disclaimer2") else "title"
+            state[key] = update_orient_style(  # type: ignore[index]
                 state[key],
                 state["orientation"],
                 {"fontsize": int(fontsize)},
                 defaults=_section_defaults(key),
             )
-            widgets = title_w if key == "title" else disc_w
+            widgets = _sections[key]
             state["syncing"] = True
             try:
                 size = int(fontsize)
@@ -565,6 +829,24 @@ class OverlayTextEditorDialog(QDialog):
 
         preview.positionChanged.connect(_on_preview_pos)
         preview.fontSizeChanged.connect(_on_preview_fontsize)
+
+        # 预览选中 ↔ 编辑页签 双向联动
+        def _on_preview_item_selected(which: str):
+            # 切换前按右侧控件当前值重新渲染，避免预览沿用旧的样式快照
+            _sync_from_ui()
+            idx = {"title": 0, "disclaimer": 1, "disclaimer2": 2}.get(which)
+            if idx is not None and section_tabs.currentIndex() != idx:
+                section_tabs.setCurrentIndex(idx)
+
+        def _on_section_tab_changed(idx: int):
+            _sync_from_ui()
+            keys = ("title", "disclaimer", "disclaimer2")
+            which = keys[idx] if 0 <= idx < len(keys) else "title"
+            if preview.selected() != which:
+                preview.set_selected(which)
+
+        preview.itemSelected.connect(_on_preview_item_selected)
+        section_tabs.currentChanged.connect(_on_section_tab_changed)
 
         btn_row = QHBoxLayout()
         reset_btn = PushButton("重置默认", self)
@@ -582,23 +864,29 @@ class OverlayTextEditorDialog(QDialog):
         def _reset():
             state["title"] = dict(default_overlay_title())
             state["disclaimer"] = dict(default_overlay_disclaimer())
+            state["disclaimer2"] = dict(default_overlay_disclaimer2())
             title_w["last_huazi"] = "none"
             disc_w["last_huazi"] = "none"
+            disc2_w["last_huazi"] = "none"
             state["syncing"] = True
             try:
                 _fill_section(title_w, state["title"])
                 _fill_section(disc_w, state["disclaimer"])
+                _fill_section(disc2_w, state["disclaimer2"])
             finally:
                 state["syncing"] = False
             state["title"] = _read_shared(title_w, state["title"])
             state["disclaimer"] = _read_shared(disc_w, state["disclaimer"])
+            state["disclaimer2"] = _read_shared(disc2_w, state["disclaimer2"])
             _refresh_preview()
 
         def _accept():
             state["title"] = _read_shared(title_w, state["title"])
             state["disclaimer"] = _read_shared(disc_w, state["disclaimer"])
+            state["disclaimer2"] = _read_shared(disc2_w, state["disclaimer2"])
             self._result_title = dict(state["title"])
             self._result_disclaimer = dict(state["disclaimer"])
+            self._result_disclaimer2 = dict(state["disclaimer2"])
             self.accept()
 
         reset_btn.clicked.connect(_reset)
@@ -609,15 +897,18 @@ class OverlayTextEditorDialog(QDialog):
         try:
             _fill_section(title_w, state["title"])
             _fill_section(disc_w, state["disclaimer"])
+            _fill_section(disc2_w, state["disclaimer2"])
         finally:
             state["syncing"] = False
         # 旧辉光等非花字特效在本弹框回落为基础纯字，写回 state 再预览
         state["title"] = _read_shared(title_w, state["title"])
         state["disclaimer"] = _read_shared(disc_w, state["disclaimer"])
+        state["disclaimer2"] = _read_shared(disc2_w, state["disclaimer2"])
         _refresh_preview()
 
-    def result_styles(self) -> tuple[dict, dict]:
+    def result_styles(self) -> tuple[dict, dict, dict]:
         return (
             dict(self._result_title or default_overlay_title()),
             dict(self._result_disclaimer or default_overlay_disclaimer()),
+            dict(self._result_disclaimer2 or default_overlay_disclaimer2()),
         )

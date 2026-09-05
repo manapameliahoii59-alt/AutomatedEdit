@@ -97,7 +97,7 @@ DEFAULT_API_BASE_URL = "http://129.204.86.63:7172"
 YEAR = datetime.datetime.now().year
 AUTHOR = "dragon"
 AUTHOR_EMAIL = "857134647@qq.com"
-VERSION = '0.0.7'
+VERSION = '0.0.8'
 APP_NAME = "剪辑助手"
 FEEDBACK_URL = f"mailto:{AUTHOR_EMAIL}"
 

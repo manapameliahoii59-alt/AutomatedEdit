@@ -29,6 +29,7 @@ from PySide6.QtWidgets import (
 
 from app.common.overlay_text_settings import (
     DEFAULT_DISCLAIMER,
+    DEFAULT_DISCLAIMER2,
     DEFAULT_POSITION_MARGIN_PCT,
     DEFAULT_TITLE,
     Orientation,
@@ -39,6 +40,7 @@ from app.common.overlay_text_settings import (
     clamp_overlay_fontsize,
     clamp_text_effect,
     clamp_text_layout,
+    compose_color_span_text,
     effect_style,
     nearest_position_preset,
     pct_for_position_preset,
@@ -50,7 +52,13 @@ from app.common.overlay_text_settings import (
     top_left_pct_for_align,
 )
 
-Which = Literal["title", "disclaimer"]
+Which = Literal["title", "disclaimer", "disclaimer2"]
+
+# 选框宽度在墨水右缘外多留的余量：tight 边界恰好贴合字形时，
+# 1px 选中边框会压住最右列墨水（横排右端被“遮挡”）
+_LABEL_W_SLACK = 3
+# 选框高度同理：墨水底缘贴合控件底边时，边框会压住字形下缘/抗锯齿像素
+_LABEL_H_SLACK = 2
 
 # 预览字号与成片同比（相对 1280/720 画布），保证左侧位置百分比可信
 _MAX_PREVIEW_FONT_RATIO = 0.14  # 避免竖排过高把坐标夹死
@@ -199,10 +207,20 @@ class _DraggableLabel(QLabel):
         self.move(x, y)
         w = max(1, canvas.width())
         h = max(1, canvas.height())
-        x_pct = 100.0 * x / w
-        y_pct = 100.0 * y / h
-        # 自由拖拽按左上角百分比落点；九宫格对齐仅由方向键跳格写入
-        self.dragged.emit(self._which, x_pct, y_pct, "l", "t")
+        # 拖到画面水平中心附近时“吸附”到正中，并写成 h_align=c：这样换剧名
+        # （文字长度变化）后仍能保持居中，而不是固定一个旧的左对齐百分比
+        cx = (x + self.width() / 2.0) / w
+        if abs(cx - 0.5) <= 0.025:
+            x = max(0, (w - self.width()) // 2)
+            self.move(x, y)
+            x_pct = 100.0 * x / w
+            y_pct = 100.0 * y / h
+            self.dragged.emit(self._which, x_pct, y_pct, "c", "t")
+        else:
+            x_pct = 100.0 * x / w
+            y_pct = 100.0 * y / h
+            # 自由拖拽按左上角百分比落点；九宫格对齐仅由方向键跳格写入
+            self.dragged.emit(self._which, x_pct, y_pct, "l", "t")
         event.accept()
 
     def mouseReleaseEvent(self, event: QMouseEvent) -> None:
@@ -240,6 +258,7 @@ class OverlayTextPreview(QWidget):
         self._project_name = "剧名示例"
         self._title: OverlayTextStyle | dict = {}
         self._disclaimer: OverlayTextStyle | dict = {}
+        self._disclaimer2: OverlayTextStyle | dict = {}
         self._selected: Which = "title"
         self._updating = False
 
@@ -260,18 +279,22 @@ class OverlayTextPreview(QWidget):
 
         self._title_label = _DraggableLabel("title", self._canvas)
         self._disc_label = _DraggableLabel("disclaimer", self._canvas)
-        self._title_label.pressed.connect(self._on_pressed)
-        self._disc_label.pressed.connect(self._on_pressed)
-        self._title_label.dragged.connect(self._on_dragged)
-        self._disc_label.dragged.connect(self._on_dragged)
-        self._title_label.wheelNudged.connect(self._on_wheel_nudge)
-        self._disc_label.wheelNudged.connect(self._on_wheel_nudge)
+        self._disc2_label = _DraggableLabel("disclaimer2", self._canvas)
+        for label in (
+            self._title_label,
+            self._disc_label,
+            self._disc2_label,
+        ):
+            label.pressed.connect(self._on_pressed)
+            label.dragged.connect(self._on_dragged)
+            label.wheelNudged.connect(self._on_wheel_nudge)
 
         # 等子控件建完再装过滤器，避免构造期事件访问未就绪属性
         self._stage.installEventFilter(self)
         self._canvas.installEventFilter(self)
         self._title_label.installEventFilter(self)
         self._disc_label.installEventFilter(self)
+        self._disc2_label.installEventFilter(self)
 
         tip = QLabel(
             "点击预览选中文字后：WASD / 方向键按九宫格移动一格 · 虚线为基准线",
@@ -291,6 +314,7 @@ class OverlayTextPreview(QWidget):
             getattr(self, "_stage", None),
             getattr(self, "_title_label", None),
             getattr(self, "_disc_label", None),
+            getattr(self, "_disc2_label", None),
         )
         if obj in watched and et == QEvent.Type.Wheel:
             self.wheelEvent(event)  # type: ignore[arg-type]
@@ -319,13 +343,25 @@ class OverlayTextPreview(QWidget):
         self,
         title: OverlayTextStyle | dict,
         disclaimer: OverlayTextStyle | dict,
+        disclaimer2: OverlayTextStyle | dict | None = None,
     ) -> None:
-        self._title = dict(title)
-        self._disclaimer = dict(disclaimer)
+        # 深拷贝横/竖子桶：调用方之后对传入 style 的后续写入不会改到已缓存快照，
+        # 避免“改剧名字体后，点选提示文字又跳回旧字体/字号”的失步
+        def _snap(d: dict | None) -> dict:
+            if not isinstance(d, dict):
+                return {}
+            return {
+                k: (dict(v) if isinstance(v, dict) else v)
+                for k, v in d.items()
+            }
+
+        self._title = _snap(title)
+        self._disclaimer = _snap(disclaimer)
+        self._disclaimer2 = _snap(disclaimer2 or {})
         self._refresh_labels()
 
     def set_selected(self, which: Which) -> None:
-        self._selected = which if which == "disclaimer" else "title"
+        self._selected = which if which in ("disclaimer", "disclaimer2") else "title"
         self._refresh_labels()
 
     def keyPressEvent(self, event) -> None:  # noqa: ANN001
@@ -354,11 +390,7 @@ class OverlayTextPreview(QWidget):
         return True
 
     def _move_selected_grid(self, *, dcol: int, drow: int) -> None:
-        label = (
-            self._title_label
-            if self._selected == "title"
-            else self._disc_label
-        )
+        label = self._label_for(self._selected)
         if not label.isVisible():
             return
         cw = max(1, self._canvas.width())
@@ -418,6 +450,20 @@ class OverlayTextPreview(QWidget):
         self._on_wheel_nudge(self._selected, step)
         event.accept()
 
+    def _label_for(self, which: Which) -> QLabel:
+        if which == "disclaimer":
+            return self._disc_label
+        if which == "disclaimer2":
+            return self._disc2_label
+        return self._title_label
+
+    def _style_for(self, which: Which) -> OverlayTextStyle | dict:
+        if which == "disclaimer":
+            return self._disclaimer
+        if which == "disclaimer2":
+            return self._disclaimer2
+        return self._title
+
     def _on_pressed(self, which: str) -> None:
         self._selected = which  # type: ignore[assignment]
         self.setFocus(Qt.FocusReason.MouseFocusReason)
@@ -425,6 +471,7 @@ class OverlayTextPreview(QWidget):
         for label, style in (
             (self._title_label, self._title),
             (self._disc_label, self._disclaimer),
+            (self._disc2_label, self._disclaimer2),
         ):
             pos = label.pos()
             text = resolve_overlay_text(
@@ -432,14 +479,16 @@ class OverlayTextPreview(QWidget):
             )
             self._apply_label_style(label, style, text)
             self._clamp_label_pos(label, pos)
+        # 选中的标签置顶：与其他文字重叠时不被盖住
+        self._label_for(which).raise_()
         self.itemSelected.emit(which)
 
     def _on_wheel_nudge(self, which: str, step: int) -> None:
         if self._updating or not step:
             return
-        key: Which = "title" if which == "title" else "disclaimer"
+        key: Which = which if which in ("disclaimer", "disclaimer2") else "title"  # type: ignore[assignment]
         self._selected = key
-        style = self._title if key == "title" else self._disclaimer
+        style = self._style_for(key)
         if not isinstance(style, dict):
             return
         # 按当前横/竖方向取字号，避免改到另一向
@@ -515,17 +564,30 @@ class OverlayTextPreview(QWidget):
         label.setGraphicsEffect(None)
 
         layout = clamp_text_layout(style.get("layout") or "horizontal")
-        display = apply_text_layout(text, layout)
-        visible = bool(text.strip())
-        label.setVisible(visible)
         vertical = layout == "vertical"
+        # 局部变色（非花字）：变色文字按顺序拼接在文案后整体染色
+        spans = style.get("color_spans") or []
+        is_huazi = is_huazi_effect(effect_id)
+        display_base = (
+            text
+            if is_huazi or not spans
+            else compose_color_span_text(text, spans)
+        )
+        display = apply_text_layout(display_base, layout)
+        visible = bool(display_base.strip())
+        label.setVisible(visible)
         line_count = display.count("\n") + 1 if display else 1
         px = self._preview_font_px(
             fontsize, line_count=line_count if vertical else 1
         )
 
-        if visible and is_huazi_effect(effect_id):
+        if visible and is_huazi:
             self._apply_huazi_pixmap(label, display, style, px, border)
+            return
+
+        # 局部变色：非花字且有规则 → Qt 逐字染色绘制（与普通文字同一排版引擎）
+        if visible and spans and effect_id == "none":
+            self._apply_colored_qt(label, text, style, px, border)
             return
 
         family = _preview_font_family(font_key)
@@ -586,6 +648,109 @@ class OverlayTextPreview(QWidget):
         bbox = img.getbbox()
         if bbox is not None:
             img = img.crop(bbox)
+        self._set_label_pixmap(label, img, border)
+
+    def _apply_colored_qt(
+        self,
+        label: _DraggableLabel,
+        text: str,
+        style: dict,
+        font_px: float,
+        border: str,
+    ) -> None:
+        """局部变色文字的预览：用 Qt 逐字染色绘制。
+
+        与普通（无变色）文字共用同一套 QFont/QFontMetrics 排版与选框计算，
+        避免切换到变色时文字与选中框四周间距发生变化。
+        """
+        layout = clamp_text_layout(style.get("layout") or "horizontal")
+        vertical = layout == "vertical"
+        font_key = clamp_font_key(style.get("font") or "msyh")
+        family = _preview_font_family(font_key)
+        font = QFont(family)
+        if font_key == "msyhbd":
+            font.setBold(True)
+        font.setPixelSize(max(1, int(round(font_px))))
+        fm = QFontMetrics(font)
+        alpha = max(0.0, min(1.0, float(style.get("opacity") or 1.0)))
+
+        items: list[tuple[str, QColor]] = []
+        base_q = QColor(str(style.get("color") or "#FFFFFF"))
+        base_q.setAlphaF(alpha)
+        for ch in text:
+            items.append((ch, base_q))
+        for sp in style.get("color_spans") or []:
+            seg = str(sp.get("text") or "")
+            if not seg:
+                continue
+            q = QColor(str(sp.get("color") or "#FFFF00"))
+            q.setAlphaF(alpha)
+            for ch in seg:
+                items.append((ch, q))
+        combined = "".join(ch for ch, _q in items)
+        if not combined:
+            label.clear()
+            label.setText("")
+            label.setVisible(False)
+            return
+
+        label.setMargin(0)
+        label.setIndent(0)
+        label.setAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft)
+        label.setStyleSheet(
+            f"background: transparent; border: {border}; padding: 0px; margin: 0px;"
+        )
+        label.setText("")
+        pm: QPixmap
+        if vertical:
+            n = len(items)
+            line_h = fm.lineSpacing()
+            text_w = 1
+            for ch, _q in items:
+                dc = apply_text_layout(ch, "vertical") or "字"
+                tr = fm.tightBoundingRect(dc)
+                text_w = max(text_w, tr.x() + tr.width())
+            inner_h = line_h * n
+            pm = QPixmap(max(1, text_w), max(1, inner_h))
+            pm.fill(Qt.GlobalColor.transparent)
+            painter = QPainter(pm)
+            painter.setFont(font)
+            y = fm.ascent()
+            for ch, q in items:
+                dc = apply_text_layout(ch, "vertical")
+                if dc:
+                    painter.setPen(q)
+                    painter.drawText(0, y, dc)
+                y += line_h
+            painter.end()
+            label.resize(
+                max(1, text_w + 2 + _LABEL_W_SLACK),
+                max(1, inner_h + 2 + _LABEL_H_SLACK),
+            )
+        else:
+            # 选框同普通横排：tight 收紧（含字面留白）后加边框/余量
+            tr = fm.tightBoundingRect(combined)
+            text_w = max(1, tr.x() + tr.width())
+            text_h = max(1, fm.ascent() + tr.y() + tr.height())
+            pm = QPixmap(text_w, text_h)
+            pm.fill(Qt.GlobalColor.transparent)
+            painter = QPainter(pm)
+            painter.setFont(font)
+            x = 0
+            for ch, q in items:
+                painter.setPen(q)
+                painter.drawText(x, fm.ascent(), ch)
+                x += fm.horizontalAdvance(ch)
+            painter.end()
+            label.resize(
+                max(1, text_w + 2 + _LABEL_W_SLACK),
+                max(1, text_h + 2 + _LABEL_H_SLACK),
+            )
+        label.setPixmap(pm)
+
+    def _set_label_pixmap(
+        self, label: _DraggableLabel, img: Image.Image, border: str
+    ) -> None:
         data = img.tobytes("raw", "RGBA")
         qimg = QImage(
             data,
@@ -602,8 +767,11 @@ class OverlayTextPreview(QWidget):
         )
         label.setText("")
         label.setPixmap(pix)
-        # 仅 1px 边框占位，不再额外撑大选框
-        label.resize(max(1, pix.width() + 2), max(1, pix.height() + 2))
+        # 1px 边框占位 + 墨水余量，不再额外撑大选框
+        label.resize(
+            max(1, pix.width() + 2 + _LABEL_W_SLACK),
+            max(1, pix.height() + 2 + _LABEL_H_SLACK),
+        )
 
     @staticmethod
     def _apply_preview_glow(
@@ -655,22 +823,30 @@ class OverlayTextPreview(QWidget):
         label.setMinimumSize(1, 1)
 
         if vertical:
-            # 按墨水宽收紧；高度用 height（非 lineSpacing），避免选框虚高导致贴边空隙偏大
+            # 按墨水宽收紧；高度用 lineSpacing（QLabel 逐行实际行距，与局部变色
+            # 富文本预览传入的 line_pitch 同口径）。避免加变色规则前后选框高度
+            # 不一致，导致文字贴底被 clamp 到画布底缘时整块上下跳动。
             text_w = 1
             for line in lines:
                 tr = fm.tightBoundingRect(line if line.strip() else "字")
                 text_w = max(text_w, tr.x() + tr.width())
-            gap = max(0, int(round(fm.height() * 0.12)))
-            inner_h = fm.height() * n + gap * max(0, n - 1)
-            label.resize(max(1, text_w + border), max(1, inner_h + border))
+            inner_h = fm.lineSpacing() * n
+            label.resize(
+                max(1, text_w + border + _LABEL_W_SLACK),
+                max(1, inner_h + border + _LABEL_H_SLACK),
+            )
             return
 
-        # 横排：horizontalAdvance 右侧常多于实际墨水；用 tight 右缘收紧选框
+        # 横排：horizontalAdvance 右侧常多于实际墨水；用 tight 右缘收紧选框，
+        # 再留余量，避免最右/最下字形墨水被边框或控件边界压住
         tr = fm.tightBoundingRect(display)
         text_w = max(1, tr.x() + tr.width())
         # 高度收到墨水底边（相对基线），避免下方假空白
         text_h = max(1, fm.ascent() + tr.y() + tr.height())
-        label.resize(max(1, text_w + border), max(1, text_h + border))
+        label.resize(
+            max(1, text_w + border + _LABEL_W_SLACK),
+            max(1, text_h + border + _LABEL_H_SLACK),
+        )
 
     def _place_label(self, label: QLabel, style: dict) -> None:
         if not label.isVisible():
@@ -699,15 +875,25 @@ class OverlayTextPreview(QWidget):
             disc_view = style_for_orientation(
                 self._disclaimer, self._orientation, defaults=DEFAULT_DISCLAIMER
             )
+            disc2_view = style_for_orientation(
+                self._disclaimer2,
+                self._orientation,
+                defaults=DEFAULT_DISCLAIMER2,
+            )
             title_text = resolve_overlay_text(
                 str(title_view.get("text", "")), self._project_name
             )
             disc_text = resolve_overlay_text(
                 str(disc_view.get("text", "")), self._project_name
             )
+            disc2_text = resolve_overlay_text(
+                str(disc2_view.get("text", "")), self._project_name
+            )
             self._apply_label_style(self._title_label, title_view, title_text)
             self._apply_label_style(self._disc_label, disc_view, disc_text)
+            self._apply_label_style(self._disc2_label, disc2_view, disc2_text)
             self._place_label(self._title_label, title_view)
             self._place_label(self._disc_label, disc_view)
+            self._place_label(self._disc2_label, disc2_view)
         finally:
             self._updating = False

@@ -500,6 +500,7 @@ DEFAULT_TITLE: dict[str, Any] = {
     "layout": "horizontal",
     "effect": "none",
     "glow_color": "#FFFFFF",
+    "color_spans": [],
     "portrait": dict(DEFAULT_TITLE_PORTRAIT),
     "landscape": dict(DEFAULT_TITLE_LANDSCAPE),
 }
@@ -513,8 +514,48 @@ DEFAULT_DISCLAIMER: dict[str, Any] = {
     "layout": "horizontal",
     "effect": "none",
     "glow_color": "#FFFFFF",
+    "color_spans": [],
     "portrait": dict(DEFAULT_DISCLAIMER_PORTRAIT),
     "landscape": dict(DEFAULT_DISCLAIMER_LANDSCAPE),
+}
+
+# 提示文字2：默认空文案（不渲染，存量组行为不变）；
+# 默认位置在剧名上方，避免与剧名/提示文字重叠
+DEFAULT_DISCLAIMER2_PORTRAIT = {
+    "x_pct": 1.5,
+    "y_pct": 91.5,
+    "font": DEFAULT_FONT,
+    "fontsize": 14,
+    "color": "#FFFFFF",
+    "opacity": 0.6,
+    "layout": "horizontal",
+    "effect": "none",
+    "glow_color": "#FFFFFF",
+}
+DEFAULT_DISCLAIMER2_LANDSCAPE = {
+    "x_pct": 2.5,
+    "y_pct": 86.5,
+    "font": DEFAULT_FONT,
+    "fontsize": 14,
+    "color": "#FFFFFF",
+    "opacity": 0.6,
+    "layout": "horizontal",
+    "effect": "none",
+    "glow_color": "#FFFFFF",
+}
+
+DEFAULT_DISCLAIMER2: dict[str, Any] = {
+    "text": "",
+    "font": DEFAULT_FONT,
+    "fontsize": 14,
+    "color": "#FFFFFF",
+    "opacity": 0.6,
+    "layout": "horizontal",
+    "effect": "none",
+    "glow_color": "#FFFFFF",
+    "color_spans": [],
+    "portrait": dict(DEFAULT_DISCLAIMER2_PORTRAIT),
+    "landscape": dict(DEFAULT_DISCLAIMER2_LANDSCAPE),
 }
 
 
@@ -549,6 +590,8 @@ class OverlayTextStyle(TypedDict):
     layout: TextLayout
     effect: TextEffect
     glow_color: str
+    # 局部变色规则：[{text, color}]；各条按顺序拼接在文案末尾整体染色，花字特效下忽略
+    color_spans: list[dict[str, str]]
     portrait: OverlayOrientStyle
     landscape: OverlayOrientStyle
 
@@ -602,6 +645,45 @@ def clamp_font_key(value: Any) -> str:
         if key == filename.lower() or key == stem:
             return k
     return DEFAULT_FONT
+
+
+# 局部变色规则上限（每条 = 子串 + 颜色）
+OVERLAY_COLOR_SPANS_MAX = 8
+
+
+def clamp_color_spans(value: Any) -> list[dict[str, str]]:
+    """clamp 变色规则列表；空子串/非法颜色丢弃，超出上限截断。"""
+    if not isinstance(value, list):
+        return []
+    out: list[dict[str, str]] = []
+    for item in value:
+        if len(out) >= OVERLAY_COLOR_SPANS_MAX:
+            break
+        if not isinstance(item, dict):
+            continue
+        text = str(item.get("text") or "").strip()
+        if not text:
+            continue
+        out.append(
+            {
+                "text": text[:32],
+                "color": _normalize_color(item.get("color"), "#FFFF00"),
+            }
+        )
+    return out
+
+
+def compose_color_span_text(text: Any, spans: Any) -> str:
+    """完整渲染文案 = 文案 + 各条变色文字按顺序拼接（变色段整体染色）。"""
+    out = str(text or "")
+    for span in clamp_color_spans(spans):
+        out += str(span.get("text") or "")
+    return out
+
+
+def has_color_span_text(text: Any, spans: Any) -> bool:
+    """变色段能否产生可见文字（文案为空但只填变色字时也可渲染）。"""
+    return bool(compose_color_span_text(text, spans).strip())
 
 
 def font_filename(font_key: str) -> str:
@@ -796,9 +878,11 @@ def _clamp_orient_style(
         "h_align": clamp_h_align(
             src.get("h_align", defaults_orient.get("h_align", ""))
         ),
-        # 垂直始终按 y_pct 字面定位。曾用九宫格把「靠近底部」写成 v_align=b，
-        # 导致剧名/提示再次打开时一起贴底重叠；不再持久化垂直几何对齐。
-        "v_align": "t",
+        # 垂直允许显式居中(c)；底部(b)依旧不持久化，避免旧配置贴底重叠。
+        # 其余情况按 y_pct 字面（顶部）定位。
+        "v_align": _resolve_v_align(
+            src.get("v_align", defaults_orient.get("v_align", ""))
+        ),
         "font": clamp_font_key(_pick("font", defaults_orient.get("font", DEFAULT_FONT))),
         "fontsize": clamp_overlay_fontsize(
             _pick("fontsize", defaults_orient.get("fontsize", 16)),
@@ -836,6 +920,12 @@ def clamp_h_align(value: Any) -> str:
 def clamp_v_align(value: Any) -> str:
     key = str(value or "").strip().lower()
     return key if key in ("t", "c", "b") else ""
+
+
+def _resolve_v_align(value: Any) -> str:
+    """垂直定位归一：仅允许 t/c（底部 b 不持久化，回退到顶部 t）。"""
+    v = clamp_v_align(value)
+    return "t" if v == "b" else (v or "t")
 
 
 def clamp_overlay_style(
@@ -888,6 +978,11 @@ def clamp_overlay_style(
     landscape = _clamp_orient_style(landscape_src, def_landscape, top_fallback)
 
     # 顶层镜像竖屏，兼容只读顶层字段的旧逻辑
+    spans_src = (
+        src.get("color_spans")
+        if "color_spans" in src
+        else defaults.get("color_spans")
+    )
     return {
         "text": text,
         "font": portrait["font"],
@@ -897,6 +992,7 @@ def clamp_overlay_style(
         "layout": portrait["layout"],
         "effect": portrait["effect"],
         "glow_color": portrait["glow_color"],
+        "color_spans": clamp_color_spans(spans_src),
         "portrait": portrait,
         "landscape": landscape,
     }
@@ -953,6 +1049,7 @@ def style_for_orientation(
         "layout": orient["layout"],
         "effect": orient["effect"],
         "glow_color": orient["glow_color"],
+        "color_spans": s.get("color_spans", []),
         "x_pct": orient["x_pct"],
         "y_pct": orient["y_pct"],
         "h_align": orient.get("h_align", ""),
@@ -1268,6 +1365,10 @@ def default_overlay_disclaimer() -> OverlayTextStyle:
     return clamp_overlay_style(None, DEFAULT_DISCLAIMER)
 
 
+def default_overlay_disclaimer2() -> OverlayTextStyle:
+    return clamp_overlay_style(None, DEFAULT_DISCLAIMER2)
+
+
 def _parse_json_cfg(raw: Any) -> dict | None:
     if not raw:
         return None
@@ -1291,6 +1392,7 @@ class OverlayTextGroup(TypedDict):
     name: str
     title: OverlayTextStyle
     disclaimer: OverlayTextStyle
+    disclaimer2: OverlayTextStyle
 
 
 class OverlayTextLibrary(TypedDict):
@@ -1316,7 +1418,18 @@ def _clamp_group(raw: Any) -> OverlayTextGroup | None:
         raw.get("disclaimer") if isinstance(raw.get("disclaimer"), dict) else None,
         DEFAULT_DISCLAIMER,
     )
-    return {"id": gid, "name": name[:64], "title": title, "disclaimer": disc}
+    # 旧数据无 disclaimer2 → 补默认（空文案，不渲染）
+    disc2 = clamp_overlay_style(
+        raw.get("disclaimer2") if isinstance(raw.get("disclaimer2"), dict) else None,
+        DEFAULT_DISCLAIMER2,
+    )
+    return {
+        "id": gid,
+        "name": name[:64],
+        "title": title,
+        "disclaimer": disc,
+        "disclaimer2": disc2,
+    }
 
 
 def make_overlay_group(
@@ -1324,6 +1437,7 @@ def make_overlay_group(
     name: str,
     title: dict | OverlayTextStyle | None = None,
     disclaimer: dict | OverlayTextStyle | None = None,
+    disclaimer2: dict | OverlayTextStyle | None = None,
     group_id: str | None = None,
 ) -> OverlayTextGroup:
     return {
@@ -1335,6 +1449,10 @@ def make_overlay_group(
         "disclaimer": clamp_overlay_style(
             dict(disclaimer) if isinstance(disclaimer, dict) else None,
             DEFAULT_DISCLAIMER,
+        ),
+        "disclaimer2": clamp_overlay_style(
+            dict(disclaimer2) if isinstance(disclaimer2, dict) else None,
+            DEFAULT_DISCLAIMER2,
         ),
     }
 
@@ -1545,6 +1663,10 @@ def load_overlay_title_from_cfg() -> OverlayTextStyle:
 
 def load_overlay_disclaimer_from_cfg() -> OverlayTextStyle:
     return dict(resolve_active_overlay_group()["disclaimer"])  # type: ignore[return-value]
+
+
+def load_overlay_disclaimer2_from_cfg() -> OverlayTextStyle:
+    return dict(resolve_active_overlay_group()["disclaimer2"])  # type: ignore[return-value]
 
 
 def save_overlay_styles_to_cfg(
@@ -2131,8 +2253,10 @@ def build_overlay_plan(
     scale = overlay_font_scale(canvas_h)
     title = _scale_style_fontsize(load_overlay_title_from_cfg(), scale)
     disc = _scale_style_fontsize(load_overlay_disclaimer_from_cfg(), scale)
+    disc2 = _scale_style_fontsize(load_overlay_disclaimer2_from_cfg(), scale)
+    styles = (title, disc, disc2)
     fonts_needed: set[str] = set()
-    for style in (title, disc):
+    for style in styles:
         if not resolve_overlay_text(style["text"], project_name).strip():
             continue
         fonts_needed.add(position_for_orientation(style, orientation)["font"])
@@ -2140,8 +2264,22 @@ def build_overlay_plan(
 
     drawtext: list[str] = []
     images: list[OverlayImageSpec] = []
-    for style in (title, disc):
+    for style in styles:
         orient = position_for_orientation(style, orientation)
+        # 局部变色：非花字且有规则 → 富文本 PNG（drawtext 单滤镜不支持多色）
+        from app.common.huazi_styles import is_huazi_effect as _is_huazi
+
+        spans = clamp_color_spans(style.get("color_spans"))
+        if spans and not _is_huazi(clamp_text_effect(orient["effect"])):
+            rich_spec = _build_rich_text_image_spec(
+                style,
+                project_name=project_name,
+                orientation=orientation,
+                cache_dir=cache_dir,
+            )
+            if rich_spec is not None:
+                images.append(rich_spec)
+                continue
         fontfile = fontfiles.get(orient["font"])
         drawtext.extend(
             build_drawtext_filters(
@@ -2160,6 +2298,51 @@ def build_overlay_plan(
         if spec is not None:
             images.append(spec)
     return {"drawtext_filters": drawtext, "image_overlays": images}
+
+
+def _build_rich_text_image_spec(
+    style: OverlayTextStyle | dict,
+    *,
+    project_name: str,
+    orientation: Orientation,
+    cache_dir: str | None,
+) -> OverlayImageSpec | None:
+    """局部变色提示 → 富文本 PNG spec（Pillow 渲染，drawtext 不支持单滤镜多色）。"""
+    from app.common.huazi_render import render_rich_text_png_file
+
+    text = resolve_overlay_text(str(style.get("text") or ""), project_name)
+    spans = clamp_color_spans(style.get("color_spans"))
+    if not spans or not compose_color_span_text(text, spans).strip():
+        return None
+    orient = position_for_orientation(style, orientation)
+    layout_text = apply_text_layout(
+        compose_color_span_text(text, spans), orient["layout"]
+    )
+    font_path = prepare_font_file(orient["font"], work_dir=cache_dir)
+    if not os.path.isfile(font_path):
+        resolved = resolve_font_source_path(orient["font"])
+        if resolved and os.path.isfile(resolved):
+            font_path = resolved
+    try:
+        png = render_rich_text_png_file(
+            text,
+            spans,
+            font_path=font_path,
+            fontsize=int(orient["fontsize"]),
+            color=str(orient["color"] or "#FFFFFF"),
+            opacity=float(orient["opacity"] or 1.0),
+            layout=str(orient["layout"] or "horizontal"),
+            cache_dir=cache_dir,
+        )
+    except Exception:
+        return None
+    est_bw, est_bh = estimate_overlay_box_ratios(
+        layout_text, int(orient["fontsize"]), orientation=orientation
+    )
+    x_expr, y_expr = overlay_image_position_exprs(
+        orient, box_w_ratio=est_bw, box_h_ratio=est_bh
+    )
+    return {"path": png.replace("\\", "/"), "x_expr": x_expr, "y_expr": y_expr}
 
 
 def build_overlay_drawtext_filters(

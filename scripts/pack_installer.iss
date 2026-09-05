@@ -2,7 +2,7 @@
 ; SEE THE DOCUMENTATION FOR DETAILS ON CREATING INNO SETUP SCRIPT FILES!
 
 #define MyAppName "鍓緫鍔╂墜"
-#define MyAppVersion "0.0.7"
+#define MyAppVersion "0.0.8"
 #define MyAppPublisher "dragon"
 #define MyAppURL "mailto:857134647@qq.com"
 #define MyAppExeName "entry.exe"

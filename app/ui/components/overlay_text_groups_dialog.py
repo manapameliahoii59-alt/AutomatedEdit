@@ -26,6 +26,7 @@ from app.common.overlay_text_settings import (
     OverlayTextLibrary,
     clamp_overlay_library,
     default_overlay_disclaimer,
+    default_overlay_disclaimer2,
     default_overlay_title,
     delete_overlay_group,
     effect_label,
@@ -118,7 +119,11 @@ class _GroupCard(QFrame):
         effect = effect_label(group["title"].get("effect"))
         disc = str(group["disclaimer"].get("text") or "").strip()
         disc_preview = (disc[:18] + "…") if len(disc) > 18 else (disc or "无提示文案")
-        self._sub = QLabel(f"{title_text}  ·  {effect}  ·  {disc_preview}", self)
+        disc2 = str(group.get("disclaimer2", {}).get("text") or "").strip()
+        disc2_preview = (disc2[:12] + "…") if len(disc2) > 12 else (disc2 or "无提示2")
+        self._sub = QLabel(
+            f"{title_text}  ·  {effect}  ·  {disc_preview}  ·  {disc2_preview}", self
+        )
         self._sub.setWordWrap(False)
         text_col.addWidget(self._sub)
         root.addLayout(text_col, 1)
@@ -364,19 +369,22 @@ class OverlayTextGroupsDialog(QDialog):
             name=name,
             title=default_overlay_title(),
             disclaimer=default_overlay_disclaimer(),
+            disclaimer2=default_overlay_disclaimer2(),
         )
         editor = OverlayTextEditorDialog(
             self,
             title_style=dict(group["title"]),
             disclaimer_style=dict(group["disclaimer"]),
+            disclaimer2_style=dict(group["disclaimer2"]),
             project_name=self._project_name,
             window_title=f"新增文字组 — {name}",
         )
         if editor.exec() != QDialog.DialogCode.Accepted:
             return
-        title, disc = editor.result_styles()
+        title, disc, disc2 = editor.result_styles()
         group["title"] = title  # type: ignore[assignment]
         group["disclaimer"] = disc  # type: ignore[assignment]
+        group["disclaimer2"] = disc2  # type: ignore[assignment]
         upsert_overlay_group(group)
         self._reload_lib(selected_id=group["id"])
 
@@ -388,13 +396,19 @@ class OverlayTextGroupsDialog(QDialog):
             self,
             title_style=dict(group["title"]),
             disclaimer_style=dict(group["disclaimer"]),
+            disclaimer2_style=dict(group.get("disclaimer2") or {}),
             project_name=self._project_name,
             window_title=f"编辑文字组 — {group['name']}",
         )
         if editor.exec() != QDialog.DialogCode.Accepted:
             return
-        title, disc = editor.result_styles()
-        group = {**group, "title": title, "disclaimer": disc}  # type: ignore[misc]
+        title, disc, disc2 = editor.result_styles()
+        group = {
+            **group,
+            "title": title,
+            "disclaimer": disc,
+            "disclaimer2": disc2,
+        }  # type: ignore[misc]
         selected = self._lib["selected_id"]
         upsert_overlay_group(group)
         self._reload_lib(selected_id=selected)

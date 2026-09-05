@@ -137,6 +137,21 @@ def test_build_overlay_plan_huazi_image(monkeypatch, font_path, tmp_path):
         lambda: disc,
     )
     monkeypatch.setattr(
+        "app.common.overlay_text_settings.load_overlay_disclaimer2_from_cfg",
+        lambda: {
+            "text": "",
+            "font": "msyh",
+            "fontsize": 14,
+            "color": "#FFFFFF",
+            "opacity": 0.6,
+            "layout": "horizontal",
+            "effect": "none",
+            "glow_color": "#FFFFFF",
+            "portrait": {"x_pct": 4.0, "y_pct": 90.0},
+            "landscape": {"x_pct": 4.0, "y_pct": 86.0},
+        },
+    )
+    monkeypatch.setattr(
         "app.common.overlay_text_settings.prepare_font_file",
         lambda *_a, **_k: font_path,
     )
@@ -152,3 +167,58 @@ def test_build_overlay_plan_huazi_image(monkeypatch, font_path, tmp_path):
     assert os.path.isfile(spec["path"])
     assert "W*0.050000" in spec["x_expr"]
     assert "H*0.800000" in spec["y_expr"]
+
+
+def _count_colors(img):
+    white = yellow = 0
+    for y in range(img.height):
+        for x in range(img.width):
+            r, g, b, a = img.getpixel((x, y))
+            if a == 0:
+                continue
+            if r > 235 and g > 235 and b > 200:
+                white += 1
+            elif r > 230 and g > 190 and b < 120:
+                yellow += 1
+    return white, yellow
+
+
+def test_rich_text_spans_append_to_text(font_path):
+    """变色段按顺序拼接在文案末尾并染色（非子串匹配）。"""
+    from app.common.huazi_render import render_rich_text_image
+
+    base_only = render_rich_text_image(
+        "内容纯属虚构",
+        [],
+        font_path=font_path,
+        fontsize=40,
+        color="#FFFFFF",
+        opacity=1.0,
+        layout="horizontal",
+    )
+    appended = render_rich_text_image(
+        "内容纯属虚构",
+        [{"text": "请勿带入现实", "color": "#FFFF00"}],
+        font_path=font_path,
+        fontsize=40,
+        color="#FFFFFF",
+        opacity=1.0,
+        layout="horizontal",
+    )
+    # 拼接：图应明显更宽，且同时存在基础白字与变色黄字
+    assert appended.width > base_only.width + 40
+    white, yellow = _count_colors(appended)
+    assert white > 0
+    assert yellow > 0
+
+    # 文案为空时，变色段单独成文（旧「子串匹配」语义下为空则无法渲染）
+    only_span = render_rich_text_image(
+        "",
+        [{"text": "请勿带入现实", "color": "#FFFF00"}],
+        font_path=font_path,
+        fontsize=40,
+        color="#FFFFFF",
+        opacity=1.0,
+        layout="horizontal",
+    )
+    assert only_span.width > 40
