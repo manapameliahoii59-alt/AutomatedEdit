@@ -110,6 +110,12 @@ def test_plan_llm_preset_roundtrip():
     assert xm == "mimo-v2.5"
     assert "小米 MiMo" in plan_llm_preset_label(xp, xm)
 
+    zhipu = encode_plan_llm_preset("zhipu", "glm-5.3-flash")
+    zp, zm = decode_plan_llm_preset(zhipu)
+    assert zp == "zhipu"
+    assert zm == "glm-5.3-flash"
+    assert plan_llm_preset_label(zp, zm) == "智谱 GLM / glm-5.3-flash"
+
 
 def test_resolve_plan_llm_config_xiaomi(monkeypatch):
     from app.services.plan_secrets import resolve_plan_llm_config
@@ -139,6 +145,36 @@ def test_resolve_plan_llm_config_xiaomi(monkeypatch):
     assert cfg["model"] == "mimo-v2.5"
     assert cfg["keys"] == "mimo-key"
     assert "xiaomimimo.com" in cfg["api_url"]
+
+
+def test_resolve_plan_llm_config_zhipu(monkeypatch):
+    from app.services.plan_secrets import resolve_plan_llm_config
+
+    class _ZhipuSecret:
+        deepseek_keys = "zhipu-key"
+        plan_decrypt_key = "abcd" * 16
+        plan_llm_provider = "zhipu"
+        plan_llm_model = ""
+
+    class _Db:
+        def query(self, *_args):
+            return self
+
+        def filter(self, *_args):
+            return self
+
+        def first(self):
+            return _ZhipuSecret()
+
+    monkeypatch.setattr(
+        "app.services.plan_secrets.settings.zhipu_api_url",
+        "https://open.bigmodel.cn/api/paas/v4/chat/completions",
+    )
+    cfg = resolve_plan_llm_config(_Db(), 1)
+    assert cfg["provider"] == "zhipu"
+    assert cfg["model"] == "glm-5.3-flash"  # 空 model 回落通道默认
+    assert cfg["keys"] == "zhipu-key"
+    assert "bigmodel.cn" in cfg["api_url"]
 
 
 def test_call_deepseek_payload_by_provider(monkeypatch):
@@ -227,3 +263,45 @@ def test_call_deepseek_payload_by_provider(monkeypatch):
     assert captured["json"].get("thinking") == {"type": "disabled"}
     assert captured["headers"].get("api-key") == "sk-x"
     assert "x-opencode-session" not in captured["headers"]
+
+    content4, _e4, err4 = plan_director._call_deepseek(
+        api_url="https://open.bigmodel.cn/api/paas/v4/chat/completions",
+        model_name="glm-5.3-flash",
+        compressed_script="x",
+        count=1,
+        group_type="U",
+        key_pool=pool,
+        min_duration_seconds=150,
+        max_duration_seconds=300,
+        plan_mode="long",
+        provider="zhipu",
+        llm_session_id="",
+    )
+    assert err4 is None
+    assert content4 == "{}"
+    assert captured["json"]["model"] == "glm-5.3-flash"
+    # 智谱 GLM-5.3-flash 始终思考，不支持 disabled：显式开启并压低推理档位
+    assert captured["json"].get("thinking") == {"type": "enabled"}
+    assert captured["json"].get("reasoning_effort") == "low"
+    # 智谱走标准 Bearer 认证，无特殊请求头
+    assert captured["headers"].get("Authorization") == "Bearer sk-x"
+    assert "api-key" not in captured["headers"]
+    assert "x-opencode-session" not in captured["headers"]
+
+    content5, _e5, err5 = plan_director._call_deepseek(
+        api_url="https://open.bigmodel.cn/api/paas/v4/chat/completions",
+        model_name="glm-4.7-flash",
+        compressed_script="x",
+        count=1,
+        group_type="U",
+        key_pool=pool,
+        min_duration_seconds=150,
+        max_duration_seconds=300,
+        plan_mode="long",
+        provider="zhipu",
+        llm_session_id="",
+    )
+    assert err5 is None
+    # 智谱旧型号支持关闭思考：维持全通道默认 disabled
+    assert captured["json"].get("thinking") == {"type": "disabled"}
+    assert "reasoning_effort" not in captured["json"]

@@ -13,8 +13,24 @@ from app.common.aes import aes_encrypt, aes_decrypt
 from app.common.config import cfg
 from app.common.plan_crypto import decrypt_plan_payload
 from app.common.plan_settings import resolve_active_plan_params
+from app.common.runtime import is_dev_runtime
 from app.data.api.api import ApiError, get_api
 from app.data.models.drama_project import DramaProject
+
+
+def _job_error_message(status: dict[str, Any]) -> str:
+    """任务失败信息：通用文案 + 开发运行时附加完整诊断原因。
+
+    服务端下发的 error 为脱敏文案（终端用户可见）；
+    error_detail 为完整技术原因（HTTP 状态/密钥/解析异常），仅开发环境展示。
+    """
+    msg = (status.get("error") or "").strip()
+    if not msg:
+        msg = "策划失败（服务端未返回原因，请重试或查看服务端日志）"
+    detail = (status.get("error_detail") or "").strip()
+    if detail and is_dev_runtime():
+        return f"{msg}\n[开发诊断] {detail}"
+    return msg
 
 
 def _is_transient_api_error(exc: BaseException) -> bool:
@@ -162,8 +178,7 @@ class RemotePlanService:
                     ),
                 }
             if state == "failed":
-                err = (status.get("error") or "").strip()
-                raise RuntimeError(err or "策划失败（服务端未返回原因，请重试或查看服务端日志）")
+                raise RuntimeError(_job_error_message(status))
 
             time.sleep(cls.POLL_INTERVAL_SEC)
 

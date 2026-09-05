@@ -23,6 +23,10 @@ class Settings(BaseSettings):
     xiaomi_mimo_api_url: str = "https://api.xiaomimimo.com/v1/chat/completions"
     xiaomi_mimo_model: str = "mimo-v2.5"
 
+    # 智谱 GLM 策划通道
+    zhipu_api_url: str = "https://open.bigmodel.cn/api/paas/v4/chat/completions"
+    zhipu_model: str = "glm-5.3-flash"
+
     # 对外访问根地址（反代后建议配置，用于拼安装包下载链接）
     # 例：https://api.example.com
     public_base_url: str = ""

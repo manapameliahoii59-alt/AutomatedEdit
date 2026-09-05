@@ -1,4 +1,5 @@
-"""策划入口：开发环境可本地直调 DeepSeek；正式环境走服务端。"""
+"""策划入口：默认统一走服务端（通道/Key 由管理后台按用户配置）；
+开发环境设 AE_LOCAL_PLAN=1 时可本地直调。"""
 
 from __future__ import annotations
 

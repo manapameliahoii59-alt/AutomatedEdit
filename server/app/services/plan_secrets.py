@@ -13,11 +13,13 @@ from app.services.plan_crypto import generate_plan_decrypt_key
 PLAN_LLM_PROVIDER_DEEPSEEK = "deepseek"
 PLAN_LLM_PROVIDER_OPENCODE_GO = "opencode_go"
 PLAN_LLM_PROVIDER_XIAOMI = "xiaomi"
+PLAN_LLM_PROVIDER_ZHIPU = "zhipu"
 PLAN_LLM_PROVIDERS = frozenset(
     {
         PLAN_LLM_PROVIDER_DEEPSEEK,
         PLAN_LLM_PROVIDER_OPENCODE_GO,
         PLAN_LLM_PROVIDER_XIAOMI,
+        PLAN_LLM_PROVIDER_ZHIPU,
     }
 )
 
@@ -46,6 +48,10 @@ PLAN_LLM_PRESET_CHOICES: tuple[tuple[str, str], ...] = (
     (
         f"{PLAN_LLM_PROVIDER_XIAOMI}|mimo-v2.5",
         "小米 MiMo / mimo-v2.5",
+    ),
+    (
+        f"{PLAN_LLM_PROVIDER_ZHIPU}|glm-5.3-flash",
+        "智谱 GLM / glm-5.3-flash",
     ),
 )
 _PLAN_LLM_PRESET_VALUES = {value for value, _label in PLAN_LLM_PRESET_CHOICES}
@@ -93,6 +99,8 @@ def normalize_plan_llm_model(value: str | None, *, provider: str) -> str:
         return (settings.opencode_go_model or "deepseek-v4-flash").strip()
     if provider == PLAN_LLM_PROVIDER_XIAOMI:
         return (settings.xiaomi_mimo_model or "mimo-v2.5").strip()
+    if provider == PLAN_LLM_PROVIDER_ZHIPU:
+        return (settings.zhipu_model or "glm-5.3-flash").strip()
     return (settings.deepseek_model or "deepseek-v4-flash").strip()
 
 
@@ -129,6 +137,8 @@ def plan_llm_preset_label(provider: str, model: str) -> str:
         prefix = "OpenCode Go"
     elif p == PLAN_LLM_PROVIDER_XIAOMI:
         prefix = "小米 MiMo"
+    elif p == PLAN_LLM_PROVIDER_ZHIPU:
+        prefix = "智谱 GLM"
     else:
         prefix = "官方 DeepSeek"
     return f"{prefix} / {m}"
@@ -158,6 +168,11 @@ def resolve_plan_llm_config(db: Session, user_id: int) -> PlanLlmConfig:
         api_url = (
             settings.xiaomi_mimo_api_url
             or "https://api.xiaomimimo.com/v1/chat/completions"
+        ).strip()
+    elif provider == PLAN_LLM_PROVIDER_ZHIPU:
+        api_url = (
+            settings.zhipu_api_url
+            or "https://open.bigmodel.cn/api/paas/v4/chat/completions"
         ).strip()
     else:
         api_url = (

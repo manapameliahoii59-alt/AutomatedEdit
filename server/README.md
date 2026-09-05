@@ -89,7 +89,7 @@ source /www/server/pyporject_evn/项目名_venv/bin/activate
 
 ## 服务端代理策划
 
-策划逻辑与 API 密钥**仅存在于服务端**。在管理后台 **用户** 编辑页为每位用户选择 **策划模型**（官方 DeepSeek、OpenCode Go 或小米 MiMo），并填写对应 **策划 API Keys**（逗号分隔）。未配置用户 Key 时可选用 `.env` 中的 `DEEPSEEK_API_KEYS` 作为全局兜底。
+策划逻辑与 API 密钥**仅存在于服务端**。在管理后台 **用户** 编辑页为每位用户选择 **策划模型**（官方 DeepSeek、OpenCode Go、小米 MiMo 或智谱 GLM），并填写对应 **策划 API Keys**（逗号分隔；选智谱 GLM 时填智谱开放平台 API Key）。未配置用户 Key 时可选用 `.env` 中的 `DEEPSEEK_API_KEYS` 作为全局兜底。
 
 在 **用户** 页可设置 **使用期限**（`valid_until`）：留空表示永久有效；到期后桌面端登录与 API 均返回 **「无效」**。
 
@@ -110,6 +110,9 @@ OPENCODE_GO_MODEL=deepseek-v4-flash
 # 小米 MiMo（用户选 MiMo 通道时使用）
 XIAOMI_MIMO_API_URL=https://api.xiaomimimo.com/v1/chat/completions
 XIAOMI_MIMO_MODEL=mimo-v2.5
+# 智谱 GLM（用户选智谱 GLM 通道时使用）
+ZHIPU_API_URL=https://open.bigmodel.cn/api/paas/v4/chat/completions
+ZHIPU_MODEL=glm-5.3-flash
 # 可选全局兜底（优先使用用户密钥表中的配置）
 # DEEPSEEK_API_KEYS=sk-xxx
 ```

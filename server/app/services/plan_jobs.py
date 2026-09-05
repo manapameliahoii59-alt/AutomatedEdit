@@ -135,6 +135,21 @@ def _persist_job(
         db.close()
 
 
+def user_facing_plan_error(error: str) -> str:
+    """客户端可见的策划错误文案：隐藏密钥/额度/接口等技术细节。
+
+    完整原因仍保留在 plan_jobs.error 与服务端日志中，供管理后台排查。
+    """
+    msg = (error or "").strip()
+    if not msg:
+        return "策划失败，请稍后重试"
+    if "未产出有效方案" in msg:
+        return "本次策划未产出有效方案，请稍后重试"
+    if "服务重启" in msg or "联系管理员" in msg:
+        return msg
+    return "策划失败，请稍后重试"
+
+
 def _run_job(
     job_id: str,
     payload: dict[str, Any],
@@ -198,6 +213,8 @@ def _run_job(
             error="",
         )
     except Exception as exc:
+        # 完整原因仅落库/日志（管理后台可见），下发给客户端前会脱敏
+        logger.error("策划任务执行失败 job_id=%s: %s", job_id, exc, exc_info=True)
         _persist_job(job_id, status="failed", error=str(exc))
 
 

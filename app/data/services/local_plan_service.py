@@ -1,7 +1,8 @@
-"""开发环境本地策划：直接加载 server/plan_director，调用 DeepSeek。
+"""本地策划（可选）：直接加载 server/plan_director，调用 LLM。
 
-正式打包环境不会走这里。可用环境变量：
-- AE_FORCE_REMOTE_PLAN=1  开发环境仍走服务端
+默认（含开发环境）统一走服务端策划，Key 由管理后台按用户配置；
+仅当显式设置 AE_LOCAL_PLAN=1 时才启用本地直调。可用环境变量：
+- AE_LOCAL_PLAN=1  开发环境启用本地策划（读取 .env / .env.local_plan）
 - DEEPSEEK_API_KEYS / AE_DEEPSEEK_API_KEYS
 - DEEPSEEK_API_URL / AE_DEEPSEEK_API_URL
 - DEEPSEEK_MODEL / AE_DEEPSEEK_MODEL
@@ -29,11 +30,11 @@ _plan_director_mod = None
 
 
 def use_local_plan() -> bool:
-    """开发源码运行且未强制远端时，走本地策划。"""
+    """仅显式启用（AE_LOCAL_PLAN=1）时走本地策划；默认一律服务端。"""
     if not is_dev_runtime():
         return False
-    force_remote = os.environ.get("AE_FORCE_REMOTE_PLAN", "").strip().lower()
-    return force_remote not in {"1", "true", "yes", "on"}
+    force_local = os.environ.get("AE_LOCAL_PLAN", "").strip().lower()
+    return force_local in {"1", "true", "yes", "on"}
 
 
 def _project_root() -> Path:

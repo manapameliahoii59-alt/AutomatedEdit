@@ -30,7 +30,7 @@ from app.services.daily_quota import (
     can_download_drama,
     can_plan_drama,
 )
-from app.services.plan_jobs import create_plan_job, get_plan_job
+from app.services.plan_jobs import create_plan_job, get_plan_job, user_facing_plan_error
 from app.services.plan_secrets import ensure_user_secret
 from app.services.user_settings import get_user_settings, patch_user_settings
 
@@ -113,7 +113,8 @@ def get_plan_job_status(
         job_id=job.id,
         status=job.status,
         progress=job.progress,
-        error=job.error,
+        error=user_facing_plan_error(job.error),
+        error_detail=job.error or "",
     )
 
 
@@ -127,7 +128,9 @@ def get_plan_job_result(
     if job is None:
         raise HTTPException(status_code=404, detail="策划任务不存在")
     if job.status == "failed":
-        raise HTTPException(status_code=400, detail=job.error or "策划失败")
+        raise HTTPException(
+            status_code=400, detail=user_facing_plan_error(job.error)
+        )
     if job.status != "done" or not job.result:
         raise HTTPException(status_code=409, detail="策划尚未完成")
     return PlanJobResultOut(job_id=job.id, **job.result)

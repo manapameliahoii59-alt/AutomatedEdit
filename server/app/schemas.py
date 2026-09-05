@@ -54,7 +54,10 @@ class PlanJobStatusOut(BaseModel):
     job_id: str
     status: str
     progress: dict[str, Any] = Field(default_factory=dict)
+    # 给用户看的脱敏文案
     error: str = ""
+    # 完整技术原因（客户端仅在开发运行时用于诊断展示，打包版不展示）
+    error_detail: str = ""
 
 
 class PlanJobResultOut(BaseModel):

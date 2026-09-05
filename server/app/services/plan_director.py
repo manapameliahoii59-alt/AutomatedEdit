@@ -32,6 +32,9 @@ GROUP_B_BUFFER = 3
 GROUP_U_BUFFER = 10
 MAX_GROUP_LOOPS = 14
 MAX_OUTPUT_TOKENS = 7000
+# 智谱 GLM-5.3 系列始终思考：thinking 只能 enabled，推理档位走 reasoning_effort
+ZHIPU_THINKING = {"type": "enabled"}
+ZHIPU_REASONING_EFFORT = "low"
 # 切点台词模糊匹配阈值（略放宽，减少「台词对不上」导致条数不足）
 CUT_TEXT_MATCH_MIN_SCORE = 50
 # 切入点相对目标台词句首的前置缓冲（秒）；短片实际偏好窗中段
@@ -886,6 +889,53 @@ def _system_prompt_for_group(
     )
 
 
+# 密钥/额度/配置类错误：重试与换 key 都无解，应尽快终止并上报真实原因
+_FATAL_API_STATUSES = ("HTTP 400", "HTTP 401", "HTTP 402", "HTTP 403", "HTTP 404")
+
+
+def _is_fatal_api_error(api_error: str | None) -> bool:
+    msg = str(api_error or "")
+    if any(status in msg for status in _FATAL_API_STATUSES):
+        return True
+    lower = msg.lower()
+    return (
+        "insufficient balance" in lower
+        or "invalid api key" in lower
+        or "model not exist" in lower
+        or "unauthorized" in lower
+    )
+
+
+def _api_error_hint(api_error: str | None) -> str:
+    lower = str(api_error or "").lower()
+    if "http 402" in lower or "insufficient balance" in lower:
+        return "模型账户余额不足，请充值或更换 API Key"
+    if "http 401" in lower or "invalid api key" in lower or "unauthorized" in lower:
+        return "API Key 无效，请检查密钥配置"
+    if "http 404" in lower:
+        return "接口地址不正确，请检查 API URL"
+    if "model not exist" in lower:
+        return "模型名不存在，请检查模型配置"
+    if "http 400" in lower:
+        return "请求被模型服务拒绝，请检查模型名/参数配置"
+    return ""
+
+
+def _thinking_params(provider_key: str, model_name: str) -> dict:
+    """thinking 参数策略：默认关闭以提速（全通道统一）。
+
+    例外：智谱 GLM-5.x 为始终思考模型，不支持 disabled（HTTP 400 code=1210），
+    须显式 enabled 并用 reasoning_effort 压到 low 档；
+    智谱旧型号（如 glm-4.7-flash）支持关闭，维持默认。
+    """
+    if provider_key == "zhipu" and str(model_name).strip().lower().startswith("glm-5"):
+        return {
+            "thinking": dict(ZHIPU_THINKING),
+            "reasoning_effort": ZHIPU_REASONING_EFFORT,
+        }
+    return {"thinking": {"type": "disabled"}}
+
+
 def _call_deepseek(
     *,
     api_url: str,
@@ -929,9 +979,9 @@ def _call_deepseek(
             ],
             "response_format": {"type": "json_object"},
             "max_tokens": MAX_OUTPUT_TOKENS,
-            # 全通道关闭 thinking，避免推理模式拖慢策划
-            "thinking": {"type": "disabled"},
         }
+        # thinking 策略：默认关闭提速；始终思考模型显式开启并压低档位
+        payload.update(_thinking_params(provider_key, model_name))
         with httpx.Client(timeout=httpx.Timeout(30.0, read=180.0)) as client:
             resp = client.post(api_url, headers=headers, json=payload)
         elapsed = time.perf_counter() - t0
@@ -1038,6 +1088,10 @@ def run_plan(
     used_short_starts: dict[str, int] = {}
     date_str = datetime.now().strftime("%m%d")
     step_texts = [s.get("text", "") for s in steps]
+    # 失败原因留痕：模型调用/解析错误不再静默吞掉
+    last_api_error: str | None = None
+    last_parse_error: str | None = None
+    consecutive_fatal = 0
 
     def _emit(detail: str = "") -> None:
         if progress_callback:
@@ -1090,6 +1144,21 @@ def run_plan(
                 llm_session_id=session_id,
             )
             if api_error or not raw_res:
+                last_api_error = api_error or "模型响应内容为空"
+                if api_error and _is_fatal_api_error(api_error):
+                    consecutive_fatal += 1
+                    # 连续 fatal 覆盖整个 key 池 → 密钥/额度类问题，重试无意义
+                    if consecutive_fatal >= len(api_keys):
+                        hint = _api_error_hint(api_error)
+                        suffix = f"（{hint}）" if hint else ""
+                        raise RuntimeError(
+                            f"《{project_name}》策划未产出有效方案："
+                            f"{api_error}{suffix}"
+                        )
+                else:
+                    consecutive_fatal = 0
+                # 进度详情对用户隐藏技术原因（HTTP 状态/密钥信息），完整原因见最终落库错误
+                _emit("模型调用失败，正在重试…")
                 consecutive_empty += 1
                 continue
 
@@ -1098,6 +1167,7 @@ def run_plan(
                     starts_raw, ends_raw = _parse_short_starts_ends(raw_res)
                     # 切点必须来自模型；开场不足时可由 ASR 句缝补
                     if not ends_raw:
+                        last_parse_error = "模型响应中无 ends 切点候选"
                         consecutive_empty += 1
                         continue
                     need = total_count - completed_in_group
@@ -1144,6 +1214,7 @@ def run_plan(
 
                 clips = _parse_clips_response(raw_res)
                 if not clips:
+                    last_parse_error = "模型响应中无 clips 或解析为空"
                     consecutive_empty += 1
                     continue
 
@@ -1217,14 +1288,19 @@ def run_plan(
                 _emit(f"{g_type}组 · 已通过 {len(final_plans)}/{target_total} 条")
                 if len(final_plans) >= target_total:
                     break
-            except Exception:
+            except Exception as exc:
+                last_parse_error = f"{type(exc).__name__}: {exc}"
                 consecutive_empty += 1
                 continue
         if len(final_plans) >= target_total:
             break
 
     if not final_plans:
-        raise RuntimeError(f"《{project_name}》策划未产出有效方案")
+        cause = last_api_error or last_parse_error
+        raise RuntimeError(
+            f"《{project_name}》策划未产出有效方案"
+            + (f"（最后错误：{cause}）" if cause else "")
+        )
 
     seen: set[str] = set()
     unique_plans: list[dict] = []
