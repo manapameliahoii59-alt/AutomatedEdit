@@ -113,6 +113,24 @@ class ClipEditViewModel(ViewModel):
 
         task_manager.submit_task(_do, on_success=lambda _ok: None, on_error=_on_error)
 
+    def save_output_resolution(self, resolution: str) -> None:
+        """本地已写入 cfg 后，后台同步成片分辨率到服务端。"""
+        api = get_api()
+        if not api._token:
+            return
+        patch = clip_edit_settings_patch(output_resolution=resolution)
+        if not patch.get("clip_edit"):
+            return
+
+        def _do():
+            get_api().update_settings(patch)
+            return True
+
+        def _on_error(msg: str):
+            self.errorOccurred.emit(f"成片分辨率同步失败：{msg}")
+
+        task_manager.submit_task(_do, on_success=lambda _ok: None, on_error=_on_error)
+
     def save_overlay_text_settings(
         self,
         *,

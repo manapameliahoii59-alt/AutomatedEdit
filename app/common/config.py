@@ -39,6 +39,10 @@ class Config(MyQConfig):
     # 渲染编码档位（默认：NVENC p5 / x264 superfast）
     encode_nvenc_preset = ConfigItem("Tools", "encode_nvenc_preset", "p5")
     encode_x264_preset = ConfigItem("Tools", "encode_x264_preset", "superfast")
+    # 成片分辨率：720p / 1080p / source（跟随原片）；默认 720p
+    encode_output_resolution = ConfigItem(
+        "Tools", "encode_output_resolution", "720p"
+    )
     # 渲染时检测并裁掉第一集片尾「未完待续」（仅命中才裁）
     clip_trim_ep1_continued = ConfigItem(
         "Tools", "clip_trim_ep1_continued", True, BoolValidator()
@@ -93,7 +97,7 @@ DEFAULT_API_BASE_URL = "http://129.204.86.63:7172"
 YEAR = datetime.datetime.now().year
 AUTHOR = "dragon"
 AUTHOR_EMAIL = "857134647@qq.com"
-VERSION = '0.0.6'
+VERSION = '0.0.7'
 APP_NAME = "剪辑助手"
 FEEDBACK_URL = f"mailto:{AUTHOR_EMAIL}"
 

@@ -107,6 +107,79 @@ class TestEncodePresets:
         ]
 
 
+class TestOutputResolution:
+    def test_normalize_defaults_and_invalid(self):
+        assert RenderService.normalize_render_resolution(None) == "720p"
+        assert RenderService.normalize_render_resolution("") == "720p"
+        assert RenderService.normalize_render_resolution("1080P") == "1080p"
+        assert RenderService.normalize_render_resolution("source") == "source"
+        assert RenderService.normalize_render_resolution("4k") == "720p"
+
+    def test_fixed_modes_by_orientation(self, monkeypatch):
+        for mode, horizontal, vertical in (
+            ("720p", (1280, 720), (720, 1280)),
+            ("1080p", (1920, 1080), (1080, 1920)),
+        ):
+            monkeypatch.setattr(
+                RenderService, "configured_resolution", staticmethod(lambda m=mode: m)
+            )
+            assert (
+                RenderService._resolve_target_dims("ffprobe", "a.mp4", "horizontal")
+                == horizontal
+            )
+            assert (
+                RenderService._resolve_target_dims("ffprobe", "a.mp4", "vertical")
+                == vertical
+            )
+
+    def test_source_mode_uses_probed_size_evenized(self, monkeypatch):
+        monkeypatch.setattr(
+            RenderService, "configured_resolution", staticmethod(lambda: "source")
+        )
+        # 探测结果已在 _probe_source_size 内偶数化，原样作为目标尺寸
+        monkeypatch.setattr(
+            RenderService,
+            "_probe_source_size",
+            staticmethod(lambda ffprobe, path: (1920, 1086)),
+        )
+        assert (
+            RenderService._resolve_target_dims("ffprobe", "a.mp4", "horizontal")
+            == (1920, 1086)
+        )
+
+    def test_source_mode_probe_failure_falls_back_to_720p(self, monkeypatch):
+        monkeypatch.setattr(
+            RenderService, "configured_resolution", staticmethod(lambda: "source")
+        )
+        monkeypatch.setattr(
+            RenderService, "_probe_source_size", staticmethod(lambda ffprobe, path: None)
+        )
+        assert (
+            RenderService._resolve_target_dims("ffprobe", "a.mp4", "horizontal")
+            == (1280, 720)
+        )
+        assert (
+            RenderService._resolve_target_dims("ffprobe", "a.mp4", "vertical")
+            == (720, 1280)
+        )
+
+    def test_probe_source_size_parses_and_evenizes(self, monkeypatch):
+        class R:
+            stdout = "1921x1087"
+
+        monkeypatch.setattr(
+            "app.data.services.render_service.win_run", lambda cmd, **kwargs: R()
+        )
+        assert RenderService._probe_source_size("ffprobe", "a.mp4") == (1920, 1086)
+
+    def test_probe_source_size_error_returns_none(self, monkeypatch):
+        def boom(cmd, **kwargs):
+            raise RuntimeError("probe failed")
+
+        monkeypatch.setattr("app.data.services.render_service.win_run", boom)
+        assert RenderService._probe_source_size("ffprobe", "a.mp4") is None
+
+
 class TestSceneCache:
     def test_scan_window_around_cut(self):
         start, end = RenderService._scene_scan_window(10.0, radius=3.0)

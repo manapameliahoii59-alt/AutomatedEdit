@@ -76,8 +76,14 @@ from app.common.runtime import is_dev_runtime
 from app.common.utils import StyleSheet, setup_confirm_dialog, show_dialog, show_toast
 from app.data.models.drama_project import DramaProject, DramaStatus
 from app.data.services.changdu_paths import resolve_video_download_root
+from app.data.services.drama_folder_service import (
+    DramaFolderError,
+    list_drama_folders_under,
+    scan_drama_folder,
+)
 from app.data.services.render_service import (
     NVENC_PRESET_CHOICES,
+    RESOLUTION_CHOICES,
     X264_PRESET_CHOICES,
     RenderService,
 )
@@ -878,9 +884,13 @@ class ClipEditPage(ScrollArea):
             return
         enabled = dlg.result_trim_ep1_continued()
         qconfig.set(cfg.clip_trim_ep1_continued, enabled)
+        resolution = dlg.result_resolution()
+        qconfig.set(cfg.encode_output_resolution, resolution)
+        self.vm.save_output_resolution(resolution)
+        resolution_label = dict(RESOLUTION_CHOICES).get(resolution, resolution)
         show_toast(
             self,
-            f"去掉未完待续：{'开' if enabled else '关'}",
+            f"去掉未完待续：{'开' if enabled else '关'} · 成片分辨率：{resolution_label}",
             title="设置",
         )
 
@@ -970,16 +980,34 @@ class ClipEditPage(ScrollArea):
             start = resolve_video_download_root()
         folder = QFileDialog.getExistingDirectory(
             self,
-            "选择剧集文件夹",
+            "选择剧集文件夹（可直接选含多部剧的总目录）",
             start,
             QFileDialog.Option.ShowDirsOnly | QFileDialog.Option.DontResolveSymlinks,
         )
-        if folder:
-            # 记住上一级目录，下次可直接挑选同目录下的其他剧
-            parent = os.path.dirname(folder.rstrip("\\/"))
-            remember = parent if parent and os.path.isdir(parent) else folder
-            qconfig.set(cfg.clip_last_import_dir, remember)
-            self.vm.import_drama_folder(folder)
+        if not folder:
+            return
+        # 记住上一级目录，下次可直接挑选同目录下的其他剧
+        parent = os.path.dirname(folder.rstrip("\\/"))
+        remember = parent if parent and os.path.isdir(parent) else folder
+        qconfig.set(cfg.clip_last_import_dir, remember)
+
+        # 文件夹直接含视频 → 单剧导入（原有行为）
+        try:
+            scan_drama_folder(folder)
+        except DramaFolderError:
+            # 不含视频 → 视为剧目总目录，扫描子文件夹批量导入
+            folders = list_drama_folders_under(folder)
+            if not folders:
+                show_dialog(
+                    self,
+                    "该文件夹内未找到视频，其子文件夹中也没有可导入的剧目"
+                    "（剧目文件夹需直接包含 mp4 等视频文件）",
+                    "提示",
+                )
+                return
+            self.vm.import_drama_folders(folders)
+            return
+        self.vm.import_drama_folder(folder)
 
     def _handle_loading_content(self, content: str):
         if self.loading_bar is not None and isValid(self.loading_bar):

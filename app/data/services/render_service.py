@@ -50,6 +50,20 @@ _DEFAULT_X264_PRESET = "superfast"
 _NVENC_PRESET_SET = {k for k, _ in NVENC_PRESET_CHOICES}
 _X264_PRESET_SET = {k for k, _ in X264_PRESET_CHOICES}
 
+# 成片分辨率：720p / 1080p / source（跟随原片）
+RESOLUTION_CHOICES: tuple[tuple[str, str], ...] = (
+    ("720p", "720p（默认，体积小）"),
+    ("1080p", "1080p（更清晰，体积约 2 倍）"),
+    ("source", "跟随原片分辨率"),
+)
+_DEFAULT_RESOLUTION = "720p"
+_RESOLUTION_SET = {k for k, _ in RESOLUTION_CHOICES}
+# 固定档位尺寸（宽, 高），按画幅方向取用
+_RESOLUTION_DIMS = {
+    "720p": {"horizontal": (1280, 720), "vertical": (720, 1280)},
+    "1080p": {"horizontal": (1920, 1080), "vertical": (1080, 1920)},
+}
+
 
 def build_atempo_filter(speed: float) -> str:
     """生成 atempo 链。单级通常限 0.5~2.0，超过则拆成多级（如 3x → 2.0,1.5）。"""
@@ -372,6 +386,11 @@ class RenderService:
         else:
             enc_label = f"{enc_label} preset={RenderService._configured_x264_preset()}"
         print(f"   🎛 编码方式: {enc_label}", flush=True)
+        print(
+            f"   📺 输出分辨率: {ctx.target_w}x{ctx.target_h}"
+            f"（{RenderService.configured_resolution()}）",
+            flush=True,
+        )
         t0 = time.perf_counter()
 
         episodes, speeds = RenderService._collect_episodes_and_speeds(plans)
@@ -506,7 +525,9 @@ class RenderService:
             return None
         orientation = RenderService._get_orientation(ffprobe, sample_path)
         is_horizontal = orientation == "horizontal"
-        target_w, target_h = (1280, 720) if is_horizontal else (720, 1280)
+        target_w, target_h = RenderService._resolve_target_dims(
+            ffprobe, sample_path, orientation
+        )
         use_gpu = RenderService._prefer_gpu(ffmpeg)
         enc_v = "h264_nvenc" if use_gpu else "libx264"
         return RenderContext(
@@ -1104,6 +1125,56 @@ class RenderService:
         return v if v in _X264_PRESET_SET else _DEFAULT_X264_PRESET
 
     @staticmethod
+    def normalize_render_resolution(value: str | None) -> str:
+        v = (value or _DEFAULT_RESOLUTION).strip().lower()
+        return v if v in _RESOLUTION_SET else _DEFAULT_RESOLUTION
+
+    @staticmethod
+    def configured_resolution() -> str:
+        from app.common.config import cfg
+
+        return RenderService.normalize_render_resolution(
+            str(cfg.encode_output_resolution.value)
+        )
+
+    @staticmethod
+    def _probe_source_size(ffprobe, video_path):
+        """返回视频 (宽, 高)（偶数化，编码器要求）；探测失败返回 None。"""
+        try:
+            cmd = [
+                ffprobe, "-v", "error",
+                "-select_streams", "v:0",
+                "-show_entries", "stream=width,height",
+                "-of", "csv=s=x:p=0",
+                video_path,
+            ]
+            out = win_run(
+                cmd, capture_output=True, text=True, check=True
+            ).stdout.strip()
+            if "x" in out:
+                w, h = (int(v) for v in out.split("x")[:2])
+                if w > 0 and h > 0:
+                    return w - (w % 2), h - (h % 2)
+        except Exception:
+            pass
+        return None
+
+    @staticmethod
+    def _resolve_target_dims(ffprobe, sample_path: str, orientation: str) -> tuple[int, int]:
+        """按成片分辨率设置解析目标 (宽, 高)。
+
+        720p/1080p：固定档位按画幅方向取尺寸；
+        source：探测样片实际尺寸（偶数化），失败回退 720p 档。
+        """
+        mode = RenderService.configured_resolution()
+        if mode == "source":
+            size = RenderService._probe_source_size(ffprobe, sample_path)
+            if size:
+                return size
+        dims = _RESOLUTION_DIMS.get(mode, _RESOLUTION_DIMS["720p"])
+        return dims["horizontal" if orientation == "horizontal" else "vertical"]
+
+    @staticmethod
     def _configured_nvenc_preset() -> str:
         from app.common.config import cfg
 
@@ -1225,6 +1296,7 @@ class RenderService:
             project_name,
             horizontal=is_horizontal,
             cache_dir=cache_dir,
+            canvas_h=ctx.target_h,
         )
         overlay_filters = overlay_plan["drawtext_filters"]
         image_overlays = [

@@ -1661,6 +1661,13 @@ def apply_overlay_from_clip_edit_dict(data: dict | None) -> None:
             cfg.clip_export_seq_format,
             clamp_export_seq_format(data.get("export_seq_format")),
         )
+    if "output_resolution" in data:
+        # 成片分辨率：仅接受合法档位，字段缺失/非法不动本地
+        from app.data.services.render_service import RESOLUTION_CHOICES
+
+        raw = str(data.get("output_resolution") or "").strip().lower()
+        if raw in {v for v, _ in RESOLUTION_CHOICES}:
+            qconfig.set(cfg.encode_output_resolution, raw)
 
 
 def clip_edit_settings_patch(
@@ -1671,6 +1678,7 @@ def clip_edit_settings_patch(
     overlay_title: dict | None = None,
     overlay_disclaimer: dict | None = None,
     overlay_text_library: dict | None = None,
+    output_resolution: str | None = None,
 ) -> dict:
     clip: dict[str, Any] = {}
     if export_name_tag is not None:
@@ -1683,6 +1691,12 @@ def clip_edit_settings_patch(
         from app.common.export_paths import clamp_export_seq_format
 
         clip["export_seq_format"] = clamp_export_seq_format(export_seq_format)
+    if output_resolution is not None:
+        from app.data.services.render_service import RenderService
+
+        clip["output_resolution"] = RenderService.normalize_render_resolution(
+            output_resolution
+        )
     if overlay_text_library is not None:
         lib = clamp_overlay_library(overlay_text_library)
         clip["overlay_text_library"] = lib
@@ -2055,18 +2069,68 @@ def overlay_text_disabled_from_cfg() -> bool:
     return bool(raw.get("no_text"))
 
 
+# 叠字 fontsize 的基准画布高度：设置里的字号按 720p 观感配置
+OVERLAY_FONT_BASE_CANVAS_H = 720
+
+
+def overlay_font_scale(canvas_h: int | None) -> float:
+    """成片画布高度 → fontsize 缩放系数；非 720p 输出时等比缩放。"""
+    try:
+        h = int(canvas_h) if canvas_h is not None else 0
+    except (TypeError, ValueError):
+        return 1.0
+    if h <= 0 or h == OVERLAY_FONT_BASE_CANVAS_H:
+        return 1.0
+    return max(0.5, h / OVERLAY_FONT_BASE_CANVAS_H)
+
+
+def _scale_style_fontsize(style: OverlayTextStyle | dict, scale: float) -> dict:
+    """复制 style 并按系数缩放 fontsize（含 portrait/landscape 子桶，
+    供非 720p 成片保持观感同比）。"""
+    if scale == 1.0:
+        return dict(style)
+    scaled = dict(style)
+    try:
+        fs = int(round(float(scaled.get("fontsize") or 0) * scale))
+    except (TypeError, ValueError):
+        return scaled
+    if fs > 0:
+        scaled["fontsize"] = fs
+    for key in ("portrait", "landscape"):
+        sub = scaled.get(key)
+        if not isinstance(sub, dict):
+            continue
+        sub2 = dict(sub)
+        try:
+            sfs = int(round(float(sub2.get("fontsize") or 0) * scale))
+        except (TypeError, ValueError):
+            continue
+        if sfs > 0:
+            sub2["fontsize"] = sfs
+        scaled[key] = sub2
+    return scaled
+
+
 def build_overlay_plan(
     project_name: str,
     *,
     horizontal: bool = False,
     cache_dir: str | None = None,
+    canvas_h: int | None = None,
 ) -> OverlayPlan:
-    """生成成片叠字计划：drawtext 链 + 综艺花字 PNG overlay。"""
+    """生成成片叠字计划：drawtext 链 + 综艺花字 PNG overlay。
+
+    canvas_h：成片画布高度（如 1080）。叠字 fontsize 按 720p 基准配置，
+    输出其他分辨率时按 canvas_h/720 等比缩放（drawtext 与花字 PNG 同步），
+    保证与预览观感一致；缺省不缩放（兼容旧调用）。缩放后仍受
+    clamp_overlay_fontsize 上限约束。
+    """
     if overlay_text_disabled_from_cfg():
         return {"drawtext_filters": [], "image_overlays": []}
     orientation: Orientation = "landscape" if horizontal else "portrait"
-    title = load_overlay_title_from_cfg()
-    disc = load_overlay_disclaimer_from_cfg()
+    scale = overlay_font_scale(canvas_h)
+    title = _scale_style_fontsize(load_overlay_title_from_cfg(), scale)
+    disc = _scale_style_fontsize(load_overlay_disclaimer_from_cfg(), scale)
     fonts_needed: set[str] = set()
     for style in (title, disc):
         if not resolve_overlay_text(style["text"], project_name).strip():

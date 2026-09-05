@@ -917,6 +917,98 @@ def test_build_overlay_plan_skips_when_no_text(monkeypatch):
     assert plan["image_overlays"] == []
 
 
+def test_overlay_font_scale():
+    from app.common.overlay_text_settings import overlay_font_scale
+
+    assert overlay_font_scale(None) == 1.0
+    assert overlay_font_scale(720) == 1.0
+    assert overlay_font_scale(1080) == 1.5
+    assert overlay_font_scale(0) == 1.0
+    assert overlay_font_scale(-5) == 1.0
+    assert overlay_font_scale("abc") == 1.0
+
+
+def test_build_overlay_plan_scales_fontsize_for_canvas(monkeypatch):
+    """非 720p 成片：fontsize 按 canvas_h/720 同比缩放（1080p → ×1.5）。"""
+    from app.common.overlay_text_settings import build_overlay_plan
+
+    class _Item:
+        def __init__(self, value):
+            self.value = value
+
+    from app.common import config as config_mod
+
+    monkeypatch.setattr(config_mod.cfg, "overlay_title_json", _Item(""))
+    monkeypatch.setattr(config_mod.cfg, "overlay_disclaimer_json", _Item(""))
+    monkeypatch.setattr(config_mod.cfg, "overlay_text_library_json", _Item(""))
+
+    def _fake_set(item, value):
+        item.value = value
+
+    monkeypatch.setattr("qfluentwidgets.qconfig.set", _fake_set)
+
+    base = build_overlay_plan("测试剧", horizontal=False)
+    assert any("fontsize=22" in f for f in base["drawtext_filters"])
+
+    scaled = build_overlay_plan("测试剧", horizontal=False, canvas_h=1080)
+    assert any("fontsize=33" in f for f in scaled["drawtext_filters"])
+    assert not any("fontsize=22" in f for f in scaled["drawtext_filters"])
+
+    same = build_overlay_plan("测试剧", horizontal=False, canvas_h=720)
+    assert any("fontsize=22" in f for f in same["drawtext_filters"])
+
+
+def test_clip_edit_settings_patch_output_resolution():
+    from app.common.overlay_text_settings import clip_edit_settings_patch
+
+    patch = clip_edit_settings_patch(output_resolution="1080P")
+    assert patch == {"clip_edit": {"output_resolution": "1080p"}}
+
+    patch_src = clip_edit_settings_patch(output_resolution="source")
+    assert patch_src["clip_edit"]["output_resolution"] == "source"
+
+    # 非法值归一为默认 720p
+    patch_bad = clip_edit_settings_patch(output_resolution="4k")
+    assert patch_bad["clip_edit"]["output_resolution"] == "720p"
+
+    # 缺省不携带该字段（不影响其他同步）
+    patch_none = clip_edit_settings_patch(export_name_tag="阿飞")
+    assert "output_resolution" not in patch_none["clip_edit"]
+    assert patch_none["clip_edit"]["export_name_tag"] == "阿飞"
+
+
+def test_apply_clip_edit_dict_restores_output_resolution(monkeypatch):
+    from app.common import config as config_mod
+    from app.common.overlay_text_settings import apply_overlay_from_clip_edit_dict
+
+    class _Item:
+        def __init__(self, value):
+            self.value = value
+
+    item = _Item("720p")
+    monkeypatch.setattr(config_mod.cfg, "encode_output_resolution", item)
+    monkeypatch.setattr(config_mod.cfg, "overlay_title_json", _Item(""))
+    monkeypatch.setattr(config_mod.cfg, "overlay_disclaimer_json", _Item(""))
+    monkeypatch.setattr(config_mod.cfg, "overlay_text_library_json", _Item(""))
+
+    def _fake_set(item_obj, value):
+        item_obj.value = value
+
+    monkeypatch.setattr("qfluentwidgets.qconfig.set", _fake_set)
+
+    # 合法值写入本地
+    apply_overlay_from_clip_edit_dict({"output_resolution": "source"})
+    assert item.value == "source"
+
+    # 非法值不动本地
+    apply_overlay_from_clip_edit_dict({"output_resolution": "4k"})
+    assert item.value == "source"
+
+    # 字段缺失不动本地
+    apply_overlay_from_clip_edit_dict({"export_name_tag": "x"})
+    assert item.value == "source"
+
+
 def test_overlay_text_disabled_from_cfg(monkeypatch):
     import json
 
