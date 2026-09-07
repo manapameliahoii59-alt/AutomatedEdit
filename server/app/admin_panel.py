@@ -135,7 +135,7 @@ def _keys_preview(keys: str | None) -> str:
     return text if len(text) <= 32 else f"{text[:32]}…"
 
 
-def _user_plan_fields(user: User) -> tuple[str, str, str, str]:
+def _user_plan_fields(user: User) -> tuple[str, str, str, str, bool]:
     secret = user.secrets
     keys = (secret.deepseek_keys if secret else "") or ""
     dashscope = (secret.dashscope_key if secret else "") or ""
@@ -148,7 +148,10 @@ def _user_plan_fields(user: User) -> tuple[str, str, str, str]:
     )
     preset = encode_plan_llm_preset(provider, model_name)
     label = plan_llm_preset_label(provider, model_name)
-    return preset, label, keys, dashscope
+    thinking_enabled = (
+        bool(getattr(secret, "plan_thinking_enabled", False)) if secret else False
+    )
+    return preset, label, keys, dashscope, thinking_enabled
 
 
 def _nav(active: str) -> list[dict[str, str]]:
@@ -272,7 +275,7 @@ def users_list(
     ).all()
     users = []
     for user in rows:
-        preset, label, keys, _dash = _user_plan_fields(user)
+        preset, label, keys, _dash, _thinking = _user_plan_fields(user)
         users.append(
             {
                 "id": user.id,
@@ -319,7 +322,7 @@ def user_edit_page(
     )
     if user is None:
         return HTMLResponse("用户不存在", status_code=404)
-    preset, _label, keys, dashscope = _user_plan_fields(user)
+    preset, _label, keys, dashscope, thinking_enabled = _user_plan_fields(user)
     return templates.TemplateResponse(
         request,
         "admin/user_edit.html",
@@ -330,6 +333,7 @@ def user_edit_page(
             plan_llm_preset=preset,
             deepseek_keys=keys,
             dashscope_key=dashscope,
+            plan_thinking_enabled=thinking_enabled,
             plan_choices=list(PLAN_LLM_PRESET_CHOICES),
             saved=bool(saved),
             default_preset=f"{PLAN_LLM_PROVIDER_DEEPSEEK}|deepseek-v4-flash",
@@ -352,6 +356,7 @@ def user_edit_save(
     daily_clip_limit: Annotated[str | None, Form()] = None,
     daily_download_limit: Annotated[str | None, Form()] = None,
     plan_llm_preset: Annotated[str | None, Form()] = None,
+    plan_thinking_enabled: Annotated[str | None, Form()] = None,
     deepseek_keys: Annotated[str | None, Form()] = None,
     dashscope_key: Annotated[str | None, Form()] = None,
     save: Annotated[str | None, Form()] = None,
@@ -384,6 +389,7 @@ def user_edit_save(
         secret.dashscope_key = dashscope_key.strip()
     secret.plan_llm_provider = provider
     secret.plan_llm_model = llm_model
+    secret.plan_thinking_enabled = bool(plan_thinking_enabled)
     db.commit()
     return RedirectResponse(f"/admin/user/edit/{user_id}?saved=1", status_code=302)
 

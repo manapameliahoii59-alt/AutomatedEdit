@@ -146,6 +146,13 @@ def _ensure_daily_quota_columns() -> None:
                         "VARCHAR(64) NOT NULL DEFAULT ''"
                     )
                 )
+            if "plan_thinking_enabled" not in secret_cols:
+                conn.execute(
+                    text(
+                        "ALTER TABLE user_secrets ADD COLUMN plan_thinking_enabled "
+                        "BOOLEAN NOT NULL DEFAULT 0"
+                    )
+                )
 
     if "users" in table_names:
         user_cols = {col["name"] for col in inspector.get_columns("users")}

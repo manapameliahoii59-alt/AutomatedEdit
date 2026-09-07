@@ -101,3 +101,7 @@ build/
 nuitka-crash-report.xml
 release/
 changdu_data/
+.deploy.env
+*.tar.gz
+*.log
+

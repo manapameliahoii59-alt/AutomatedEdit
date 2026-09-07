@@ -69,6 +69,10 @@ def test_user_edit_page_renders(admin_client):
     assert 'value="opencode_go|mimo-v2.5"' in response.text
     assert "小米 MiMo" in response.text
     assert "mimo-v2.5" in response.text
+    assert "智谱 GLM / glm-4.7-flash" in response.text
+    assert 'value="zhipu|glm-4.7-flash"' in response.text
+    assert "深度思考模式（Thinking）" in response.text
+    assert 'id="plan_thinking_enabled"' in response.text
     assert "form-check form-switch" in response.text
     assert 'role="switch"' in response.text
     assert 'class="form-check-input"' in response.text
@@ -96,6 +100,26 @@ def test_user_edit_saves_deepseek_keys(admin_client):
     assert "ds-key" in check_resp.text
     assert 'value="opencode_go|deepseek-v4-flash"' in check_resp.text
     assert "selected" in check_resp.text
+
+
+def test_user_edit_saves_zhipu_glm_47(admin_client):
+    save_resp = admin_client.post(
+        "/admin/user/edit/1",
+        data={
+            "username": "a@b.com",
+            "role": "user",
+            "plan_llm_preset": "zhipu|glm-4.7-flash",
+            "deepseek_keys": "zp-key-123",
+            "save": "Save",
+        },
+        follow_redirects=False,
+    )
+    assert save_resp.status_code == 302
+
+    check_resp = admin_client.get("/admin/user/edit/1")
+    assert check_resp.status_code == 200
+    assert "zp-key-123" in check_resp.text
+    assert 'value="zhipu|glm-4.7-flash" selected' in check_resp.text
 
 
 def test_user_edit_toggle_is_active(admin_client):
@@ -185,3 +209,48 @@ def test_user_list_shows_deepseek_column(admin_client):
     assert "<td>a@b.com</td>" in response.text
     assets = admin_client.get("/static/admin/vxe-table.umd.min.js")
     assert assets.status_code == 200
+
+
+def test_user_edit_toggle_plan_thinking_enabled(admin_client):
+    # 默认未开启
+    save_resp = admin_client.post(
+        "/admin/user/edit/1",
+        data={
+            "username": "a@b.com",
+            "role": "user",
+            "plan_llm_preset": "zhipu|glm-4.7-flash",
+            "save": "Save",
+        },
+        follow_redirects=False,
+    )
+    assert save_resp.status_code == 302
+
+    check_resp = admin_client.get("/admin/user/edit/1")
+    assert check_resp.status_code == 200
+    assert 'id="plan_thinking_enabled"' in check_resp.text
+    assert (
+        'id="plan_thinking_enabled" type="checkbox" role="switch" '
+        'name="plan_thinking_enabled" value="y" checked'
+    ) not in check_resp.text
+
+    # 勾选开启
+    save_resp2 = admin_client.post(
+        "/admin/user/edit/1",
+        data={
+            "username": "a@b.com",
+            "role": "user",
+            "plan_llm_preset": "zhipu|glm-4.7-flash",
+            "plan_thinking_enabled": "y",
+            "save": "Save",
+        },
+        follow_redirects=False,
+    )
+    assert save_resp2.status_code == 302
+
+    check_resp2 = admin_client.get("/admin/user/edit/1")
+    assert check_resp2.status_code == 200
+    assert (
+        'id="plan_thinking_enabled" type="checkbox" role="switch" '
+        'name="plan_thinking_enabled" value="y" checked'
+    ) in check_resp2.text
+

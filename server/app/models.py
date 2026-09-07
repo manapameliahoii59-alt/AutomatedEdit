@@ -42,6 +42,8 @@ class UserSecret(Base):
     plan_llm_provider: Mapped[str] = mapped_column(String(32), default="deepseek")
     # 空=通道默认模型
     plan_llm_model: Mapped[str] = mapped_column(String(64), default="")
+    # 深度思考模式（默认关闭提速；智谱 GLM-5.3 等强制思考模型不受此限制）
+    plan_thinking_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, server_default=func.now(), onupdate=func.now()
     )

@@ -116,6 +116,12 @@ def test_plan_llm_preset_roundtrip():
     assert zm == "glm-5.3-flash"
     assert plan_llm_preset_label(zp, zm) == "智谱 GLM / glm-5.3-flash"
 
+    zhipu_47 = encode_plan_llm_preset("zhipu", "glm-4.7-flash")
+    zp47, zm47 = decode_plan_llm_preset(zhipu_47)
+    assert zp47 == "zhipu"
+    assert zm47 == "glm-4.7-flash"
+    assert plan_llm_preset_label(zp47, zm47) == "智谱 GLM / glm-4.7-flash"
+
 
 def test_resolve_plan_llm_config_xiaomi(monkeypatch):
     from app.services.plan_secrets import resolve_plan_llm_config
@@ -175,6 +181,12 @@ def test_resolve_plan_llm_config_zhipu(monkeypatch):
     assert cfg["model"] == "glm-5.3-flash"  # 空 model 回落通道默认
     assert cfg["keys"] == "zhipu-key"
     assert "bigmodel.cn" in cfg["api_url"]
+    assert cfg["thinking_enabled"] is False
+
+    _ZhipuSecret.plan_thinking_enabled = True
+    cfg_on = resolve_plan_llm_config(_Db(), 1)
+    assert cfg_on["thinking_enabled"] is True
+
 
 
 def test_call_deepseek_payload_by_provider(monkeypatch):
@@ -300,8 +312,47 @@ def test_call_deepseek_payload_by_provider(monkeypatch):
         plan_mode="long",
         provider="zhipu",
         llm_session_id="",
+        thinking_enabled=False,
     )
     assert err5 is None
-    # 智谱旧型号支持关闭思考：维持全通道默认 disabled
+    # 智谱旧型号默认关闭思考
     assert captured["json"].get("thinking") == {"type": "disabled"}
     assert "reasoning_effort" not in captured["json"]
+
+    # 智谱 GLM-4.7-flash: 显式开启思考
+    content6, _e6, err6 = plan_director._call_deepseek(
+        api_url="https://open.bigmodel.cn/api/paas/v4/chat/completions",
+        model_name="glm-4.7-flash",
+        compressed_script="x",
+        count=1,
+        group_type="U",
+        key_pool=pool,
+        min_duration_seconds=150,
+        max_duration_seconds=300,
+        plan_mode="long",
+        provider="zhipu",
+        llm_session_id="",
+        thinking_enabled=True,
+    )
+    assert err6 is None
+    assert captured["json"].get("thinking") == {"type": "enabled"}
+
+    # 智谱 GLM-5.3-flash: 即使用户关闭思考，也强制开启并压低档位（因为 API 强制要求）
+    content7, _e7, err7 = plan_director._call_deepseek(
+        api_url="https://open.bigmodel.cn/api/paas/v4/chat/completions",
+        model_name="glm-5.3-flash",
+        compressed_script="x",
+        count=1,
+        group_type="U",
+        key_pool=pool,
+        min_duration_seconds=150,
+        max_duration_seconds=300,
+        plan_mode="long",
+        provider="zhipu",
+        llm_session_id="",
+        thinking_enabled=False,
+    )
+    assert err7 is None
+    assert captured["json"].get("thinking") == {"type": "enabled"}
+    assert captured["json"].get("reasoning_effort") == "low"
+

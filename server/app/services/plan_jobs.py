@@ -184,6 +184,7 @@ def _run_job(
             plan_mode=payload.get("plan_mode"),
             provider=llm["provider"],
             llm_session_id=job_id,
+            thinking_enabled=bool(llm.get("thinking_enabled", False)),
         )
         from app.services.plan_director import clamp_clip_count
 

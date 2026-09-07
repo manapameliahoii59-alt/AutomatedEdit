@@ -53,6 +53,10 @@ PLAN_LLM_PRESET_CHOICES: tuple[tuple[str, str], ...] = (
         f"{PLAN_LLM_PROVIDER_ZHIPU}|glm-5.3-flash",
         "智谱 GLM / glm-5.3-flash",
     ),
+    (
+        f"{PLAN_LLM_PROVIDER_ZHIPU}|glm-4.7-flash",
+        "智谱 GLM / glm-4.7-flash",
+    ),
 )
 _PLAN_LLM_PRESET_VALUES = {value for value, _label in PLAN_LLM_PRESET_CHOICES}
 
@@ -62,6 +66,7 @@ class PlanLlmConfig(TypedDict):
     api_url: str
     model: str
     keys: str
+    thinking_enabled: bool
 
 
 def ensure_user_secret(db: Session, user_id: int) -> UserSecret:
@@ -72,6 +77,7 @@ def ensure_user_secret(db: Session, user_id: int) -> UserSecret:
             plan_decrypt_key=generate_plan_decrypt_key(),
             plan_llm_provider=PLAN_LLM_PROVIDER_DEEPSEEK,
             plan_llm_model="",
+            plan_thinking_enabled=False,
         )
         db.add(row)
         db.commit()
@@ -185,4 +191,5 @@ def resolve_plan_llm_config(db: Session, user_id: int) -> PlanLlmConfig:
         "api_url": api_url,
         "model": model,
         "keys": keys,
+        "thinking_enabled": bool(getattr(row, "plan_thinking_enabled", False)),
     }

@@ -90,7 +90,14 @@
           <option value="{{ value }}" {% if value == plan_llm_preset %}selected{% endif %}>{{ label }}</option>
           {% endfor %}
         </select>
-        <p class="hint">官方填 DeepSeek Key；OpenCode Go 填 Zen/Go Key；小米 MiMo 填 MiMo API Key</p>
+        <p class="hint">官方填 DeepSeek Key；OpenCode Go 填 Zen/Go Key；小米 MiMo 填 MiMo API Key；智谱 GLM 填智谱 API Key</p>
+      </div>
+      <div class="wide">
+        <label class="lbl" for="plan_thinking_enabled">深度思考模式（Thinking）</label>
+        <div class="form-check form-switch m-0">
+          <input class="form-check-input" id="plan_thinking_enabled" type="checkbox" role="switch" name="plan_thinking_enabled" value="y"{% if plan_thinking_enabled %} checked{% endif %}>
+        </div>
+        <p class="hint">默认关闭以大幅提速；开启后模型输出完整思维链。注：智谱 GLM-5.3-Flash 为始终思考模型，不受开关限制</p>
       </div>
       <div class="wide">
         <label class="lbl" for="deepseek_keys">策划 API Keys（逗号分隔）</label>

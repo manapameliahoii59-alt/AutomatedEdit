@@ -921,18 +921,21 @@ def _api_error_hint(api_error: str | None) -> str:
     return ""
 
 
-def _thinking_params(provider_key: str, model_name: str) -> dict:
-    """thinking 参数策略：默认关闭以提速（全通道统一）。
-
-    例外：智谱 GLM-5.x 为始终思考模型，不支持 disabled（HTTP 400 code=1210），
-    须显式 enabled 并用 reasoning_effort 压到 low 档；
-    智谱旧型号（如 glm-4.7-flash）支持关闭，维持默认。
+def _thinking_params(
+    provider_key: str, model_name: str, thinking_enabled: bool = False
+) -> dict:
+    """thinking 参数策略：
+    - 智谱 GLM-5.x 为始终思考模型，不支持 disabled（HTTP 400 code=1210），
+      须显式 enabled 并用 reasoning_effort 压到 low 档；
+    - 其余模型按用户开关控制：开启则 enabled，未开启则 disabled（默认关闭以提速）。
     """
     if provider_key == "zhipu" and str(model_name).strip().lower().startswith("glm-5"):
         return {
             "thinking": dict(ZHIPU_THINKING),
             "reasoning_effort": ZHIPU_REASONING_EFFORT,
         }
+    if thinking_enabled:
+        return {"thinking": {"type": "enabled"}}
     return {"thinking": {"type": "disabled"}}
 
 
@@ -949,6 +952,7 @@ def _call_deepseek(
     plan_mode: str = "long",
     provider: str = "deepseek",
     llm_session_id: str = "",
+    thinking_enabled: bool = False,
 ) -> tuple[str | None, float, str | None]:
     api_key = key_pool.get()
     t0 = time.perf_counter()
@@ -980,8 +984,12 @@ def _call_deepseek(
             "response_format": {"type": "json_object"},
             "max_tokens": MAX_OUTPUT_TOKENS,
         }
-        # thinking 策略：默认关闭提速；始终思考模型显式开启并压低档位
-        payload.update(_thinking_params(provider_key, model_name))
+        # thinking 策略：默认关闭提速；按开关控制开启/关闭，始终思考模型强制开启
+        payload.update(
+            _thinking_params(
+                provider_key, model_name, thinking_enabled=thinking_enabled
+            )
+        )
         with httpx.Client(timeout=httpx.Timeout(30.0, read=180.0)) as client:
             resp = client.post(api_url, headers=headers, json=payload)
         elapsed = time.perf_counter() - t0
@@ -1021,6 +1029,7 @@ def run_plan(
     plan_mode: str | None = None,
     provider: str = "deepseek",
     llm_session_id: str = "",
+    thinking_enabled: bool = False,
 ) -> list[dict]:
     if not api_keys_raw.strip():
         raise ValueError("服务端未配置策划 API 密钥")
@@ -1142,6 +1151,7 @@ def run_plan(
                 plan_mode=mode,
                 provider=llm_provider,
                 llm_session_id=session_id,
+                thinking_enabled=thinking_enabled,
             )
             if api_error or not raw_res:
                 last_api_error = api_error or "模型响应内容为空"
