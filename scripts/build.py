@@ -523,6 +523,7 @@ def _ae_ensure_critical_asr_models():
     _log = os.path.join(os.path.dirname(os.path.dirname(__file__)), "funasr_import_debug.log")
     for _name in (
         "funasr.utils.load_utils",
+        "funasr.models.sense_voice.model",
         "funasr.models.paraformer.model",
         "funasr.models.bicif_paraformer.model",
     ):
