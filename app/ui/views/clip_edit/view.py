@@ -82,7 +82,9 @@ from app.data.services.drama_folder_service import (
     scan_drama_folder,
 )
 from app.data.services.render_service import (
+    AMF_PRESET_CHOICES,
     NVENC_PRESET_CHOICES,
+    QSV_PRESET_CHOICES,
     RESOLUTION_CHOICES,
     X264_PRESET_CHOICES,
     RenderService,
@@ -548,12 +550,30 @@ class ClipEditPage(ScrollArea):
     def _open_encode_settings(self):
         dlg = QDialog(self.window())
         dlg.setWindowTitle("编码设置")
-        dlg.setMinimumWidth(420)
+        dlg.setMinimumWidth(460)
         layout = QVBoxLayout(dlg)
 
+        info = RenderService.detect_active_encoder()
+        if info.codec_name == "h264_amf":
+            gpu_row_label = "GPU 编码档位 (AMD AMF)："
+            gpu_choices = AMF_PRESET_CHOICES
+            gpu_config = cfg.encode_amf_preset
+            gpu_normalize = RenderService.normalize_amf_preset
+        elif info.codec_name == "h264_qsv":
+            gpu_row_label = "GPU 编码档位 (Intel QSV)："
+            gpu_choices = QSV_PRESET_CHOICES
+            gpu_config = cfg.encode_qsv_preset
+            gpu_normalize = RenderService.normalize_qsv_preset
+        else:
+            gpu_row_label = "GPU 编码档位 (NVENC)："
+            gpu_choices = NVENC_PRESET_CHOICES
+            gpu_config = cfg.encode_nvenc_preset
+            gpu_normalize = RenderService.normalize_nvenc_preset
+
+        gpu_state = "" if info.is_gpu else "（当前未检测到可用显卡，GPU 档位暂不生效）"
         tip = QLabel(
-            "档位越快通常画质略降。默认：GPU p5、CPU superfast。\n"
-            "更改后新渲染会按新档位重建缓存；旧缓存不会自动删除。",
+            f"当前生效编码器：{info.vendor_label}{gpu_state}\n"
+            "档位越快通常画质略降。更改后新渲染会按新档位重建缓存；旧缓存不会自动删除。",
             dlg,
         )
         tip.setWordWrap(True)
@@ -561,11 +581,9 @@ class ClipEditPage(ScrollArea):
 
         form = QFormLayout()
         gpu_combo = QComboBox(dlg)
-        for value, label in NVENC_PRESET_CHOICES:
+        for value, label in gpu_choices:
             gpu_combo.addItem(label, value)
-        cur_gpu = RenderService.normalize_nvenc_preset(
-            str(cfg.encode_nvenc_preset.value)
-        )
+        cur_gpu = gpu_normalize(str(gpu_config.value))
         gpu_idx = gpu_combo.findData(cur_gpu)
         if gpu_idx >= 0:
             gpu_combo.setCurrentIndex(gpu_idx)
@@ -580,7 +598,7 @@ class ClipEditPage(ScrollArea):
         if cpu_idx >= 0:
             cpu_combo.setCurrentIndex(cpu_idx)
 
-        form.addRow("GPU 编码档位 (NVENC)：", gpu_combo)
+        form.addRow(gpu_row_label, gpu_combo)
         form.addRow("CPU 编码档位 (libx264)：", cpu_combo)
         layout.addLayout(form)
 
@@ -595,7 +613,7 @@ class ClipEditPage(ScrollArea):
         if dlg.exec() != QDialog.DialogCode.Accepted:
             return
 
-        qconfig.set(cfg.encode_nvenc_preset, str(gpu_combo.currentData()))
+        qconfig.set(gpu_config, str(gpu_combo.currentData()))
         qconfig.set(cfg.encode_x264_preset, str(cpu_combo.currentData()))
         show_toast(
             self,
@@ -909,6 +927,8 @@ class ClipEditPage(ScrollArea):
             RenderService.clear_encoder_cache()
         enabled = dlg.result_trim_ep1_continued()
         qconfig.set(cfg.clip_trim_ep1_continued, enabled)
+        bake_png = dlg.result_overlay_bake_png()
+        qconfig.set(cfg.clip_overlay_bake_png, bake_png)
         auto_select = dlg.result_auto_select_after_import()
         qconfig.set(cfg.clip_auto_select_after_import, auto_select)
         resolution = dlg.result_resolution()
@@ -917,7 +937,7 @@ class ClipEditPage(ScrollArea):
         resolution_label = dict(RESOLUTION_CHOICES).get(resolution, resolution)
         show_toast(
             self,
-            f"显卡加速检测：{'开' if enable_gpu else '关'} · 导入后自动全选：{'开' if auto_select else '关'} · 去掉未完待续：{'开' if enabled else '关'} · 成片分辨率：{resolution_label}",
+            f"显卡加速检测：{'开' if enable_gpu else '关'} · 导入后自动全选：{'开' if auto_select else '关'} · 去掉未完待续：{'开' if enabled else '关'} · 叠字预渲染：{'开' if bake_png else '关'} · 成片分辨率：{resolution_label}",
             title="设置",
         )
 

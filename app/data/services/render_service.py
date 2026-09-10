@@ -1,3 +1,4 @@
+import hashlib
 import os
 import re
 import shutil
@@ -26,6 +27,9 @@ SCENE_SCAN_RADIUS = 3.0
 # 吸附不得早于台词结束点，否则最后一句话会被剪到一半
 CUT_SPEECH_PAD_SECONDS = 0.3
 
+# 阶段C：drawtext 层数超过该阈值（辉光类）才预渲为 PNG；纯文字保持 drawtext 原样
+OVERLAY_BAKE_MIN_LAYERS = 4
+
 # NVENC: p1 最慢最好 → p7 最快；默认 p5
 NVENC_PRESET_CHOICES: tuple[tuple[str, str], ...] = (
     ("p1", "p1（最慢/画质最好）"),
@@ -49,6 +53,24 @@ _DEFAULT_NVENC_PRESET = "p5"
 _DEFAULT_X264_PRESET = "superfast"
 _NVENC_PRESET_SET = {k for k, _ in NVENC_PRESET_CHOICES}
 _X264_PRESET_SET = {k for k, _ in X264_PRESET_CHOICES}
+
+# h264_amf: speed 最快 → quality 更慢更好；默认 speed（保持历史行为）
+AMF_PRESET_CHOICES: tuple[tuple[str, str], ...] = (
+    ("speed", "speed（默认/最快）"),
+    ("balanced", "balanced（平衡）"),
+    ("quality", "quality（更慢/更好）"),
+)
+# h264_qsv: veryfast 最快 → medium 更慢更好；默认 veryfast（保持历史行为）
+QSV_PRESET_CHOICES: tuple[tuple[str, str], ...] = (
+    ("veryfast", "veryfast（默认/最快）"),
+    ("faster", "faster"),
+    ("fast", "fast"),
+    ("medium", "medium（更慢/更好）"),
+)
+_DEFAULT_AMF_PRESET = "speed"
+_DEFAULT_QSV_PRESET = "veryfast"
+_AMF_PRESET_SET = {k for k, _ in AMF_PRESET_CHOICES}
+_QSV_PRESET_SET = {k for k, _ in QSV_PRESET_CHOICES}
 
 # 成片分辨率：720p / 1080p / source（跟随原片）
 RESOLUTION_CHOICES: tuple[tuple[str, str], ...] = (
@@ -159,6 +181,12 @@ class RenderContext:
     probe_cache: dict[str, float | bool] = field(default_factory=dict)
     scene_cache: dict = field(default_factory=dict)
     continued_card_hits: dict[str, bool] = field(default_factory=dict)
+    # 阶段B：跨方案共享的「公共前缀」缓存（key -> 已编码文件路径）
+    prefix_cache: dict = field(default_factory=dict)
+    # 使用次数 >= 2 的公共前缀 key 集合；非空时才启用前缀复用
+    prefix_keys: set = field(default_factory=set)
+    # 本次渲染的临时目录，用于存放公共前缀/尾部片段
+    prefix_dir: str = ""
 
 
 class RenderService:
@@ -168,6 +196,16 @@ class RenderService:
     def clear_encoder_cache(cls) -> None:
         """清空显卡硬件探测缓存（供设置变更或测试隔离使用）。"""
         cls._cached_hardware_encoder = None
+
+    @staticmethod
+    def detect_active_encoder() -> HardwareEncoderInfo:
+        """探测当前生效的编码器（供设置界面展示对应档位）。失败回退 CPU。"""
+        try:
+            from app.common.ffmpeg_paths import resolve_ffmpeg
+
+            return RenderService._detect_best_encoder(resolve_ffmpeg())
+        except Exception:
+            return HardwareEncoderInfo("libx264", "CPU(libx264)", is_gpu=False)
 
     @staticmethod
     def benchmark_encode_speed(
@@ -237,6 +275,7 @@ class RenderService:
                 use_gpu=use_gpu,
                 enc_v=best_enc.codec_name if use_gpu else "libx264",
             )
+            ctx.prefix_keys = RenderService._reusable_prefix_keys(plans)
             cache_jobs = len(episodes) * len(speeds_t)
             compose_jobs = len(plans)
             total_jobs = cache_jobs + compose_jobs
@@ -281,39 +320,45 @@ class RenderService:
             # --- 成片合成 ---
             t_compose0 = time.perf_counter()
             success = 0
-            for i, plan in enumerate(plans):
-                if should_cancel and should_cancel():
-                    raise RenderCancelled("渲染已取消")
-                done += 1
-                title = f"bench-{i + 1:02d}"
-                if progress_callback:
-                    progress_callback(
-                        {
-                            "phase": "bench_compose",
-                            "label": label,
-                            "current": done,
-                            "total": total_jobs,
-                        }
+            prefix_dir_ctx = tempfile.TemporaryDirectory(prefix="ae_bench_prefix_")
+            try:
+                if ctx.prefix_keys:
+                    ctx.prefix_dir = prefix_dir_ctx.name
+                for i, plan in enumerate(plans):
+                    if should_cancel and should_cancel():
+                        raise RenderCancelled("渲染已取消")
+                    done += 1
+                    title = f"bench-{i + 1:02d}"
+                    if progress_callback:
+                        progress_callback(
+                            {
+                                "phase": "bench_compose",
+                                "label": label,
+                                "current": done,
+                                "total": total_jobs,
+                            }
+                        )
+                    _safe_print(
+                        f"[bench][{label}] 合成 {i + 1}/{len(plans)}: {title}",
+                        flush=True,
                     )
-                _safe_print(
-                    f"[bench][{label}] 合成 {i + 1}/{len(plans)}: {title}",
-                    flush=True,
-                )
-                res = RenderService._render_single(
-                    ffmpeg,
-                    ffprobe,
-                    output_dir,
-                    plan,
-                    project.name,
-                    title,
-                    ctx,
-                    should_cancel=should_cancel,
-                )
-                ok = res[0] if isinstance(res, tuple) else bool(res)
-                if ok:
-                    success += 1
-                elif should_cancel and should_cancel():
-                    raise RenderCancelled("渲染已取消")
+                    res = RenderService._render_single(
+                        ffmpeg,
+                        ffprobe,
+                        output_dir,
+                        plan,
+                        project.name,
+                        title,
+                        ctx,
+                        should_cancel=should_cancel,
+                    )
+                    ok = res[0] if isinstance(res, tuple) else bool(res)
+                    if ok:
+                        success += 1
+                    elif should_cancel and should_cancel():
+                        raise RenderCancelled("渲染已取消")
+            finally:
+                prefix_dir_ctx.cleanup()
             compose_sec = time.perf_counter() - t_compose0
             total_sec = time.perf_counter() - t_all
             _safe_print(
@@ -477,6 +522,12 @@ class RenderService:
         total = len(plans)
         success_count = 0
         total_video_sec = 0.0
+        ctx.prefix_keys = RenderService._reusable_prefix_keys(plans)
+        if ctx.prefix_keys:
+            _safe_print(
+                f"   ♻️ 检测到 {len(ctx.prefix_keys)} 组可复用公共前缀（完整集），将只编码一次",
+                flush=True,
+            )
         _safe_print(
             f"\n🎬 开始渲染 《{project.name}》：共 {total} 条 -> {output_dir}",
             flush=True,
@@ -484,47 +535,53 @@ class RenderService:
         if progress_callback:
             progress_callback({"phase": "render", "current": 0, "total": total})
 
-        for i, plan in enumerate(plans):
-            if should_cancel and should_cancel():
-                raise RenderCancelled("渲染已取消")
-            output_title = build_clip_export_filename(project.name, i + 1)
-            if progress_callback:
-                progress_callback(
-                    {
-                        "phase": "render",
-                        "current": i + 1,
-                        "total": total,
-                    }
-                )
-            _safe_print(f"   [进度 {i+1}/{total}] 渲染: {output_title}", flush=True)
-            t_single0 = time.perf_counter()
-            res = RenderService._render_single(
-                ffmpeg,
-                ffprobe,
-                output_dir,
-                plan,
-                project.name,
-                output_title,
-                ctx,
-                **ffmpeg_kwargs,
-            )
-            ok = res[0] if isinstance(res, tuple) else bool(res)
-            duration = res[1] if isinstance(res, tuple) and len(res) > 1 else 0.0
-            single_sec = time.perf_counter() - t_single0
-            if not ok:
+        prefix_dir_ctx = tempfile.TemporaryDirectory(prefix="ae_prefix_")
+        try:
+            if ctx.prefix_keys:
+                ctx.prefix_dir = prefix_dir_ctx.name
+            for i, plan in enumerate(plans):
                 if should_cancel and should_cancel():
                     raise RenderCancelled("渲染已取消")
-                _safe_print(f"   [进度 {i+1}/{total}] ❌ 失败/跳过: {output_title} (耗时 {single_sec:.1f}s)", flush=True)
-                continue
-            success_count += 1
-            total_video_sec += duration
-            single_speed = (duration / single_sec) if single_sec > 0.05 and duration > 0 else 0.0
-            speed_str = f"{single_speed:.1f}x" if single_speed > 0 else "-"
-            _safe_print(
-                f"   [进度 {i+1}/{total}] ✅ 完成: {output_title} "
-                f"(耗时 {single_sec:.1f}s | 片长 {duration:.1f}s | 速度 {speed_str})",
-                flush=True,
-            )
+                output_title = build_clip_export_filename(project.name, i + 1)
+                if progress_callback:
+                    progress_callback(
+                        {
+                            "phase": "render",
+                            "current": i + 1,
+                            "total": total,
+                        }
+                    )
+                _safe_print(f"   [进度 {i+1}/{total}] 渲染: {output_title}", flush=True)
+                t_single0 = time.perf_counter()
+                res = RenderService._render_single(
+                    ffmpeg,
+                    ffprobe,
+                    output_dir,
+                    plan,
+                    project.name,
+                    output_title,
+                    ctx,
+                    **ffmpeg_kwargs,
+                )
+                ok = res[0] if isinstance(res, tuple) else bool(res)
+                duration = res[1] if isinstance(res, tuple) and len(res) > 1 else 0.0
+                single_sec = time.perf_counter() - t_single0
+                if not ok:
+                    if should_cancel and should_cancel():
+                        raise RenderCancelled("渲染已取消")
+                    _safe_print(f"   [进度 {i+1}/{total}] ❌ 失败/跳过: {output_title} (耗时 {single_sec:.1f}s)", flush=True)
+                    continue
+                success_count += 1
+                total_video_sec += duration
+                single_speed = (duration / single_sec) if single_sec > 0.05 and duration > 0 else 0.0
+                speed_str = f"{single_speed:.1f}x" if single_speed > 0 else "-"
+                _safe_print(
+                    f"   [进度 {i+1}/{total}] ✅ 完成: {output_title} "
+                    f"(耗时 {single_sec:.1f}s | 片长 {duration:.1f}s | 速度 {speed_str})",
+                    flush=True,
+                )
+        finally:
+            prefix_dir_ctx.cleanup()
 
         total_sec = time.perf_counter() - t0
         compose_sec = max(0.0, total_sec - cache_sec)
@@ -695,6 +752,31 @@ class RenderService:
             segments.append(ClipSegment(ep, start, None))
         segments.append(ClipSegment(last_episode, 0.0, cut_point))
         return segments
+
+    @staticmethod
+    def _prefix_key(config: dict, speed: float) -> tuple | None:
+        """公共前缀标识：完整集列表 + 首集入点 + 倍速。无完整集则无前缀。"""
+        full = tuple(config.get("full_episodes") or [])
+        if not full:
+            return None
+        return (
+            full,
+            float(config.get("first_episode_cut_start", 0) or 0),
+            float(speed),
+        )
+
+    @staticmethod
+    def _reusable_prefix_keys(plans: list) -> set:
+        """统计各公共前缀使用次数，返回使用 >= 2 次的前缀 key（值得只编一次）。"""
+        counts: dict[tuple, int] = {}
+        for plan in plans:
+            config = plan.get("files_config") or {}
+            key = RenderService._prefix_key(
+                config, float(plan.get("global_speed", 1.0))
+            )
+            if key is not None:
+                counts[key] = counts.get(key, 0) + 1
+        return {key for key, n in counts.items() if n >= 2}
 
     @staticmethod
     def _trim_first_episode_continued_card(
@@ -1278,6 +1360,16 @@ class RenderService:
         return v if v in _X264_PRESET_SET else _DEFAULT_X264_PRESET
 
     @staticmethod
+    def normalize_amf_preset(value: str | None) -> str:
+        v = (value or _DEFAULT_AMF_PRESET).strip().lower()
+        return v if v in _AMF_PRESET_SET else _DEFAULT_AMF_PRESET
+
+    @staticmethod
+    def normalize_qsv_preset(value: str | None) -> str:
+        v = (value or _DEFAULT_QSV_PRESET).strip().lower()
+        return v if v in _QSV_PRESET_SET else _DEFAULT_QSV_PRESET
+
+    @staticmethod
     def normalize_render_resolution(value: str | None) -> str:
         v = (value or _DEFAULT_RESOLUTION).strip().lower()
         return v if v in _RESOLUTION_SET else _DEFAULT_RESOLUTION
@@ -1340,12 +1432,24 @@ class RenderService:
         return RenderService.normalize_x264_preset(str(cfg.encode_x264_preset.value))
 
     @staticmethod
+    def _configured_amf_preset() -> str:
+        from app.common.config import cfg
+
+        return RenderService.normalize_amf_preset(str(cfg.encode_amf_preset.value))
+
+    @staticmethod
+    def _configured_qsv_preset() -> str:
+        from app.common.config import cfg
+
+        return RenderService.normalize_qsv_preset(str(cfg.encode_qsv_preset.value))
+
+    @staticmethod
     def _cache_enc_tag(use_gpu: bool, codec: str = "") -> str:
         if use_gpu:
             if codec == "h264_amf":
-                return "amfspeed"
+                return f"amf{RenderService._configured_amf_preset()}"
             if codec == "h264_qsv":
-                return "qsvveryfast"
+                return f"qsv{RenderService._configured_qsv_preset()}"
             return f"nvenc{RenderService._configured_nvenc_preset()}"
         return f"x264{RenderService._configured_x264_preset()}"
 
@@ -1356,9 +1460,11 @@ class RenderService:
             return ["-c:v", "libx264", "-preset", preset, "-crf", "22"]
         c = codec or "h264_nvenc"
         if c == "h264_amf":
-            return ["-c:v", "h264_amf", "-quality", "speed", "-rc", "cqp", "-qp_i", "24", "-qp_p", "24"]
+            preset = RenderService._configured_amf_preset()
+            return ["-c:v", "h264_amf", "-quality", preset, "-rc", "cqp", "-qp_i", "24", "-qp_p", "24"]
         if c == "h264_qsv":
-            return ["-c:v", "h264_qsv", "-preset", "veryfast", "-global_quality", "24"]
+            preset = RenderService._configured_qsv_preset()
+            return ["-c:v", "h264_qsv", "-preset", preset, "-global_quality", "24"]
         preset = RenderService._configured_nvenc_preset()
         return ["-c:v", "h264_nvenc", "-preset", preset, "-cq", "24"]
 
@@ -1373,6 +1479,350 @@ class RenderService:
             v_trim = f"trim=start={start_c:.3f}:end={end_c:.3f},setpts=PTS-STARTPTS"
             a_trim = f"atrim=start={start_c:.3f}:end={end_c:.3f},asetpts=PTS-STARTPTS"
         return v_trim, a_trim
+
+    @staticmethod
+    def _overlay_bake_enabled() -> bool:
+        from app.common.config import cfg
+
+        try:
+            return bool(getattr(cfg.clip_overlay_bake_png, "value", True))
+        except Exception:
+            return True
+
+    @staticmethod
+    def _bake_drawtext_overlay_png(
+        ffmpeg,
+        ctx: RenderContext,
+        drawtext_filters: list[str],
+        cache_dir: str,
+        ffmpeg_kwargs: dict,
+    ) -> str | None:
+        """把整串 drawtext（含辉光）预渲成一张全画布透明 PNG。
+
+        用同一 ffmpeg drawtext 引擎渲一次，渲染时只用一次 overlay，
+        把几十层辉光 drawtext 的逐帧开销降为 1 次叠加；画质与直接 drawtext 一致。
+        """
+        if not drawtext_filters:
+            return None
+        key_src = "|".join([f"{ctx.target_w}x{ctx.target_h}", *drawtext_filters])
+        digest = hashlib.sha1(key_src.encode("utf-8")).hexdigest()[:16]
+        out_path = os.path.join(cache_dir, f"overlay_{digest}.png")
+        if os.path.isfile(out_path) and os.path.getsize(out_path) > 0:
+            return out_path
+
+        cmd = [
+            ffmpeg,
+            "-y",
+            "-f",
+            "lavfi",
+            "-i",
+            f"color=c=black@0.0:s={ctx.target_w}x{ctx.target_h},format=rgba",
+            "-vf",
+            ",".join(drawtext_filters),
+            "-frames:v",
+            "1",
+            "-pix_fmt",
+            "rgba",
+            out_path,
+        ]
+        ok, err = RenderService._run_ffmpeg(cmd, "叠字预渲染PNG", **ffmpeg_kwargs)
+        if not ok or not (os.path.isfile(out_path) and os.path.getsize(out_path) > 0):
+            _safe_print(f"   ⚠️ 叠字预渲染失败，改用 drawtext: {err}", flush=True)
+            if os.path.exists(out_path):
+                try:
+                    os.remove(out_path)
+                except OSError:
+                    pass
+            return None
+        return out_path
+
+    @staticmethod
+    def _build_compose_graph(
+        segments: list[ClipSegment],
+        speed: float,
+        ctx: RenderContext,
+        overlay_filters: list[str],
+        image_overlays: list[dict],
+        has_outro: bool,
+    ) -> str:
+        """构建「片段拼接(+可选片尾) + 静态叠字」滤镜图。
+
+        has_outro=False 时用于只含完整集的公共前缀；True 时用于整段或尾部+片尾。
+        """
+        filter_parts: list[str] = []
+        n_main = len(segments)
+        for i, segment in enumerate(segments):
+            v_trim, a_trim = RenderService._build_trim_filters(segment, speed)
+            filter_parts.append(f"[{i}:v]{v_trim}[v{i}];[{i}:a]{a_trim}[a{i}];")
+
+        main_va = "".join(f"[v{i}][a{i}]" for i in range(n_main))
+        has_overlay = bool(overlay_filters or image_overlays)
+
+        if has_outro:
+            v_outro = (
+                f"scale={ctx.target_w}:{ctx.target_h}:force_original_aspect_ratio=decrease,"
+                f"pad={ctx.target_w}:{ctx.target_h}:(ow-iw)/2:(oh-ih)/2:black,"
+                f"setsar=1"
+            )
+            a_outro = "aresample=44100,aformat=channel_layouts=stereo"
+            outro_idx = n_main
+            filter_parts.append(f"[{outro_idx}:v]{v_outro}[vo];")
+            filter_parts.append(f"[{outro_idx}:a]{a_outro}[ao];")
+
+        if has_overlay:
+            if n_main == 1:
+                cur, audio_tag = "[v0]", "[a0]"
+            else:
+                filter_parts.append(f"{main_va}concat=n={n_main}:v=1:a=1[vm0][am];")
+                cur, audio_tag = "[vm0]", "[am]"
+
+            remaining = (1 if overlay_filters else 0) + len(image_overlays)
+            step = 0
+            if overlay_filters:
+                remaining -= 1
+                out = "[vm]" if remaining == 0 else f"[od{step}]"
+                filter_parts.append(f"{cur}{','.join(overlay_filters)}{out};")
+                cur = out
+                step += 1
+
+            img_base_idx = n_main + (1 if has_outro else 0)
+            for i, spec in enumerate(image_overlays):
+                remaining -= 1
+                in_tag = f"[{img_base_idx + i}:v]"
+                out = "[vm]" if remaining == 0 else f"[od{step}]"
+                filter_parts.append(
+                    f"{cur}{in_tag}overlay=x={spec['x_expr']}:y={spec['y_expr']}:shortest=1{out};"
+                )
+                cur = out
+                step += 1
+
+            if has_outro:
+                filter_parts.append(f"[vm]{audio_tag}[vo][ao]concat=n=2:v=1:a=1[v][a]")
+            else:
+                filter_parts.append(f"[vm]null[v];{audio_tag}anull[a]")
+        elif has_outro:
+            filter_parts.append(f"{main_va}[vo][ao]concat=n={n_main + 1}:v=1:a=1[v][a]")
+        elif n_main == 1:
+            filter_parts.append("[v0]null[v];[a0]anull[a]")
+        else:
+            filter_parts.append(f"{main_va}concat=n={n_main}:v=1:a=1[v][a]")
+        return "".join(filter_parts)
+
+    @staticmethod
+    def _render_segments_output(
+        ffmpeg,
+        ffprobe,
+        ctx: RenderContext,
+        segments: list[ClipSegment],
+        input_paths: list[str],
+        speed: float,
+        outro_path: str | None,
+        overlay_filters: list[str],
+        image_overlays: list[dict],
+        output_path: str,
+        desc: str,
+        ffmpeg_kwargs: dict,
+    ) -> tuple[bool, str]:
+        """把若干片段(+可选片尾)与叠字合成到 output_path；GPU 失败自动回退 CPU。"""
+        graph = RenderService._build_compose_graph(
+            segments,
+            speed,
+            ctx,
+            overlay_filters,
+            image_overlays,
+            has_outro=outro_path is not None,
+        )
+        base_cmd = [ffmpeg, "-y"]
+        for p in input_paths:
+            base_cmd.extend(["-i", p])
+        if outro_path:
+            base_cmd.extend(["-i", outro_path])
+        for spec in image_overlays:
+            base_cmd.extend(["-loop", "1", "-i", spec["path"]])
+        map_tail = ["-map", "[v]", "-map", "[a]"]
+        gpu_codec = ctx.enc_v if ctx.use_gpu else None
+        success, err = RenderService._run_ffmpeg_with_filter_complex(
+            base_cmd,
+            graph,
+            [
+                *map_tail,
+                *RenderService._video_encode_args(use_gpu=ctx.use_gpu, codec=gpu_codec),
+                "-c:a",
+                "aac",
+                "-b:a",
+                "192k",
+                output_path,
+            ],
+            desc,
+            **ffmpeg_kwargs,
+        )
+        if not success and ctx.use_gpu:
+            if os.path.exists(output_path):
+                try:
+                    os.remove(output_path)
+                except OSError:
+                    pass
+            success, err = RenderService._run_ffmpeg_with_filter_complex(
+                base_cmd,
+                graph,
+                [
+                    *map_tail,
+                    *RenderService._video_encode_args(use_gpu=False),
+                    "-c:a",
+                    "aac",
+                    "-b:a",
+                    "192k",
+                    output_path,
+                ],
+                f"{desc}(CPU回退)",
+                **ffmpeg_kwargs,
+            )
+        return success, err
+
+    @staticmethod
+    def _try_prefix_compose(
+        ffmpeg,
+        ffprobe,
+        ctx: RenderContext,
+        speed: float,
+        prefix_segments: list[ClipSegment],
+        prefix_inputs: list[str],
+        tail_segments: list[ClipSegment],
+        tail_inputs: list[str],
+        outro_path: str | None,
+        overlay_filters: list[str],
+        image_overlays: list[dict],
+        output_path: str,
+        prefix_key: tuple,
+        ffmpeg_kwargs: dict,
+    ) -> tuple[bool, float]:
+        """公共前缀只编一次，各方案仅编「尾部+片尾」再做流拷贝拼接。
+
+        任一步失败/产物无效则返回 (False, 0.0)，由调用方回退整段合成。
+        """
+        prefix_path = ctx.prefix_cache.get(prefix_key)
+        if not (
+            prefix_path
+            and os.path.isfile(prefix_path)
+            and RenderService._validate_output(ffprobe, prefix_path, ctx.probe_cache)
+        ):
+            prefix_path = os.path.join(
+                ctx.prefix_dir, f"prefix_{len(ctx.prefix_cache)}.mp4"
+            )
+            ok, err = RenderService._render_segments_output(
+                ffmpeg,
+                ffprobe,
+                ctx,
+                prefix_segments,
+                prefix_inputs,
+                speed,
+                None,
+                overlay_filters,
+                image_overlays,
+                prefix_path,
+                "公共前缀合成",
+                ffmpeg_kwargs,
+            )
+            if not ok or not RenderService._validate_output(
+                ffprobe, prefix_path, ctx.probe_cache
+            ):
+                _safe_print(f"   ⚠️ 公共前缀渲染失败，回退整段合成: {err}", flush=True)
+                if os.path.exists(prefix_path):
+                    try:
+                        os.remove(prefix_path)
+                    except OSError:
+                        pass
+                return False, 0.0
+            ctx.prefix_cache[prefix_key] = prefix_path
+
+        fd, suffix_path = tempfile.mkstemp(
+            prefix="ae_suffix_", suffix=".mp4", dir=ctx.prefix_dir
+        )
+        os.close(fd)
+        list_path = suffix_path + ".txt"
+        try:
+            ok, err = RenderService._render_segments_output(
+                ffmpeg,
+                ffprobe,
+                ctx,
+                tail_segments,
+                tail_inputs,
+                speed,
+                outro_path,
+                overlay_filters,
+                image_overlays,
+                suffix_path,
+                "尾部+片尾合成",
+                ffmpeg_kwargs,
+            )
+            if not ok:
+                _safe_print(f"   ⚠️ 尾部合成失败，回退整段合成: {err}", flush=True)
+                return False, 0.0
+
+            expected_dur = (
+                RenderService._probe_duration(ffprobe, prefix_path, ctx.probe_cache)
+                + RenderService._probe_duration(ffprobe, suffix_path, ctx.probe_cache)
+            )
+
+            with open(list_path, "w", encoding="utf-8", newline="\n") as f:
+                f.write(f"file '{prefix_path.replace(os.sep, '/')}'\n")
+                f.write(f"file '{suffix_path.replace(os.sep, '/')}'\n")
+            ok, err = RenderService._run_ffmpeg(
+                [
+                    ffmpeg,
+                    "-y",
+                    "-f",
+                    "concat",
+                    "-safe",
+                    "0",
+                    "-i",
+                    list_path,
+                    "-c",
+                    "copy",
+                    output_path,
+                ],
+                "拼接公共前缀+尾部",
+                **ffmpeg_kwargs,
+            )
+            if not ok:
+                _safe_print(f"   ⚠️ 流拷贝拼接失败，回退整段合成: {err}", flush=True)
+                if os.path.exists(output_path):
+                    try:
+                        os.remove(output_path)
+                    except OSError:
+                        pass
+                return False, 0.0
+            if not RenderService._validate_output(ffprobe, output_path, ctx.probe_cache):
+                _safe_print("   ⚠️ 拼接产物无效，回退整段合成", flush=True)
+                if os.path.exists(output_path):
+                    try:
+                        os.remove(output_path)
+                    except OSError:
+                        pass
+                return False, 0.0
+            duration = RenderService._probe_duration(
+                ffprobe, output_path, ctx.probe_cache
+            )
+            # 防流拷贝静默截断：成片时长应与前缀+尾部之和基本一致
+            if expected_dur > 0 and duration < expected_dur * 0.8:
+                _safe_print(
+                    f"   ⚠️ 拼接成片疑似截断（{duration:.1f}s < {expected_dur:.1f}s），回退整段合成",
+                    flush=True,
+                )
+                if os.path.exists(output_path):
+                    try:
+                        os.remove(output_path)
+                    except OSError:
+                        pass
+                return False, 0.0
+            return True, duration
+        finally:
+            for path in (suffix_path, list_path):
+                try:
+                    if os.path.exists(path):
+                        os.remove(path)
+                except OSError:
+                    pass
 
     @staticmethod
     def _render_single(
@@ -1419,25 +1869,39 @@ class RenderService:
         if cut_point != ai_cut_point:
             _safe_print(f"   切点优化: {ai_cut_point}s -> {cut_point}s")
 
-        segments = RenderService.build_segments(config, cut_point)
-        if not segments:
+        all_segments = RenderService.build_segments(config, cut_point)
+        if not all_segments:
             _safe_print("⚠️ 无效片段配置，跳过", flush=True)
             return False, 0.0
-        segments = RenderService._trim_first_episode_continued_card(
-            ffmpeg, ffprobe, ctx, segments
+
+        # 拆分「完整集公共前缀」与「末集尾部」，分别做未完待续裁剪
+        n_full = len(config.get("full_episodes") or [])
+        prefix_segments = RenderService._trim_first_episode_continued_card(
+            ffmpeg, ffprobe, ctx, all_segments[:n_full]
         )
+        tail_segments = RenderService._trim_first_episode_continued_card(
+            ffmpeg, ffprobe, ctx, all_segments[n_full:]
+        )
+        segments = prefix_segments + tail_segments
         if not segments:
             _safe_print("⚠️ 去掉未完待续后无可用片段，跳过", flush=True)
             return False, 0.0
 
-        input_paths: list[str] = []
-        for segment in segments:
-            cache_key = (segment.episode, speed)
-            cached = ctx.episode_cache.get(cache_key)
-            if not cached or not os.path.isfile(cached):
-                _safe_print(f"⚠️ 缺少缓存: {segment.episode}，跳过", flush=True)
-                return False, 0.0
-            input_paths.append(cached)
+        def _resolve_inputs(segs: list[ClipSegment]) -> list[str] | None:
+            paths: list[str] = []
+            for segment in segs:
+                cached = ctx.episode_cache.get((segment.episode, speed))
+                if not cached or not os.path.isfile(cached):
+                    _safe_print(f"⚠️ 缺少缓存: {segment.episode}，跳过", flush=True)
+                    return None
+                paths.append(cached)
+            return paths
+
+        prefix_inputs = _resolve_inputs(prefix_segments)
+        tail_inputs = _resolve_inputs(tail_segments)
+        input_paths = _resolve_inputs(segments)
+        if prefix_inputs is None or tail_inputs is None or input_paths is None:
+            return False, 0.0
 
         estimated = sum(
             RenderService._estimate_segment_duration(ffprobe, ctx, seg, speed)
@@ -1467,113 +1931,65 @@ class RenderService:
             if spec.get("path") and os.path.isfile(spec["path"])
         ]
 
-        v_outro = (
-            f"scale={ctx.target_w}:{ctx.target_h}:force_original_aspect_ratio=decrease,"
-            f"pad={ctx.target_w}:{ctx.target_h}:(ow-iw)/2:(oh-ih)/2:black,"
-            f"setsar=1"
-        )
-        a_outro = "aresample=44100,aformat=channel_layouts=stereo"
-
-        filter_parts: list[str] = []
-        n_main = len(segments)
-        for i, segment in enumerate(segments):
-            v_trim, a_trim = RenderService._build_trim_filters(segment, speed)
-            # 叠字不在每段重复挂载（发光层很多时会撑爆 Windows 命令行）
-            filter_parts.append(
-                f"[{i}:v]{v_trim}[v{i}];[{i}:a]{a_trim}[a{i}];"
+        # 阶段C：辉光等 drawtext 层数较多时，整串预渲成一张全画布 PNG，渲染只用一次 overlay
+        if (
+            len(overlay_filters) >= OVERLAY_BAKE_MIN_LAYERS
+            and RenderService._overlay_bake_enabled()
+        ):
+            baked_png = RenderService._bake_drawtext_overlay_png(
+                ffmpeg, ctx, overlay_filters, cache_dir, ffmpeg_kwargs
             )
-        outro_idx = n_main
-        filter_parts.append(f"[{outro_idx}:v]{v_outro}[vo];")
-        filter_parts.append(f"[{outro_idx}:a]{a_outro}[ao];")
-
-        main_va = "".join(f"[v{i}][a{i}]" for i in range(n_main))
-        has_overlay = bool(overlay_filters or image_overlays)
-        if has_overlay:
-            if n_main == 1:
-                cur = "[v0]"
-                audio_tag = "[a0]"
-            else:
-                filter_parts.append(
-                    f"{main_va}concat=n={n_main}:v=1:a=1[vm0][am];"
+            if baked_png:
+                image_overlays.insert(
+                    0, {"path": baked_png, "x_expr": "0", "y_expr": "0"}
                 )
-                cur = "[vm0]"
-                audio_tag = "[am]"
+                overlay_filters = []
 
-            remaining = (1 if overlay_filters else 0) + len(image_overlays)
-            step = 0
-            if overlay_filters:
-                remaining -= 1
-                out = "[vm]" if remaining == 0 else f"[od{step}]"
-                chain = ",".join(overlay_filters)
-                filter_parts.append(f"{cur}{chain}{out};")
-                cur = out
-                step += 1
-
-            img_base_idx = n_main + 1  # after outro
-            for i, spec in enumerate(image_overlays):
-                remaining -= 1
-                in_tag = f"[{img_base_idx + i}:v]"
-                out = "[vm]" if remaining == 0 else f"[od{step}]"
-                filter_parts.append(
-                    f"{cur}{in_tag}overlay=x={spec['x_expr']}:y={spec['y_expr']}:shortest=1{out};"
-                )
-                cur = out
-                step += 1
-
-            filter_parts.append(
-                f"[vm]{audio_tag}[vo][ao]concat=n=2:v=1:a=1[v][a]"
+        # 阶段B：完整集公共前缀复用——前缀只编一次，各方案仅编「尾部+片尾」再流拷贝拼接
+        prefix_key = RenderService._prefix_key(config, speed)
+        if (
+            ctx.prefix_dir
+            and prefix_key is not None
+            and prefix_key in ctx.prefix_keys
+            and prefix_segments
+            and tail_segments
+        ):
+            ok, duration = RenderService._try_prefix_compose(
+                ffmpeg,
+                ffprobe,
+                ctx,
+                speed,
+                prefix_segments,
+                prefix_inputs,
+                tail_segments,
+                tail_inputs,
+                outro_path,
+                overlay_filters,
+                image_overlays,
+                output_path,
+                prefix_key,
+                ffmpeg_kwargs,
             )
-        else:
-            filter_parts.append(
-                f"{main_va}[vo][ao]concat=n={n_main + 1}:v=1:a=1[v][a]"
-            )
-        filter_graph = "".join(filter_parts)
+            if ok:
+                return True, duration
 
-        base_cmd = [ffmpeg, "-y"]
-        for p in input_paths:
-            base_cmd.extend(["-i", p])
-        base_cmd.extend(["-i", outro_path])
-        for spec in image_overlays:
-            base_cmd.extend(["-loop", "1", "-i", spec["path"]])
-        map_tail = ["-map", "[v]", "-map", "[a]"]
+        # 整段合成（原路径 / 前缀复用的回退）
         gpu_codec = ctx.enc_v if ctx.use_gpu else None
         render_desc = f"合成渲染[{ctx.enc_v}]" if ctx.use_gpu else "合成渲染[CPU]"
-        success, err = RenderService._run_ffmpeg_with_filter_complex(
-            base_cmd,
-            filter_graph,
-            [
-                *map_tail,
-                *RenderService._video_encode_args(use_gpu=ctx.use_gpu, codec=gpu_codec),
-                "-c:a",
-                "aac",
-                "-b:a",
-                "192k",
-                output_path,
-            ],
+        success, err = RenderService._render_segments_output(
+            ffmpeg,
+            ffprobe,
+            ctx,
+            segments,
+            input_paths,
+            speed,
+            outro_path,
+            overlay_filters,
+            image_overlays,
+            output_path,
             render_desc,
-            **ffmpeg_kwargs,
+            ffmpeg_kwargs,
         )
-        if not success and ctx.use_gpu:
-            if os.path.exists(output_path):
-                try:
-                    os.remove(output_path)
-                except OSError:
-                    pass
-            success, err = RenderService._run_ffmpeg_with_filter_complex(
-                base_cmd,
-                filter_graph,
-                [
-                    *map_tail,
-                    *RenderService._video_encode_args(use_gpu=False),
-                    "-c:a",
-                    "aac",
-                    "-b:a",
-                    "192k",
-                    output_path,
-                ],
-                "合成渲染(CPU回退)",
-                **ffmpeg_kwargs,
-            )
         if not success:
             _safe_print(f"❌ 合成渲染失败: {err}", flush=True)
             return False, 0.0

@@ -39,6 +39,10 @@ class Config(MyQConfig):
     # 渲染编码档位（默认：NVENC p5 / x264 superfast）
     encode_nvenc_preset = ConfigItem("Tools", "encode_nvenc_preset", "p5")
     encode_x264_preset = ConfigItem("Tools", "encode_x264_preset", "superfast")
+    # AMD AMF 编码档位：speed / balanced / quality（默认 speed）
+    encode_amf_preset = ConfigItem("Tools", "encode_amf_preset", "speed")
+    # Intel QSV 编码档位：veryfast / faster / fast / medium（默认 veryfast）
+    encode_qsv_preset = ConfigItem("Tools", "encode_qsv_preset", "veryfast")
     # 显卡加速检测（开启后自动检测并使用 NVIDIA / AMD / Intel 硬件加速；关闭后使用 CPU 软编码）
     encode_enable_gpu = ConfigItem(
         "Tools", "encode_enable_gpu", True, BoolValidator()
@@ -50,6 +54,10 @@ class Config(MyQConfig):
     # 渲染时检测并裁掉第一集片尾「未完待续」（仅命中才裁）
     clip_trim_ep1_continued = ConfigItem(
         "Tools", "clip_trim_ep1_continued", True, BoolValidator()
+    )
+    # 叠字预渲染提速：整串 drawtext（含辉光）预渲成一张 PNG，渲染只用一次 overlay
+    clip_overlay_bake_png = ConfigItem(
+        "Tools", "clip_overlay_bake_png", True, BoolValidator()
     )
     # 自动化剪辑：导入剧目后自动全选导入数据
     clip_auto_select_after_import = ConfigItem(

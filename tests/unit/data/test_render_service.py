@@ -1,9 +1,15 @@
 import pytest
+import os
 import subprocess
 import time
 from unittest.mock import MagicMock
 
-from app.data.services.render_service import ClipSegment, RenderService, build_atempo_filter
+from app.data.services.render_service import (
+    ClipSegment,
+    RenderContext,
+    RenderService,
+    build_atempo_filter,
+)
 
 
 def test_build_atempo_filter_chains_above_2x():
@@ -398,4 +404,341 @@ class TestMultiGpuEncodeArgs:
         assert RenderService._cache_enc_tag(True, "h264_qsv") == "qsvveryfast"
         assert "nvenc" in RenderService._cache_enc_tag(True, "h264_nvenc")
         assert "x264" in RenderService._cache_enc_tag(False)
+
+
+class TestCrossVendorPresets:
+    def test_normalize_amf_preset(self):
+        assert RenderService.normalize_amf_preset(None) == "speed"
+        assert RenderService.normalize_amf_preset("Quality") == "quality"
+        assert RenderService.normalize_amf_preset("nope") == "speed"
+
+    def test_normalize_qsv_preset(self):
+        assert RenderService.normalize_qsv_preset(None) == "veryfast"
+        assert RenderService.normalize_qsv_preset("MEDIUM") == "medium"
+        assert RenderService.normalize_qsv_preset("nope") == "veryfast"
+
+    def test_amf_qsv_args_use_config(self, monkeypatch):
+        monkeypatch.setattr(
+            RenderService, "_configured_amf_preset", staticmethod(lambda: "quality")
+        )
+        monkeypatch.setattr(
+            RenderService, "_configured_qsv_preset", staticmethod(lambda: "medium")
+        )
+        assert RenderService._video_encode_args(use_gpu=True, codec="h264_amf") == [
+            "-c:v", "h264_amf", "-quality", "quality",
+            "-rc", "cqp", "-qp_i", "24", "-qp_p", "24",
+        ]
+        assert RenderService._video_encode_args(use_gpu=True, codec="h264_qsv") == [
+            "-c:v", "h264_qsv", "-preset", "medium", "-global_quality", "24",
+        ]
+
+    def test_cache_enc_tag_reflects_preset(self, monkeypatch):
+        monkeypatch.setattr(
+            RenderService, "_configured_amf_preset", staticmethod(lambda: "balanced")
+        )
+        monkeypatch.setattr(
+            RenderService, "_configured_qsv_preset", staticmethod(lambda: "fast")
+        )
+        assert RenderService._cache_enc_tag(True, "h264_amf") == "amfbalanced"
+        assert RenderService._cache_enc_tag(True, "h264_qsv") == "qsvfast"
+
+    def test_detect_active_encoder_falls_back_to_cpu_on_error(self, monkeypatch):
+        def boom(_ff):
+            raise RuntimeError("no ffmpeg")
+
+        monkeypatch.setattr(RenderService, "_detect_best_encoder", staticmethod(boom))
+        info = RenderService.detect_active_encoder()
+        assert info.codec_name == "libx264"
+        assert info.is_gpu is False
+
+
+class TestPrefixReuse:
+    def test_prefix_key_none_without_full_episodes(self):
+        assert RenderService._prefix_key({"full_episodes": []}, 1.7) is None
+        assert RenderService._prefix_key({}, 1.7) is None
+
+    def test_prefix_key_includes_full_cut_and_speed(self):
+        key = RenderService._prefix_key(
+            {"full_episodes": ["1.mp4", "2.mp4"], "first_episode_cut_start": 5}, 1.7
+        )
+        assert key == (("1.mp4", "2.mp4"), 5.0, 1.7)
+
+    def test_reusable_prefix_keys_only_counts_repeats(self):
+        def plan(full, cut=0, speed=1.7):
+            return {
+                "global_speed": speed,
+                "files_config": {
+                    "full_episodes": full,
+                    "first_episode_cut_start": cut,
+                },
+            }
+
+        keys = RenderService._reusable_prefix_keys(
+            [
+                plan(["1.mp4"]),
+                plan(["1.mp4"]),
+                plan(["2.mp4"]),
+                plan([]),
+                plan(["1.mp4"], cut=5),  # 入点不同 = 不同前缀
+                plan(["1.mp4"], speed=1.2),  # 倍速不同 = 不同前缀
+            ]
+        )
+        assert keys == {(("1.mp4",), 0.0, 1.7)}
+
+
+class TestComposeGraph:
+    @staticmethod
+    def _ctx():
+        return RenderContext(
+            project_path="p", target_w=1280, target_h=720, use_gpu=False, enc_v="libx264"
+        )
+
+    def test_prefix_graph_without_outro_concats_segments(self):
+        segs = [ClipSegment("1.mp4", 0, None), ClipSegment("2.mp4", 0, None)]
+        graph = RenderService._build_compose_graph(
+            segs, 1.7, self._ctx(), [], [], has_outro=False
+        )
+        assert "concat=n=2:v=1:a=1[v][a]" in graph
+        assert "trim=start=0.000" in graph
+
+    def test_single_prefix_segment_without_outro_avoids_concat(self):
+        segs = [ClipSegment("1.mp4", 3.0, None)]
+        graph = RenderService._build_compose_graph(
+            segs, 2.0, self._ctx(), [], [], has_outro=False
+        )
+        assert "[v0]null[v];[a0]anull[a]" in graph
+        assert "concat" not in graph
+
+    def test_outro_graph_scales_outro_and_appends(self):
+        segs = [ClipSegment("1.mp4", 0, None)]
+        graph = RenderService._build_compose_graph(
+            segs, 1.0, self._ctx(), [], [], has_outro=True
+        )
+        assert "[1:v]scale=1280:720" in graph
+        assert "concat=n=2:v=1:a=1[v][a]" in graph
+
+    def test_overlay_without_outro_passes_through_null(self):
+        segs = [ClipSegment("1.mp4", 0, None)]
+        graph = RenderService._build_compose_graph(
+            segs, 1.0, self._ctx(), ["drawtext=text='x'"], [], has_outro=False
+        )
+        assert "[vm]null[v]" in graph
+        assert "anull[a]" in graph
+
+
+class TestTryPrefixCompose:
+    def _ctx(self, tmp_path):
+        ctx = RenderContext(
+            project_path="p", target_w=1280, target_h=720, use_gpu=False, enc_v="libx264"
+        )
+        ctx.prefix_dir = str(tmp_path)
+        return ctx
+
+    def test_reuses_cached_prefix_and_stream_copies(self, monkeypatch, tmp_path):
+        ctx = self._ctx(tmp_path)
+        prefix_file = tmp_path / "prefix_cached.mp4"
+        prefix_file.write_bytes(b"x")
+        key = (("1.mp4",), 0.0, 1.0)
+        ctx.prefix_cache[key] = str(prefix_file)
+
+        calls = {"render": [], "concat": []}
+
+        def fake_render(
+            ffmpeg, ffprobe, ctx2, segments, inputs, speed,
+            outro, overlay_filters, image_overlays, out, desc, kwargs,
+        ):
+            calls["render"].append(desc)
+            with open(out, "wb") as fh:
+                fh.write(b"suffix")
+            return True, ""
+
+        def fake_run(cmd, desc, **kwargs):
+            calls["concat"].append(desc)
+            with open(cmd[-1], "wb") as fh:
+                fh.write(b"final")
+            return True, ""
+
+        monkeypatch.setattr(
+            RenderService, "_render_segments_output", staticmethod(fake_render)
+        )
+        monkeypatch.setattr(RenderService, "_run_ffmpeg", staticmethod(fake_run))
+        monkeypatch.setattr(
+            RenderService, "_validate_output", staticmethod(lambda *a, **k: True)
+        )
+
+        def fake_probe_duration(ffprobe, path, cache=None):
+            name = path.replace("\\", "/").rsplit("/", 1)[-1]
+            if name.startswith("ae_suffix_"):
+                return 40.0
+            if name.startswith("prefix_"):
+                return 100.0
+            return 140.0
+
+        monkeypatch.setattr(
+            RenderService, "_probe_duration", staticmethod(fake_probe_duration)
+        )
+
+        ok, dur = RenderService._try_prefix_compose(
+            "ffmpeg",
+            "ffprobe",
+            ctx,
+            1.0,
+            [ClipSegment("1.mp4", 0, None)],
+            ["c1"],
+            [ClipSegment("2.mp4", 0, 5)],
+            ["c2"],
+            "outro.mp4",
+            [],
+            [],
+            str(tmp_path / "out.mp4"),
+            key,
+            {},
+        )
+        assert ok is True and dur == 140.0
+        # 前缀已缓存：只应渲染尾部+片尾，再做一次流拷贝拼接
+        assert calls["render"] == ["尾部+片尾合成"]
+        assert calls["concat"] == ["拼接公共前缀+尾部"]
+
+    def test_returns_false_when_final_output_invalid(self, monkeypatch, tmp_path):
+        ctx = self._ctx(tmp_path)
+        prefix_file = tmp_path / "prefix_cached.mp4"
+        prefix_file.write_bytes(b"x")
+        ctx.prefix_cache[(("1.mp4",), 0.0, 1.0)] = str(prefix_file)
+
+        def fake_render(*args, **kwargs):
+            with open(args[9], "wb") as fh:
+                fh.write(b"suffix")
+            return True, ""
+
+        def fake_run(cmd, desc, **kwargs):
+            with open(cmd[-1], "wb") as fh:
+                fh.write(b"final")
+            return True, ""
+
+        monkeypatch.setattr(
+            RenderService, "_render_segments_output", staticmethod(fake_render)
+        )
+        monkeypatch.setattr(RenderService, "_run_ffmpeg", staticmethod(fake_run))
+        monkeypatch.setattr(
+            RenderService, "_validate_output", staticmethod(lambda *a, **k: False)
+        )
+
+        ok, dur = RenderService._try_prefix_compose(
+            "ffmpeg",
+            "ffprobe",
+            ctx,
+            1.0,
+            [ClipSegment("1.mp4", 0, None)],
+            ["c1"],
+            [ClipSegment("2.mp4", 0, 5)],
+            ["c2"],
+            "outro.mp4",
+            [],
+            [],
+            str(tmp_path / "out.mp4"),
+            (("1.mp4",), 0.0, 1.0),
+            {},
+        )
+        assert ok is False and dur == 0.0
+
+    def test_returns_false_when_concat_truncated(self, monkeypatch, tmp_path):
+        ctx = self._ctx(tmp_path)
+        prefix_file = tmp_path / "prefix_cached.mp4"
+        prefix_file.write_bytes(b"x")
+        ctx.prefix_cache[(("1.mp4",), 0.0, 1.0)] = str(prefix_file)
+
+        def fake_render(*args, **kwargs):
+            with open(args[9], "wb") as fh:
+                fh.write(b"suffix")
+            return True, ""
+
+        def fake_run(cmd, desc, **kwargs):
+            with open(cmd[-1], "wb") as fh:
+                fh.write(b"final")
+            return True, ""
+
+        def fake_probe_duration(ffprobe, path, cache=None):
+            name = path.replace("\\", "/").rsplit("/", 1)[-1]
+            if name.startswith("ae_suffix_"):
+                return 40.0
+            if name.startswith("prefix_"):
+                return 100.0
+            return 50.0  # 明显短于前缀+尾部(140s) = 截断
+
+        monkeypatch.setattr(
+            RenderService, "_render_segments_output", staticmethod(fake_render)
+        )
+        monkeypatch.setattr(RenderService, "_run_ffmpeg", staticmethod(fake_run))
+        monkeypatch.setattr(
+            RenderService, "_validate_output", staticmethod(lambda *a, **k: True)
+        )
+        monkeypatch.setattr(
+            RenderService, "_probe_duration", staticmethod(fake_probe_duration)
+        )
+
+        ok, dur = RenderService._try_prefix_compose(
+            "ffmpeg",
+            "ffprobe",
+            ctx,
+            1.0,
+            [ClipSegment("1.mp4", 0, None)],
+            ["c1"],
+            [ClipSegment("2.mp4", 0, 5)],
+            ["c2"],
+            "outro.mp4",
+            [],
+            [],
+            str(tmp_path / "out.mp4"),
+            (("1.mp4",), 0.0, 1.0),
+            {},
+        )
+        assert ok is False and dur == 0.0
+
+
+class TestOverlayBake:
+    @staticmethod
+    def _ctx():
+        return RenderContext(
+            project_path="p", target_w=1280, target_h=720, use_gpu=False, enc_v="libx264"
+        )
+
+    def test_empty_filters_returns_none(self, tmp_path):
+        assert (
+            RenderService._bake_drawtext_overlay_png(
+                "ffmpeg", self._ctx(), [], str(tmp_path), {}
+            )
+            is None
+        )
+
+    def test_bakes_once_then_reuses_cache(self, monkeypatch, tmp_path):
+        calls = {"n": 0}
+
+        def fake_run(cmd, desc, **kwargs):
+            calls["n"] += 1
+            with open(cmd[-1], "wb") as fh:
+                fh.write(b"PNG")
+            return True, ""
+
+        monkeypatch.setattr(RenderService, "_run_ffmpeg", staticmethod(fake_run))
+        filters = ["drawtext=text='x':x=1:y=1:fontsize=20:fontcolor=#FFFFFF@1.0"]
+        p1 = RenderService._bake_drawtext_overlay_png(
+            "ffmpeg", self._ctx(), filters, str(tmp_path), {}
+        )
+        assert p1 and os.path.isfile(p1)
+        p2 = RenderService._bake_drawtext_overlay_png(
+            "ffmpeg", self._ctx(), filters, str(tmp_path), {}
+        )
+        assert p2 == p1
+        assert calls["n"] == 1  # 第二次命中缓存，不再渲染
+
+    def test_failure_returns_none(self, monkeypatch, tmp_path):
+        monkeypatch.setattr(
+            RenderService, "_run_ffmpeg", staticmethod(lambda *a, **k: (False, "boom"))
+        )
+        assert (
+            RenderService._bake_drawtext_overlay_png(
+                "ffmpeg", self._ctx(), ["drawtext=text='x'"], str(tmp_path), {}
+            )
+            is None
+        )
 

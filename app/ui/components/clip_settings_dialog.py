@@ -65,6 +65,19 @@ class ClipSettingsDialog(QDialog):
         row.addStretch(1)
         form.addRow("去掉未完待续：", row)
 
+        row_bake = QHBoxLayout()
+        self._bake_switch = SwitchButton(self)
+        self._bake_switch.setOnText("开")
+        self._bake_switch.setOffText("关")
+        self._bake_switch.setChecked(bool(cfg.clip_overlay_bake_png.value))
+        self._bake_switch.setToolTip(
+            "开启后把剧名/提示叠字（含辉光）预渲成一张透明 PNG，渲染时只叠加一次，\n"
+            "减少逐帧 drawtext 开销、加快渲染；画质与直接叠字一致。"
+        )
+        row_bake.addWidget(self._bake_switch)
+        row_bake.addStretch(1)
+        form.addRow("叠字预渲染提速：", row_bake)
+
         row_auto_select = QHBoxLayout()
         self._auto_select_switch = SwitchButton(self)
         self._auto_select_switch.setOnText("开")
@@ -108,6 +121,9 @@ class ClipSettingsDialog(QDialog):
 
     def result_trim_ep1_continued(self) -> bool:
         return bool(self._trim_switch.isChecked())
+
+    def result_overlay_bake_png(self) -> bool:
+        return bool(self._bake_switch.isChecked())
 
     def result_auto_select_after_import(self) -> bool:
         return bool(self._auto_select_switch.isChecked())
