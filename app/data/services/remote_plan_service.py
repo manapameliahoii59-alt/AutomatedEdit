@@ -134,10 +134,14 @@ class RemotePlanService:
         project: DramaProject,
         *,
         progress_callback: Callable[[dict[str, Any]], None] | None = None,
+        should_cancel: Callable[[], bool] | None = None,
     ) -> dict[str, Any]:
         from app.common.drama_artifact_paths import finalize_written_artifact, prepare_write_path
         from app.common.crypto import write_encrypted_json
         from app.common.plan_settings import resolve_active_plan_params
+
+        if should_cancel and should_cancel():
+            raise InterruptedError("用户取消策划")
 
         api = cls._require_api()
         plan_key = cls._require_plan_key()
@@ -152,6 +156,8 @@ class RemotePlanService:
 
         deadline = time.time() + cls.POLL_TIMEOUT_SEC
         while time.time() < deadline:
+            if should_cancel and should_cancel():
+                raise InterruptedError("用户取消策划")
             status = cls._call_with_retry(lambda: api.get_plan_job_status(job_id))
             progress = status.get("progress") or {}
             if progress_callback and progress:

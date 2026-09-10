@@ -87,7 +87,11 @@ from app.data.services.render_service import (
     X264_PRESET_CHOICES,
     RenderService,
 )
-from app.ui.components.bar import ProgressInfoBar
+from app.data.models.batch_execution_record import (
+    BatchExecutionSummary,
+    DramaTimingRecord,
+)
+from app.ui.components.batch_execution_dialog import BatchExecutionDialog
 
 from .view_model import ClipEditViewModel
 
@@ -173,8 +177,8 @@ class ClipEditPage(ScrollArea):
         self._parent_window = parent
         self.vm = ClipEditViewModel(self)
         self.setObjectName("clip_edit_page")
-        self.loading_bar = None
         self._busy = False
+        self._batch_dialog: BatchExecutionDialog | None = None
         self._init_ui()
         self._bind_view_model()
         StyleSheet.CONTENT.apply(self)
@@ -291,7 +295,9 @@ class ClipEditPage(ScrollArea):
         self.clip_settings_btn = PushButton(
             FIF.SETTING, "设置", self.scroll_widget
         )
-        self.clip_settings_btn.setToolTip("去掉未完待续等剪辑选项")
+        self.clip_settings_btn.setToolTip(
+            "显卡加速、导入自动全选、去掉未完待续及成片分辨率设置"
+        )
         self.clip_settings_btn.clicked.connect(self._open_clip_settings)
         if self.encode_settings_btn is not None:
             batch_row.addWidget(self.encode_settings_btn)
@@ -345,11 +351,23 @@ class ClipEditPage(ScrollArea):
         self.vm.loadingChanged.connect(self._handle_loading)
         self.vm.loadingContentChanged.connect(self._handle_loading_content)
         self.vm.stageProgressChanged.connect(self._on_stage_progress)
-        self.vm.messageReceived.connect(lambda msg: show_toast(self, msg))
+        self.vm.batchExecutionStarted.connect(self._on_batch_execution_started)
+        self.vm.batchExecutionUpdated.connect(self._on_batch_execution_updated)
+        self.vm.batchExecutionFinished.connect(self._on_batch_execution_finished)
+        self.vm.messageReceived.connect(self._on_message_received)
         self.vm.errorOccurred.connect(lambda msg: show_dialog(self, msg, "提示"))
         self.vm.settingsLoaded.connect(self._on_settings_loaded)
         self._refresh_table(self.vm.get_projects())
         qconfig.themeChanged.connect(lambda *_: self._refresh_table(self.vm.get_projects()))
+
+    def _on_message_received(self, msg: str):
+        if (
+            self._batch_dialog is not None
+            and isValid(self._batch_dialog)
+            and self._batch_dialog.isVisible()
+        ):
+            return
+        show_toast(self, msg)
 
     def _on_settings_loaded(self, _clip_edit: dict):
         tag = str(cfg.clip_export_name_tag.value or "")[:20]
@@ -891,13 +909,15 @@ class ClipEditPage(ScrollArea):
             RenderService.clear_encoder_cache()
         enabled = dlg.result_trim_ep1_continued()
         qconfig.set(cfg.clip_trim_ep1_continued, enabled)
+        auto_select = dlg.result_auto_select_after_import()
+        qconfig.set(cfg.clip_auto_select_after_import, auto_select)
         resolution = dlg.result_resolution()
         qconfig.set(cfg.encode_output_resolution, resolution)
         self.vm.save_output_resolution(resolution)
         resolution_label = dict(RESOLUTION_CHOICES).get(resolution, resolution)
         show_toast(
             self,
-            f"显卡加速检测：{'开' if enable_gpu else '关'} · 去掉未完待续：{'开' if enabled else '关'} · 成片分辨率：{resolution_label}",
+            f"显卡加速检测：{'开' if enable_gpu else '关'} · 导入后自动全选：{'开' if auto_select else '关'} · 去掉未完待续：{'开' if enabled else '关'} · 成片分辨率：{resolution_label}",
             title="设置",
         )
 
@@ -1012,13 +1032,17 @@ class ClipEditPage(ScrollArea):
                     "提示",
                 )
                 return
-            self.vm.import_drama_folders(folders)
+            count = self.vm.import_drama_folders(folders)
+            if count > 0 and bool(cfg.clip_auto_select_after_import.value):
+                self._set_all_rows_checked(True)
             return
-        self.vm.import_drama_folder(folder)
+
+        res = self.vm.import_drama_folder(folder)
+        if res is not None and bool(cfg.clip_auto_select_after_import.value):
+            self._set_all_rows_checked(True)
 
     def _handle_loading_content(self, content: str):
-        if self.loading_bar is not None and isValid(self.loading_bar):
-            self.loading_bar.contentLabel.setText(content)
+        pass
 
     def _on_stage_progress(self, project_id: str, step: str, text: str):
         step_col = {"transcribe": 3, "plan": 4, "render": 5}.get(step)
@@ -1041,7 +1065,7 @@ class ClipEditPage(ScrollArea):
             )
             break
 
-    def _handle_loading(self, loading: bool, title: str, content: str):
+    def _handle_loading(self, loading: bool, title: str = "", content: str = ""):
         self._busy = loading
         widgets = [
             self.export_browse_btn,
@@ -1063,23 +1087,38 @@ class ClipEditPage(ScrollArea):
             widgets.append(self.encode_settings_btn)
         for w in widgets:
             w.setEnabled(not loading)
-        if loading:
-            if self.loading_bar is None or not isValid(self.loading_bar):
-                self.loading_bar = ProgressInfoBar(title, content, self)
-                self.loading_bar.cancelled.connect(self._on_progress_cancelled)
-                self.loading_bar.show()
-            else:
-                self.loading_bar.titleLabel.setText(title)
-                self.loading_bar.contentLabel.setText(content)
-        else:
-            self._close_loading()
+        if not loading:
             self._refresh_table(self.vm.get_projects())
 
-    def _on_progress_cancelled(self):
-        self.loading_bar = None
-        self.vm.request_cancel()
+    def _on_batch_execution_started(self, summary: BatchExecutionSummary):
+        if self._batch_dialog is not None and isValid(self._batch_dialog):
+            self._batch_dialog.close()
+            self._batch_dialog = None
+        self._batch_dialog = BatchExecutionDialog(self.window(), task_type=summary.task_type)
+        self._batch_dialog.setWindowModality(Qt.WindowModality.WindowModal)
+        self._batch_dialog.cancelled.connect(self._on_batch_dialog_cancelled)
+        self._batch_dialog.init_batch(summary)
+        self._batch_dialog.show()
 
-    def _close_loading(self):
-        if self.loading_bar and isValid(self.loading_bar):
-            self.loading_bar.hide()
-        self.loading_bar = None
+    def _on_batch_execution_updated(
+        self,
+        record: DramaTimingRecord,
+        action_text: str,
+        current_index: int,
+        total_count: int,
+    ):
+        if self._batch_dialog is not None and isValid(self._batch_dialog):
+            self._batch_dialog.update_progress(
+                record,
+                action_text=action_text,
+                current_index=current_index,
+                total_count=total_count,
+            )
+
+    def _on_batch_execution_finished(self, summary: BatchExecutionSummary):
+        if self._batch_dialog is not None and isValid(self._batch_dialog):
+            self._batch_dialog.finish_batch(summary)
+            self._refresh_table(self.vm.get_projects())
+
+    def _on_batch_dialog_cancelled(self):
+        self.vm.request_cancel()

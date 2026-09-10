@@ -22,6 +22,10 @@ from app.core.render_queue import CANCEL_MESSAGE, render_queue
 from app.core.task_manager import task_manager
 from app.core.view_model import ViewModel
 from app.data.api.api import get_api
+from app.data.models.batch_execution_record import (
+    BatchExecutionSummary,
+    DramaTimingRecord,
+)
 from app.data.models.drama_project import DramaProject, DramaStatus
 from app.data.services.drama_folder_service import DramaFolderError, scan_drama_folder
 from app.data.services.transcription_service import TranscriptionService
@@ -55,6 +59,9 @@ class ClipEditViewModel(ViewModel):
     messageReceived = Signal(str)
     errorOccurred = Signal(str)
     settingsLoaded = Signal(dict)  # clip_edit namespace from server
+    batchExecutionStarted = Signal(object)  # BatchExecutionSummary
+    batchExecutionUpdated = Signal(object, str, int, int)  # record, action_text, current_index, total_count
+    batchExecutionFinished = Signal(object)  # BatchExecutionSummary
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -64,6 +71,8 @@ class ClipEditViewModel(ViewModel):
         self._active_tasks = 0
         self._loading_project_id: str | None = None
         self._loading_base_content = ""
+        self._batch_cancel_requested = False
+        self._current_batch_summary: BatchExecutionSummary | None = None
         self.projectsChanged.emit(self._projects)
         self._load_settings_from_server()
 
@@ -440,6 +449,7 @@ class ClipEditViewModel(ViewModel):
         return True
 
     def request_cancel(self) -> None:
+        self._batch_cancel_requested = True
         render_queue.request_cancel()
 
     def _is_render_cancelled(self, msg: str) -> bool:
@@ -653,11 +663,6 @@ class ClipEditViewModel(ViewModel):
             if not project:
                 skipped += 1
                 continue
-            try:
-                TranscriptionService.check_environment()
-            except ImportError:
-                skipped += 1
-                continue
             queue.append(project)
 
         if not queue:
@@ -666,34 +671,96 @@ class ClipEditViewModel(ViewModel):
 
         results = {"success": 0, "fail": 0}
         total = len(queue)
+        records = [
+            DramaTimingRecord(
+                project_id=p.id,
+                project_name=p.name,
+                episode_count=p.episode_count,
+            )
+            for p in queue
+        ]
+        summary = BatchExecutionSummary(task_type="transcribe", records=records)
+        self._current_batch_summary = summary
+        self._batch_cancel_requested = False
+        batch_started_at = time.perf_counter()
+        self.batchExecutionStarted.emit(summary)
 
         def _run_at(index: int) -> None:
+            if self._batch_cancel_requested:
+                for i in range(index, total):
+                    records[i].transcribe_status = "cancelled"
+                summary.is_cancelled = True
+                summary.total_elapsed = time.perf_counter() - batch_started_at
+                self.batchExecutionFinished.emit(summary)
+                self.messageReceived.emit("批量识别已取消")
+                self._finish_loading_if_idle()
+                return
+
             if index >= total:
+                summary.total_elapsed = time.perf_counter() - batch_started_at
+                self.batchExecutionFinished.emit(summary)
                 self._emit_batch_summary("批量识别完成", results, skipped)
+                self._finish_loading_if_idle()
                 return
 
             project = queue[index]
+            rec = records[index]
             pid = project.id
             pname = project.name
+            rec.transcribe_status = "in_progress"
+            item_started_at = time.perf_counter()
             self._update_status(pid, "transcribe", DramaStatus.IN_PROGRESS)
             self._show_progress("正在识别", pname, index=index + 1, total=total)
+            self.batchExecutionUpdated.emit(
+                rec,
+                f"正在识别第 {index + 1}/{total} 部：《{pname}》…",
+                index,
+                total,
+            )
             self._add_task()
 
-            def _on_success(_ok, pid=pid, index=index):
+            def _on_success(_ok, pid=pid, index=index, rec=rec, t0=item_started_at):
                 self._remove_task()
+                elapsed = time.perf_counter() - t0
+                rec.transcribe_time = elapsed
+                rec.transcribe_status = "done"
                 self._update_status(pid, "transcribe", DramaStatus.DONE)
                 results["success"] += 1
+                self.batchExecutionUpdated.emit(
+                    rec,
+                    f"《{rec.project_name}》识别完成（耗时 {elapsed:.1f}s）",
+                    index + 1,
+                    total,
+                )
                 _run_at(index + 1)
 
-            def _on_error(msg, pid=pid, pname=pname, index=index):
+            def _on_error(msg, pid=pid, pname=pname, index=index, rec=rec, t0=item_started_at):
                 self._remove_task()
+                elapsed = time.perf_counter() - t0
+                rec.transcribe_time = elapsed
+                if self._batch_cancel_requested or "取消" in str(msg):
+                    rec.transcribe_status = "cancelled"
+                    rec.error_msg = "已取消"
+                    self._update_status(pid, "transcribe", DramaStatus.PENDING)
+                    _run_at(index)
+                    return
+                rec.transcribe_status = "failed"
+                rec.error_msg = sanitize_transcribe_error(msg, drama_name=pname)
                 self._update_status(pid, "transcribe", DramaStatus.PENDING)
                 results["fail"] += 1
-                self.errorOccurred.emit(sanitize_transcribe_error(msg, drama_name=pname))
+                self.errorOccurred.emit(rec.error_msg)
+                self.batchExecutionUpdated.emit(
+                    rec,
+                    f"《{rec.project_name}》识别失败",
+                    index + 1,
+                    total,
+                )
                 _run_at(index + 1)
 
             task_manager.submit_task(
-                lambda p=project: TranscriptionService.transcribe(p),
+                lambda p=project: TranscriptionService.transcribe(
+                    p, should_cancel=lambda: self._batch_cancel_requested
+                ),
                 on_success=_on_success,
                 on_error=_on_error,
             )
@@ -712,9 +779,6 @@ class ClipEditViewModel(ViewModel):
             if st.get("transcribe") != DramaStatus.DONE:
                 skipped += 1
                 continue
-            if not self._ensure_can_plan(project.name):
-                skipped += 1
-                continue
             queue.append(project)
 
         if not queue:
@@ -723,15 +787,57 @@ class ClipEditViewModel(ViewModel):
 
         results = {"success": 0, "fail": 0}
         total = len(queue)
+        records = [
+            DramaTimingRecord(
+                project_id=p.id,
+                project_name=p.name,
+                episode_count=p.episode_count,
+            )
+            for p in queue
+        ]
+        summary = BatchExecutionSummary(task_type="plan", records=records)
+        self._current_batch_summary = summary
+        self._batch_cancel_requested = False
+        batch_started_at = time.perf_counter()
+        self.batchExecutionStarted.emit(summary)
 
         def _run_at(index: int) -> None:
+            if self._batch_cancel_requested:
+                for i in range(index, total):
+                    records[i].plan_status = "cancelled"
+                summary.is_cancelled = True
+                summary.total_elapsed = time.perf_counter() - batch_started_at
+                self.batchExecutionFinished.emit(summary)
+                self.messageReceived.emit("批量策划已取消")
+                self._finish_loading_if_idle()
+                return
+
             if index >= total:
+                summary.total_elapsed = time.perf_counter() - batch_started_at
+                self.batchExecutionFinished.emit(summary)
                 self._emit_batch_summary("批量策划完成", results, skipped)
+                self._finish_loading_if_idle()
                 return
 
             project = queue[index]
+            rec = records[index]
             pid = project.id
             pname = project.name
+
+            if not self._ensure_can_plan(pname):
+                rec.plan_status = "skipped"
+                rec.error_msg = "策划配额不足"
+                self.batchExecutionUpdated.emit(
+                    rec,
+                    f"《{pname}》配额不足，跳过策划",
+                    index + 1,
+                    total,
+                )
+                _run_at(index + 1)
+                return
+
+            rec.plan_status = "in_progress"
+            item_started_at = time.perf_counter()
             self._update_status(pid, "plan", DramaStatus.IN_PROGRESS)
             self._show_progress(
                 "正在策划",
@@ -740,28 +846,59 @@ class ClipEditViewModel(ViewModel):
                 index=index + 1,
                 total=total,
             )
+            self.batchExecutionUpdated.emit(
+                rec,
+                f"正在策划第 {index + 1}/{total} 部：《{pname}》…",
+                index,
+                total,
+            )
             self._add_task()
             plan_handler = self._make_plan_progress_handler(pid)
 
-            def _on_success(result, pid=pid, pname=pname, index=index):
+            def _on_success(result, pid=pid, pname=pname, index=index, rec=rec, t0=item_started_at):
                 self._remove_task()
+                elapsed = time.perf_counter() - t0
+                rec.plan_time = elapsed
+                rec.plan_status = "done"
                 self._update_status(pid, "plan", DramaStatus.DONE)
                 UsageService.report("plan")
                 self._report_plan_done(pname)
                 results["success"] += 1
                 self.messageReceived.emit(_format_plan_result_message(pname, result))
+                self.batchExecutionUpdated.emit(
+                    rec,
+                    f"《{rec.project_name}》策划完成（耗时 {elapsed:.1f}s）",
+                    index + 1,
+                    total,
+                )
                 _run_at(index + 1)
 
-            def _on_error(msg, pid=pid, pname=pname, index=index):
+            def _on_error(msg, pid=pid, pname=pname, index=index, rec=rec, t0=item_started_at):
                 self._remove_task()
+                elapsed = time.perf_counter() - t0
+                rec.plan_time = elapsed
+                if self._batch_cancel_requested or "取消" in str(msg):
+                    rec.plan_status = "cancelled"
+                    rec.error_msg = "已取消"
+                    self._update_status(pid, "plan", DramaStatus.PENDING)
+                    _run_at(index)
+                    return
+                rec.plan_status = "failed"
+                rec.error_msg = sanitize_plan_error(msg, drama_name=pname)
                 self._update_status(pid, "plan", DramaStatus.PENDING)
                 results["fail"] += 1
-                self.errorOccurred.emit(sanitize_plan_error(msg, drama_name=pname))
+                self.errorOccurred.emit(rec.error_msg)
+                self.batchExecutionUpdated.emit(
+                    rec,
+                    f"《{rec.project_name}》策划失败",
+                    index + 1,
+                    total,
+                )
                 _run_at(index + 1)
 
             task_manager.submit_task(
                 lambda p=project, h=plan_handler: AIDirectorService.plan(
-                    p, progress_callback=h
+                    p, progress_callback=h, should_cancel=lambda: self._batch_cancel_requested
                 ),
                 on_success=_on_success,
                 on_error=_on_error,
@@ -789,54 +926,128 @@ class ClipEditViewModel(ViewModel):
 
         results = {"success": 0, "fail": 0}
         total = len(valid)
-        for index, project in enumerate(valid, 1):
-            if not self._ensure_can_clip(project.name):
-                skipped += 1
-                continue
-            self._add_task()
-            if index == 1:
-                self._show_progress(
-                    "正在渲染",
-                    project.name,
-                    project_id=project.id,
-                    index=index,
-                    total=total,
-                )
+        records = [
+            DramaTimingRecord(
+                project_id=p.id,
+                project_name=p.name,
+                episode_count=p.episode_count,
+            )
+            for p in valid
+        ]
+        summary = BatchExecutionSummary(task_type="render", records=records)
+        self._current_batch_summary = summary
+        self._batch_cancel_requested = False
+        batch_started_at = time.perf_counter()
+        self.batchExecutionStarted.emit(summary)
 
+        def _run_at(index: int) -> None:
+            if self._batch_cancel_requested:
+                for i in range(index, total):
+                    records[i].render_status = "cancelled"
+                summary.is_cancelled = True
+                summary.total_elapsed = time.perf_counter() - batch_started_at
+                self.batchExecutionFinished.emit(summary)
+                self.messageReceived.emit("批量渲染已取消")
+                self._finish_loading_if_idle()
+                return
+
+            if index >= total:
+                summary.total_elapsed = time.perf_counter() - batch_started_at
+                self.batchExecutionFinished.emit(summary)
+                root = resolve_clip_export_root()
+                self._emit_batch_summary(
+                    f"批量渲染完成（导出目录：{root}）", results, skipped
+                )
+                self._finish_loading_if_idle()
+                return
+
+            project = valid[index]
+            rec = records[index]
             pid = project.id
             pname = project.name
 
-            def _on_success(_result: RenderResult, pid=pid, pname=pname):
+            if not self._ensure_can_clip(pname):
+                rec.render_status = "skipped"
+                rec.error_msg = "剪辑次数不足或未授权"
+                self.batchExecutionUpdated.emit(
+                    rec,
+                    f"《{pname}》未获剪辑授权，跳过渲染",
+                    index + 1,
+                    total,
+                )
+                _run_at(index + 1)
+                return
+
+            rec.render_status = "in_progress"
+            item_started_at = time.perf_counter()
+            self._update_status(pid, "render", DramaStatus.IN_PROGRESS)
+            self._show_progress(
+                "正在渲染",
+                pname,
+                project_id=pid,
+                index=index + 1,
+                total=total,
+            )
+            self.batchExecutionUpdated.emit(
+                rec,
+                f"正在渲染第 {index + 1}/{total} 部：《{pname}》…",
+                index,
+                total,
+            )
+            self._add_task()
+
+            def _on_success(result: RenderResult, pid=pid, pname=pname, index=index, rec=rec, t0=item_started_at):
                 self._remove_task()
+                elapsed = (
+                    result.total_seconds
+                    if getattr(result, "total_seconds", 0) > 0
+                    else (time.perf_counter() - t0)
+                )
+                rec.render_time = elapsed
+                rec.render_status = "done"
                 self._update_status(pid, "render", DramaStatus.DONE)
                 results["success"] += 1
                 self._report_clip_done(pname)
-                if self._active_tasks == 0 and not render_queue.is_busy():
-                    root = resolve_clip_export_root()
-                    self._emit_batch_summary(
-                        f"批量渲染完成（导出目录：{root}）",
-                        results,
-                        skipped,
-                    )
+                self.batchExecutionUpdated.emit(
+                    rec,
+                    f"《{rec.project_name}》渲染完成（耗时 {elapsed:.1f}s）",
+                    index + 1,
+                    total,
+                )
+                _run_at(index + 1)
 
-            def _on_error(msg, pid=pid, pname=pname):
+            def _on_error(msg, pid=pid, pname=pname, index=index, rec=rec, t0=item_started_at):
                 self._remove_task()
+                elapsed = time.perf_counter() - t0
+                rec.render_time = elapsed
+                if self._is_render_cancelled(msg) or self._batch_cancel_requested:
+                    rec.render_status = "cancelled"
+                    rec.error_msg = "已取消"
+                    self._update_status(pid, "render", DramaStatus.PENDING)
+                    _run_at(index)
+                    return
+                rec.render_status = "failed"
+                rec.error_msg = sanitize_render_error(msg, drama_name=pname)
+                self.errorOccurred.emit(rec.error_msg)
                 self._update_status(pid, "render", DramaStatus.PENDING)
                 results["fail"] += 1
-                if self._active_tasks == 0 and not render_queue.is_busy():
-                    if self._is_render_cancelled(msg):
-                        self.messageReceived.emit("渲染已取消")
-                    else:
-                        self.errorOccurred.emit(sanitize_render_error(msg, drama_name=pname))
-                    self._emit_batch_summary("批量渲染完成", results, skipped)
+                self.batchExecutionUpdated.emit(
+                    rec,
+                    f"《{rec.project_name}》渲染失败",
+                    index + 1,
+                    total,
+                )
+                _run_at(index + 1)
 
             self._submit_render(
                 project,
                 on_success=_on_success,
                 on_error=_on_error,
-                index=index,
+                index=index + 1,
                 total=total,
             )
+
+        _run_at(0)
 
     def _emit_batch_summary(self, prefix: str, results: dict, skipped: int):
         parts = [f"{prefix}：成功 {results['success']} 个"]
@@ -847,14 +1058,278 @@ class ClipEditViewModel(ViewModel):
         self.messageReceived.emit("，".join(parts))
 
     def batch_all(self, project_ids: list[str]):
-        projects = []
+        queue: list[DramaProject] = []
         for pid in project_ids:
             project = next((p for p in self._projects if p.id == pid), None)
             if project:
-                projects.append(project)
-        total = len(projects)
-        for index, project in enumerate(projects, 1):
-            self._run_pipeline(project, index=index, total=total)
+                queue.append(project)
+
+        if not queue:
+            self.messageReceived.emit("没有符合条件的项目可执行一键流程")
+            return
+
+        total = len(queue)
+        records = [
+            DramaTimingRecord(
+                project_id=p.id,
+                project_name=p.name,
+                episode_count=p.episode_count,
+            )
+            for p in queue
+        ]
+        summary = BatchExecutionSummary(task_type="all", records=records)
+        self._current_batch_summary = summary
+        self._batch_cancel_requested = False
+        batch_started_at = time.perf_counter()
+        self.batchExecutionStarted.emit(summary)
+
+        def _run_next(index: int) -> None:
+            if self._batch_cancel_requested:
+                for i in range(index, total):
+                    r = records[i]
+                    if r.transcribe_status == "pending":
+                        r.transcribe_status = "cancelled"
+                    if r.plan_status == "pending":
+                        r.plan_status = "cancelled"
+                    if r.render_status == "pending":
+                        r.render_status = "cancelled"
+                summary.is_cancelled = True
+                summary.total_elapsed = time.perf_counter() - batch_started_at
+                self.batchExecutionFinished.emit(summary)
+                self.messageReceived.emit("一键执行已取消")
+                self._finish_loading_if_idle()
+                return
+
+            if index >= total:
+                summary.total_elapsed = time.perf_counter() - batch_started_at
+                self.batchExecutionFinished.emit(summary)
+                root = resolve_clip_export_root()
+                self.messageReceived.emit(
+                    f"一键执行全部完成！成功 {summary.success_count}/{total} 部，"
+                    f"总耗时 {self._format_elapsed(summary.total_elapsed)}（导出目录：{root}）"
+                )
+                self._finish_loading_if_idle()
+                return
+
+            project = queue[index]
+            rec = records[index]
+            pid = project.id
+            pname = project.name
+
+            # --- Stage 1: 识别 ---
+            rec.transcribe_status = "in_progress"
+            self._update_status(pid, "transcribe", DramaStatus.IN_PROGRESS)
+            self._show_progress("正在识别", pname, index=index + 1, total=total)
+            self.batchExecutionUpdated.emit(
+                rec,
+                f"一键执行 (1/3 阶段：识别) · 正在识别第 {index + 1}/{total} 部：《{pname}》…",
+                index,
+                total,
+            )
+            self._add_task()
+            t_trans_start = time.perf_counter()
+
+            def step1():
+                TranscriptionService.transcribe(
+                    project,
+                    should_cancel=lambda: self._batch_cancel_requested,
+                )
+                return True
+
+            def step1_done(_ok):
+                self._remove_task()
+                rec.transcribe_time = time.perf_counter() - t_trans_start
+                rec.transcribe_status = "done"
+                self._update_status(pid, "transcribe", DramaStatus.DONE)
+                UsageService.report("batch_all_transcribe")
+                self.batchExecutionUpdated.emit(
+                    rec,
+                    f"《{pname}》识别完成（{rec.transcribe_time:.1f}s）",
+                    index,
+                    total,
+                )
+
+                if self._batch_cancel_requested:
+                    _run_next(index + 1)
+                    return
+
+                # --- Stage 2: 策划 ---
+                rec.plan_status = "in_progress"
+                self._update_status(pid, "plan", DramaStatus.IN_PROGRESS)
+                self._show_progress(
+                    "正在策划",
+                    pname,
+                    project_id=pid,
+                    index=index + 1,
+                    total=total,
+                )
+                self.batchExecutionUpdated.emit(
+                    rec,
+                    f"一键执行 (2/3 阶段：策划) · 正在策划第 {index + 1}/{total} 部：《{pname}》…",
+                    index,
+                    total,
+                )
+                self._add_task()
+                t_plan_start = time.perf_counter()
+                plan_handler = self._make_plan_progress_handler(pid)
+
+                def step2():
+                    return AIDirectorService.plan(
+                        project,
+                        progress_callback=plan_handler,
+                        should_cancel=lambda: self._batch_cancel_requested,
+                    )
+
+                def step2_done(plan_res):
+                    self._remove_task()
+                    rec.plan_time = time.perf_counter() - t_plan_start
+                    rec.plan_status = "done"
+                    self._update_status(pid, "plan", DramaStatus.DONE)
+                    UsageService.report("batch_all_plan")
+                    self._report_plan_done(pname)
+                    self.batchExecutionUpdated.emit(
+                        rec,
+                        f"《{pname}》策划完成（{rec.plan_time:.1f}s）",
+                        index,
+                        total,
+                    )
+
+                    if self._batch_cancel_requested:
+                        _run_next(index + 1)
+                        return
+
+                    if not self._ensure_can_clip(pname):
+                        rec.render_status = "skipped"
+                        rec.error_msg = "剪辑次数不足或未授权"
+                        self.batchExecutionUpdated.emit(
+                            rec,
+                            f"《{pname}》未获剪辑授权，跳过渲染",
+                            index + 1,
+                            total,
+                        )
+                        _run_next(index + 1)
+                        return
+
+                    # --- Stage 3: 渲染 ---
+                    rec.render_status = "in_progress"
+                    self._update_status(pid, "render", DramaStatus.IN_PROGRESS)
+                    self._show_progress(
+                        "正在渲染",
+                        pname,
+                        project_id=pid,
+                        index=index + 1,
+                        total=total,
+                    )
+                    self.batchExecutionUpdated.emit(
+                        rec,
+                        f"一键执行 (3/3 阶段：渲染) · 正在渲染第 {index + 1}/{total} 部：《{pname}》…",
+                        index,
+                        total,
+                    )
+                    self._add_task()
+                    t_render_start = time.perf_counter()
+
+                    def step3_done(render_res: RenderResult):
+                        self._remove_task()
+                        rec.render_time = (
+                            render_res.total_seconds
+                            if getattr(render_res, "total_seconds", 0) > 0
+                            else (time.perf_counter() - t_render_start)
+                        )
+                        rec.render_status = "done"
+                        self._update_status(pid, "render", DramaStatus.DONE)
+                        UsageService.report("batch_all_render", success=render_res.success_count > 0)
+                        self._report_clip_done(pname)
+                        self.batchExecutionUpdated.emit(
+                            rec,
+                            f"《{pname}》一键执行完成（总耗时 {rec.total_time:.1f}s）",
+                            index + 1,
+                            total,
+                        )
+                        _run_next(index + 1)
+
+                    def step3_err(msg):
+                        self._remove_task()
+                        rec.render_time = time.perf_counter() - t_render_start
+                        if self._is_render_cancelled(msg) or self._batch_cancel_requested:
+                            rec.render_status = "cancelled"
+                            rec.error_msg = "已取消"
+                            self._update_status(pid, "render", DramaStatus.PENDING)
+                            _run_next(index)
+                            return
+                        rec.render_status = "failed"
+                        rec.error_msg = sanitize_render_error(msg, drama_name=pname)
+                        self.errorOccurred.emit(rec.error_msg)
+                        self._update_status(pid, "render", DramaStatus.PENDING)
+                        self.batchExecutionUpdated.emit(
+                            rec,
+                            f"《{pname}》渲染失败",
+                            index + 1,
+                            total,
+                        )
+                        _run_next(index + 1)
+
+                    self._submit_render(
+                        project,
+                        on_success=step3_done,
+                        on_error=step3_err,
+                        index=index + 1,
+                        total=total,
+                    )
+
+                def step2_err(msg):
+                    self._remove_task()
+                    rec.plan_time = time.perf_counter() - t_plan_start
+                    if self._batch_cancel_requested or "取消" in str(msg):
+                        rec.plan_status = "cancelled"
+                        rec.render_status = "cancelled"
+                        rec.error_msg = "已取消"
+                        self._update_status(pid, "plan", DramaStatus.PENDING)
+                        _run_next(index)
+                        return
+                    rec.plan_status = "failed"
+                    rec.render_status = "skipped"
+                    rec.error_msg = sanitize_plan_error(msg, drama_name=pname)
+                    self._update_status(pid, "plan", DramaStatus.PENDING)
+                    self.errorOccurred.emit(rec.error_msg)
+                    self.batchExecutionUpdated.emit(
+                        rec,
+                        f"《{pname}》策划失败，跳过渲染",
+                        index + 1,
+                        total,
+                    )
+                    _run_next(index + 1)
+
+                task_manager.submit_task(step2, on_success=step2_done, on_error=step2_err)
+
+            def step1_err(msg):
+                self._remove_task()
+                rec.transcribe_time = time.perf_counter() - t_trans_start
+                if self._batch_cancel_requested or "取消" in str(msg):
+                    rec.transcribe_status = "cancelled"
+                    rec.plan_status = "cancelled"
+                    rec.render_status = "cancelled"
+                    rec.error_msg = "已取消"
+                    self._update_status(pid, "transcribe", DramaStatus.PENDING)
+                    _run_next(index)
+                    return
+                rec.transcribe_status = "failed"
+                rec.plan_status = "skipped"
+                rec.render_status = "skipped"
+                rec.error_msg = sanitize_transcribe_error(msg, drama_name=pname)
+                self._update_status(pid, "transcribe", DramaStatus.PENDING)
+                self.errorOccurred.emit(rec.error_msg)
+                self.batchExecutionUpdated.emit(
+                    rec,
+                    f"《{pname}》识别失败，跳过后续步骤",
+                    index + 1,
+                    total,
+                )
+                _run_next(index + 1)
+
+            task_manager.submit_task(step1, on_success=step1_done, on_error=step1_err)
+
+        _run_next(0)
 
     def import_drama_folders(self, folder_paths: list[str]) -> int:
         """批量导入剧目文件夹（不自动执行剪辑流程）。"""

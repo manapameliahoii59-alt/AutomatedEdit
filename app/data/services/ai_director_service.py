@@ -19,9 +19,20 @@ class AIDirectorService:
         project: DramaProject,
         *,
         progress_callback: Callable[[dict[str, Any]], None] | None = None,
+        should_cancel: Callable[[], bool] | None = None,
     ) -> dict[str, Any]:
         # 批量/并行入口统一串行，避免多剧同时打策划 API、进度与日志交错
         with _plan_lock:
+            if should_cancel and should_cancel():
+                raise InterruptedError("用户取消策划")
             if use_local_plan():
-                return LocalPlanService.plan(project, progress_callback=progress_callback)
-            return RemotePlanService.plan(project, progress_callback=progress_callback)
+                return LocalPlanService.plan(
+                    project,
+                    progress_callback=progress_callback,
+                    should_cancel=should_cancel,
+                )
+            return RemotePlanService.plan(
+                project,
+                progress_callback=progress_callback,
+                should_cancel=should_cancel,
+            )

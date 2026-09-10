@@ -108,3 +108,53 @@ class TestRenderQueueCancel:
             assert False, "expected RenderCancelled"
         except RenderCancelled as exc:
             assert "取消" in str(exc)
+
+    def test_chained_submit_in_success_callback(self, qtbot):
+        """模拟批量渲染时在 on_success 中链式提交下一部，验证所有任务的回调均被完整触发。"""
+        results = []
+
+        def submit_chain(i: int, total: int):
+            if i >= total:
+                return
+            self.queue.submit(
+                lambda i=i: f"drama_{i}",
+                on_success=lambda res, i=i: (
+                    results.append(res),
+                    submit_chain(i + 1, total),
+                ),
+            )
+
+        submit_chain(0, 4)
+
+        qtbot.waitUntil(
+            lambda: results == ["drama_0", "drama_1", "drama_2", "drama_3"],
+            timeout=4000,
+        )
+        qtbot.waitUntil(lambda: not self.queue.is_busy(), timeout=2000)
+
+    def test_chained_submit_in_error_callback(self, qtbot):
+        """模拟在 on_error 回调中链式提交下一部，验证异常链式流转正常。"""
+        errors = []
+
+        def submit_fail_chain(i: int, total: int):
+            if i >= total:
+                return
+
+            def task(i=i):
+                raise RuntimeError(f"fail_{i}")
+
+            self.queue.submit(
+                task,
+                on_error=lambda msg, i=i: (
+                    errors.append(f"err_{i}"),
+                    submit_fail_chain(i + 1, total),
+                ),
+            )
+
+        submit_fail_chain(0, 3)
+
+        qtbot.waitUntil(
+            lambda: errors == ["err_0", "err_1", "err_2"],
+            timeout=4000,
+        )
+        qtbot.waitUntil(lambda: not self.queue.is_busy(), timeout=2000)

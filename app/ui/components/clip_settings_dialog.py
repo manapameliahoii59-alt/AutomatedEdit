@@ -65,6 +65,19 @@ class ClipSettingsDialog(QDialog):
         row.addStretch(1)
         form.addRow("去掉未完待续：", row)
 
+        row_auto_select = QHBoxLayout()
+        self._auto_select_switch = SwitchButton(self)
+        self._auto_select_switch.setOnText("开")
+        self._auto_select_switch.setOffText("关")
+        self._auto_select_switch.setChecked(bool(cfg.clip_auto_select_after_import.value))
+        self._auto_select_switch.setToolTip(
+            "开启后，点击「导入剧目」导入完成后自动全选列表中剧目，方便直接执行一键执行或批量处理；\n"
+            "关闭后导入保持未勾选状态。"
+        )
+        row_auto_select.addWidget(self._auto_select_switch)
+        row_auto_select.addStretch(1)
+        form.addRow("导入后自动全选：", row_auto_select)
+
         self._resolution_combo = ComboBox(self)
         for value, label in RESOLUTION_CHOICES:
             self._resolution_combo.addItem(label, userData=value)
@@ -95,6 +108,9 @@ class ClipSettingsDialog(QDialog):
 
     def result_trim_ep1_continued(self) -> bool:
         return bool(self._trim_switch.isChecked())
+
+    def result_auto_select_after_import(self) -> bool:
+        return bool(self._auto_select_switch.isChecked())
 
     def result_resolution(self) -> str:
         data = self._resolution_combo.currentData()

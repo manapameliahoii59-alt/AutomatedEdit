@@ -51,6 +51,10 @@ class Config(MyQConfig):
     clip_trim_ep1_continued = ConfigItem(
         "Tools", "clip_trim_ep1_continued", True, BoolValidator()
     )
+    # 自动化剪辑：导入剧目后自动全选导入数据
+    clip_auto_select_after_import = ConfigItem(
+        "Tools", "clip_auto_select_after_import", True, BoolValidator()
+    )
     # 策划：短片/长片/混合模式；长片条数与最长时长（最短固定 150s）
     plan_mode = ConfigItem("Tools", "plan_mode", "long")
     plan_clip_count = ConfigItem("Tools", "plan_clip_count", 15)

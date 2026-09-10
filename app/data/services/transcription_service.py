@@ -4,6 +4,8 @@ import re
 import threading
 import time
 
+from collections.abc import Callable
+
 from app.common.ffmpeg_paths import ensure_ffmpeg_on_path, resolve_ffmpeg
 from app.common.my_logger import my_logger as logger
 from app.data.models.drama_project import DramaProject
@@ -111,9 +113,13 @@ class TranscriptionService:
     _torch = None
     # FunASR/GPU 不宜并行；批量识别也走同一把锁，避免日志与推理交错
     _lock = threading.RLock()
+    _cached_env_warnings: list[str] | None = None
 
     @classmethod
-    def check_environment(cls) -> list[str]:
+    def check_environment(cls, force: bool = False) -> list[str]:
+        if not force and cls._cached_env_warnings is not None:
+            return cls._cached_env_warnings
+
         try:
             import torch  # noqa: F401
         except (ImportError, OSError) as e:
@@ -152,6 +158,7 @@ class TranscriptionService:
         except Exception:
             warnings.append("无法检查模型缓存状态，首次使用可能需要联网下载")
 
+        cls._cached_env_warnings = warnings
         return warnings
 
     @classmethod
@@ -174,12 +181,24 @@ class TranscriptionService:
             )
 
     @classmethod
-    def transcribe(cls, project: DramaProject) -> str:
+    def transcribe(
+        cls,
+        project: DramaProject,
+        should_cancel: Callable[[], bool] | None = None,
+    ) -> str:
         with cls._lock:
-            return cls._transcribe_locked(project)
+            return cls._transcribe_locked(project, should_cancel=should_cancel)
 
     @classmethod
-    def _transcribe_locked(cls, project: DramaProject) -> str:
+    def _transcribe_locked(
+        cls,
+        project: DramaProject,
+        should_cancel: Callable[[], bool] | None = None,
+    ) -> str:
+        if should_cancel and should_cancel():
+            _safe_print(f"   《{project.name}》检测到用户取消识别，未启动", flush=True)
+            raise InterruptedError("用户取消识别")
+
         cls.init_model()
         torch = cls._torch
 
@@ -200,6 +219,9 @@ class TranscriptionService:
         _safe_print(f"   识别顺序: {' → '.join(raw_files)}", flush=True)
 
         for index, file in enumerate(raw_files, 1):
+            if should_cancel and should_cancel():
+                _safe_print(f"   《{project.name}》检测到用户取消识别，已中止后续集数识别", flush=True)
+                raise InterruptedError("用户取消识别")
             file_path = os.path.join(project_path, file)
             _safe_print(f"   《{project.name}》识别 {index}/{total_files}: {file} ...", flush=True)
             try:

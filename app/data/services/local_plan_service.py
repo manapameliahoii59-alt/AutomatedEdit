@@ -141,7 +141,10 @@ class LocalPlanService:
         project: DramaProject,
         *,
         progress_callback: Callable[[dict[str, Any]], None] | None = None,
+        should_cancel: Callable[[], bool] | None = None,
     ) -> dict[str, Any]:
+        if should_cancel and should_cancel():
+            raise InterruptedError("用户取消策划")
         from app.common.crypto import write_encrypted_json
         from app.common.drama_artifact_paths import (
             finalize_written_artifact,

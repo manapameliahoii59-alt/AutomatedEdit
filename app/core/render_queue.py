@@ -17,8 +17,8 @@ CANCEL_MESSAGE = "渲染已取消"
 class _RenderQueueSignals(QObject):
     """主线程信号桥：工作线程完成后投递到 GUI 线程。"""
 
-    succeeded = Signal(object)  # result
-    failed = Signal(str)  # message
+    succeeded = Signal(object, object)  # on_success, result
+    failed = Signal(object, str)  # on_error, message
 
 
 class RenderQueue:
@@ -36,12 +36,11 @@ class RenderQueue:
             ]
         ] = deque()
         self._running = False
+        self._dispatching = False
         self._cancel_event = threading.Event()
         self._active_proc = None
         self._proc_lock = threading.Lock()
         self._lock = threading.Lock()
-        self._current_on_success: Callable[[Any], None] | None = None
-        self._current_on_error: Callable[[str], None] | None = None
         # 延迟到 QApplication 就绪后再创建，避免 import 阶段建 QObject 导致跨线程信号丢失
         self._signals: _RenderQueueSignals | None = None
         self._signals_lock = threading.Lock()
@@ -106,9 +105,9 @@ class RenderQueue:
         """提交渲染任务。返回 True 表示立刻开始，False 表示进入排队。"""
         self._ensure_signals()
         with self._lock:
-            was_busy = self._running or bool(self._pending)
+            was_busy = self._running or self._dispatching or bool(self._pending)
             self._pending.append((func, on_success, on_error, on_start))
-            should_start = not self._running
+            should_start = not self._running and not self._dispatching
             if should_start:
                 self._cancel_event.clear()
             pending_count = len(self._pending)
@@ -125,8 +124,6 @@ class RenderQueue:
         with self._lock:
             if not self._pending:
                 self._running = False
-                self._current_on_success = None
-                self._current_on_error = None
                 with self._proc_lock:
                     self._active_proc = None
                 logger.debug("渲染队列空闲")
@@ -136,16 +133,12 @@ class RenderQueue:
                 pending = list(self._pending)
                 self._pending.clear()
                 self._running = False
-                self._current_on_success = None
-                self._current_on_error = None
                 with self._proc_lock:
                     self._active_proc = None
             else:
                 pending = None
                 self._running = True
                 func, on_success, on_error, on_start = self._pending.popleft()
-                self._current_on_success = on_success
-                self._current_on_error = on_error
                 left = len(self._pending)
 
         if pending is not None:
@@ -166,45 +159,46 @@ class RenderQueue:
 
         signals = self._ensure_signals()
 
-        def worker() -> None:
+        def worker(func=func, on_success=on_success, on_error=on_error) -> None:
             try:
                 result = func()
             except Exception as exc:
                 logger.debug("渲染任务异常: {}", exc, exc_info=True)
-                signals.failed.emit(str(exc))
+                signals.failed.emit(on_error, str(exc))
                 return
             logger.debug("渲染工作线程结束，投递成功回调到主线程")
-            signals.succeeded.emit(result)
+            signals.succeeded.emit(on_success, result)
 
         threading.Thread(target=worker, name="RenderWorker", daemon=True).start()
 
-    def _on_succeeded(self, result: Any) -> None:
+    def _on_succeeded(self, on_success: Any, result: Any) -> None:
         logger.debug("渲染成功回调进入主线程")
-        on_success = self._current_on_success
-        # 回调里会查 is_busy()；若无后续任务，先清 running，避免进度条关不掉
         with self._lock:
-            if not self._pending:
-                self._running = False
+            self._running = False
+            self._dispatching = True
         try:
             if on_success:
                 on_success(result)
         except Exception:
             logger.exception("渲染成功回调异常，继续队列中的下一部")
         finally:
+            with self._lock:
+                self._dispatching = False
             self._run_next()
 
-    def _on_failed(self, message: str) -> None:
+    def _on_failed(self, on_error: Any, message: str) -> None:
         logger.debug("渲染失败回调进入主线程: {}", message)
-        on_error = self._current_on_error
         with self._lock:
-            if not self._pending:
-                self._running = False
+            self._running = False
+            self._dispatching = True
         try:
             if on_error:
                 on_error(message)
         except Exception:
             logger.exception("渲染失败回调异常，继续队列中的下一部")
         finally:
+            with self._lock:
+                self._dispatching = False
             self._run_next()
 
 
