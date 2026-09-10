@@ -19,6 +19,13 @@ def qapp():
     return app
 
 
+@pytest.fixture(autouse=True)
+def isolate_config(monkeypatch):
+    """Prevent tests from writing to the real config.json on disk."""
+    monkeypatch.setattr(qconfig, "save", lambda *args, **kwargs: None)
+
+
+
 def _make_drama_folder(tmp_path, name="test_drama"):
     d = tmp_path / name
     d.mkdir(parents=True, exist_ok=True)
@@ -56,7 +63,15 @@ class TestClipSettingsDialog:
 
 
 class TestClipEditAutoSelectAfterImport:
-    def test_import_with_auto_select_enabled(self, qapp, tmp_path):
+    def test_import_with_auto_select_enabled(self, qapp, tmp_path, monkeypatch):
+        saved_calls = []
+
+        def fake_set(item, val):
+            item.value = val
+            saved_calls.append((item, val))
+
+        monkeypatch.setattr("qfluentwidgets.qconfig.set", fake_set)
+
         qconfig.set(cfg.clip_auto_select_after_import, True)
         folder = _make_drama_folder(tmp_path, "drama1")
 
@@ -75,7 +90,15 @@ class TestClipEditAutoSelectAfterImport:
         assert page._select_all_header.select_state() == Qt.CheckState.Checked
         page.deleteLater()
 
-    def test_import_with_auto_select_disabled(self, qapp, tmp_path):
+    def test_import_with_auto_select_disabled(self, qapp, tmp_path, monkeypatch):
+        saved_calls = []
+
+        def fake_set(item, val):
+            item.value = val
+            saved_calls.append((item, val))
+
+        monkeypatch.setattr("qfluentwidgets.qconfig.set", fake_set)
+
         qconfig.set(cfg.clip_auto_select_after_import, False)
         folder = _make_drama_folder(tmp_path, "drama2")
 
@@ -95,7 +118,53 @@ class TestClipEditAutoSelectAfterImport:
         page.deleteLater()
 
         # Restore default
-        qconfig.set(cfg.clip_auto_select_after_import, True)
+        cfg.clip_auto_select_after_import.value = True
+
+    def test_single_drama_import_remembers_parent_dir(self, qapp, tmp_path, monkeypatch):
+        saved_configs = {}
+
+        def fake_set(item, val):
+            item.value = val
+            saved_configs[item] = val
+
+        monkeypatch.setattr("qfluentwidgets.qconfig.set", fake_set)
+
+        drama_folder = _make_drama_folder(tmp_path / "collection", "drama_single")
+        page = ClipEditPage()
+        with patch("PySide6.QtWidgets.QFileDialog.getExistingDirectory", return_value=str(drama_folder)):
+            page._pick_drama_folder()
+
+        # Single drama: should remember parent folder
+        import os
+        expected_parent = os.path.normpath(str(tmp_path / "collection"))
+        assert cfg.clip_last_import_dir in saved_configs
+        assert saved_configs[cfg.clip_last_import_dir] == expected_parent
+        page.deleteLater()
+
+    def test_collection_folder_import_remembers_collection_itself(self, qapp, tmp_path, monkeypatch):
+        saved_configs = {}
+
+        def fake_set(item, val):
+            item.value = val
+            saved_configs[item] = val
+
+        monkeypatch.setattr("qfluentwidgets.qconfig.set", fake_set)
+
+        collection = tmp_path / "all_dramas"
+        collection.mkdir(parents=True, exist_ok=True)
+        _make_drama_folder(collection, "sub_drama1")
+        _make_drama_folder(collection, "sub_drama2")
+
+        page = ClipEditPage()
+        with patch("PySide6.QtWidgets.QFileDialog.getExistingDirectory", return_value=str(collection)):
+            page._pick_drama_folder()
+
+        # Collection: should remember collection itself (not grandparent!)
+        import os
+        expected_collection = os.path.normpath(str(collection))
+        assert cfg.clip_last_import_dir in saved_configs
+        assert saved_configs[cfg.clip_last_import_dir] == expected_collection
+        page.deleteLater()
 
     def test_open_clip_settings_saves_auto_select_setting(self, qapp):
         page = ClipEditPage()

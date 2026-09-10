@@ -1005,6 +1005,7 @@ class ClipEditPage(ScrollArea):
         start = (cfg.clip_last_import_dir.value or "").strip()
         if not start or not os.path.isdir(start):
             start = resolve_video_download_root()
+        start = os.path.normpath(start) if start else ""
         folder = QFileDialog.getExistingDirectory(
             self,
             "选择剧集文件夹（可直接选含多部剧的总目录）",
@@ -1013,17 +1014,19 @@ class ClipEditPage(ScrollArea):
         )
         if not folder:
             return
-        # 记住上一级目录，下次可直接挑选同目录下的其他剧
-        parent = os.path.dirname(folder.rstrip("\\/"))
-        remember = parent if parent and os.path.isdir(parent) else folder
-        qconfig.set(cfg.clip_last_import_dir, remember)
+
+        norm_folder = os.path.normpath(folder)
 
         # 文件夹直接含视频 → 单剧导入（原有行为）
         try:
-            scan_drama_folder(folder)
+            scan_drama_folder(norm_folder)
+            # 单剧：记住上一级目录（同级其他剧所在目录）
+            parent = os.path.dirname(norm_folder)
+            remember = parent if parent and os.path.isdir(parent) else norm_folder
+            qconfig.set(cfg.clip_last_import_dir, remember)
         except DramaFolderError:
             # 不含视频 → 视为剧目总目录，扫描子文件夹批量导入
-            folders = list_drama_folders_under(folder)
+            folders = list_drama_folders_under(norm_folder)
             if not folders:
                 show_dialog(
                     self,
@@ -1032,12 +1035,14 @@ class ClipEditPage(ScrollArea):
                     "提示",
                 )
                 return
+            # 剧目总目录：直接记住该总目录本身，不削减层级
+            qconfig.set(cfg.clip_last_import_dir, norm_folder)
             count = self.vm.import_drama_folders(folders)
             if count > 0 and bool(cfg.clip_auto_select_after_import.value):
                 self._set_all_rows_checked(True)
             return
 
-        res = self.vm.import_drama_folder(folder)
+        res = self.vm.import_drama_folder(norm_folder)
         if res is not None and bool(cfg.clip_auto_select_after_import.value):
             self._set_all_rows_checked(True)
 
