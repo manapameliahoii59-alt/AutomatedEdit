@@ -882,6 +882,13 @@ class ClipEditPage(ScrollArea):
         dlg = ClipSettingsDialog(self.window())
         if dlg.exec() != QDialog.DialogCode.Accepted:
             return
+        enable_gpu = dlg.result_enable_gpu()
+        old_enable_gpu = bool(cfg.encode_enable_gpu.value)
+        qconfig.set(cfg.encode_enable_gpu, enable_gpu)
+        if enable_gpu != old_enable_gpu:
+            from app.data.services.render_service import RenderService
+
+            RenderService.clear_encoder_cache()
         enabled = dlg.result_trim_ep1_continued()
         qconfig.set(cfg.clip_trim_ep1_continued, enabled)
         resolution = dlg.result_resolution()
@@ -890,7 +897,7 @@ class ClipEditPage(ScrollArea):
         resolution_label = dict(RESOLUTION_CHOICES).get(resolution, resolution)
         show_toast(
             self,
-            f"去掉未完待续：{'开' if enabled else '关'} · 成片分辨率：{resolution_label}",
+            f"显卡加速检测：{'开' if enable_gpu else '关'} · 去掉未完待续：{'开' if enabled else '关'} · 成片分辨率：{resolution_label}",
             title="设置",
         )
 

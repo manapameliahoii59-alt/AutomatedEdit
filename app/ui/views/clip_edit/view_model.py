@@ -12,6 +12,12 @@ from app.common.overlay_text_settings import (
     apply_overlay_from_clip_edit_dict,
     clip_edit_settings_patch,
 )
+from app.common.error_sanitizer import (
+    sanitize_plan_error,
+    sanitize_render_error,
+    sanitize_transcribe_error,
+    sanitize_transcribe_warning,
+)
 from app.core.render_queue import CANCEL_MESSAGE, render_queue
 from app.core.task_manager import task_manager
 from app.core.view_model import ViewModel
@@ -209,6 +215,16 @@ class ClipEditViewModel(ViewModel):
 
         task_manager.submit_task(_do, on_success=lambda _ok: None, on_error=_on_error)
 
+    @staticmethod
+    def _format_elapsed(seconds: float) -> str:
+        if seconds < 60:
+            return f"{seconds:.1f} 秒"
+        minutes, secs = divmod(int(seconds), 60)
+        if minutes < 60:
+            return f"{minutes} 分 {secs} 秒"
+        hours, minutes = divmod(minutes, 60)
+        return f"{hours} 小时 {minutes} 分 {secs} 秒"
+
     def get_stage_progress(self, project_id: str, step: str) -> str:
         return self._progress_labels.get(project_id, {}).get(step, "")
 
@@ -386,12 +402,16 @@ class ClipEditViewModel(ViewModel):
         self.loadingChanged.emit(True, title, self._loading_base_content)
 
     def _format_render_message(self, project_name: str, result: RenderResult) -> str:
+        cost_str = ""
+        if result.total_seconds > 0:
+            speed_str = f"，速度 {result.speed_ratio:.1f}x" if result.speed_ratio > 0 else ""
+            cost_str = f"（耗时 {result.total_seconds:.1f}s{speed_str}）"
         if result.success_count == result.total:
-            return f"《{project_name}》渲染完成，已保存至：{result.output_dir}"
+            return f"《{project_name}》渲染完成{cost_str}，已保存至：{result.output_dir}"
         failed = result.total - result.success_count
         return (
-            f"《{project_name}》渲染完成 {result.success_count}/{result.total} 条，"
-            f"失败 {failed} 条，已保存至：{result.output_dir}"
+            f"《{project_name}》渲染完成 {result.success_count}/{result.total} 条"
+            f"（失败 {failed} 条）{cost_str}，已保存至：{result.output_dir}"
         )
 
     def _report_clip_done(self, project_name: str) -> None:
@@ -425,11 +445,12 @@ class ClipEditViewModel(ViewModel):
     def _is_render_cancelled(self, msg: str) -> bool:
         return msg == CANCEL_MESSAGE or "渲染已取消" in msg
 
-    def _emit_render_error(self, msg: str, *, prefix: str = "渲染失败") -> None:
+    def _emit_render_error(self, msg: str, *, drama_name: str = "", prefix: str = "渲染失败") -> None:
         if self._is_render_cancelled(msg):
-            self.messageReceived.emit("渲染已取消")
+            cancel_msg = f"《{drama_name}》渲染已取消" if drama_name else "渲染已取消"
+            self.messageReceived.emit(cancel_msg)
         else:
-            self.errorOccurred.emit(f"{prefix}：{msg}" if prefix else msg)
+            self.errorOccurred.emit(sanitize_render_error(msg, drama_name=drama_name))
 
     def _submit_render(
         self,
@@ -478,11 +499,16 @@ class ClipEditViewModel(ViewModel):
         try:
             warnings = TranscriptionService.check_environment()
         except ImportError as e:
-            self.errorOccurred.emit(f"识别环境检查未通过：{e}")
+            self.errorOccurred.emit(sanitize_transcribe_error(e, drama_name=project.name))
             return
 
         if warnings:
-            self.messageReceived.emit("环境提示：\n- " + "\n- ".join(warnings))
+            sanitized_warnings = [
+                w for w in (sanitize_transcribe_warning(w) for w in warnings) if w
+            ]
+            sanitized_warnings = list(dict.fromkeys(sanitized_warnings))
+            if sanitized_warnings:
+                self.messageReceived.emit("环境提示：\n- " + "\n- ".join(sanitized_warnings))
 
         self._update_status(project_id, "transcribe", DramaStatus.IN_PROGRESS)
         self._show_progress("正在识别", project.name)
@@ -501,7 +527,7 @@ class ClipEditViewModel(ViewModel):
         def _on_error(msg):
             self._remove_task()
             self._update_status(project_id, "transcribe", DramaStatus.PENDING)
-            self.errorOccurred.emit(f"识别失败：{msg}")
+            self.errorOccurred.emit(sanitize_transcribe_error(msg, drama_name=project.name))
 
         task_manager.submit_task(
             _do,
@@ -541,7 +567,7 @@ class ClipEditViewModel(ViewModel):
         def _on_error(msg):
             self._remove_task()
             self._update_status(project_id, "plan", DramaStatus.PENDING)
-            self.errorOccurred.emit(f"策划失败：{msg}")
+            self.errorOccurred.emit(sanitize_plan_error(msg, drama_name=project.name))
 
         task_manager.submit_task(
             _do,
@@ -576,7 +602,7 @@ class ClipEditViewModel(ViewModel):
         def _on_error(msg):
             self._remove_task()
             self._update_status(project_id, "render", DramaStatus.PENDING)
-            self._emit_render_error(msg)
+            self._emit_render_error(msg, drama_name=project.name)
             self._finish_loading_if_idle()
 
         self._submit_render(project, on_success=_on_success, on_error=_on_error)
@@ -663,7 +689,7 @@ class ClipEditViewModel(ViewModel):
                 self._remove_task()
                 self._update_status(pid, "transcribe", DramaStatus.PENDING)
                 results["fail"] += 1
-                self.errorOccurred.emit(f"《{pname}》识别失败：{msg}")
+                self.errorOccurred.emit(sanitize_transcribe_error(msg, drama_name=pname))
                 _run_at(index + 1)
 
             task_manager.submit_task(
@@ -730,7 +756,7 @@ class ClipEditViewModel(ViewModel):
                 self._remove_task()
                 self._update_status(pid, "plan", DramaStatus.PENDING)
                 results["fail"] += 1
-                self.errorOccurred.emit(f"《{pname}》策划失败：{msg}")
+                self.errorOccurred.emit(sanitize_plan_error(msg, drama_name=pname))
                 _run_at(index + 1)
 
             task_manager.submit_task(
@@ -800,6 +826,8 @@ class ClipEditViewModel(ViewModel):
                 if self._active_tasks == 0 and not render_queue.is_busy():
                     if self._is_render_cancelled(msg):
                         self.messageReceived.emit("渲染已取消")
+                    else:
+                        self.errorOccurred.emit(sanitize_render_error(msg, drama_name=pname))
                     self._emit_batch_summary("批量渲染完成", results, skipped)
 
             self._submit_render(
@@ -943,7 +971,7 @@ class ClipEditViewModel(ViewModel):
                 if self._is_render_cancelled(msg):
                     self.messageReceived.emit(f"《{pname}》渲染已取消")
                 else:
-                    self.errorOccurred.emit(f"《{pname}》渲染失败：{msg}")
+                    self.errorOccurred.emit(sanitize_render_error(msg, drama_name=pname))
                 self._finish_loading_if_idle()
 
             self._submit_render(
@@ -957,7 +985,7 @@ class ClipEditViewModel(ViewModel):
         def step2_err(msg):
             self._remove_task()
             self._update_status(pid, "plan", DramaStatus.PENDING)
-            self.errorOccurred.emit(f"《{pname}》策划失败：{msg}")
+            self.errorOccurred.emit(sanitize_plan_error(msg, drama_name=pname))
 
         self._add_task()
         self._show_progress(
@@ -1008,7 +1036,7 @@ class ClipEditViewModel(ViewModel):
             if self._is_render_cancelled(msg):
                 self.messageReceived.emit(f"《{pname}》渲染已取消")
             else:
-                self.errorOccurred.emit(f"《{pname}》渲染失败：{msg}")
+                self.errorOccurred.emit(sanitize_render_error(msg, drama_name=pname))
             self._finish_loading_if_idle()
 
         self._add_task()
@@ -1077,7 +1105,7 @@ class ClipEditViewModel(ViewModel):
                     if self._is_render_cancelled(msg):
                         self.messageReceived.emit(f"《{pname}》渲染已取消")
                     else:
-                        self.errorOccurred.emit(f"《{pname}》渲染失败：{msg}")
+                        self.errorOccurred.emit(sanitize_render_error(msg, drama_name=pname))
                     self._finish_loading_if_idle()
 
                 self._submit_render(
@@ -1091,7 +1119,7 @@ class ClipEditViewModel(ViewModel):
             def step2_err(msg):
                 self._remove_task()
                 self._update_status(pid, "plan", DramaStatus.PENDING)
-                self.errorOccurred.emit(f"《{pname}》策划失败：{msg}")
+                self.errorOccurred.emit(sanitize_plan_error(msg, drama_name=pname))
 
             self._show_progress(
                 "正在策划",
@@ -1106,7 +1134,7 @@ class ClipEditViewModel(ViewModel):
         def step1_err(msg):
             self._remove_task()
             self._update_status(pid, "transcribe", DramaStatus.PENDING)
-            self.errorOccurred.emit(f"《{pname}》识别失败：{msg}")
+            self.errorOccurred.emit(sanitize_transcribe_error(msg, drama_name=pname))
 
         self._add_task()
         self._show_progress("正在识别", pname, index=index, total=total)

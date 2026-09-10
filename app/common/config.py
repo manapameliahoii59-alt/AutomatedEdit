@@ -39,6 +39,10 @@ class Config(MyQConfig):
     # 渲染编码档位（默认：NVENC p5 / x264 superfast）
     encode_nvenc_preset = ConfigItem("Tools", "encode_nvenc_preset", "p5")
     encode_x264_preset = ConfigItem("Tools", "encode_x264_preset", "superfast")
+    # 显卡加速检测（开启后自动检测并使用 NVIDIA / AMD / Intel 硬件加速；关闭后使用 CPU 软编码）
+    encode_enable_gpu = ConfigItem(
+        "Tools", "encode_enable_gpu", True, BoolValidator()
+    )
     # 成片分辨率：720p / 1080p / source（跟随原片）；默认 720p
     encode_output_resolution = ConfigItem(
         "Tools", "encode_output_resolution", "720p"

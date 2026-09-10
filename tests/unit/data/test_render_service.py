@@ -1,3 +1,4 @@
+import pytest
 import subprocess
 import time
 from unittest.mock import MagicMock
@@ -66,6 +67,12 @@ class TestNvencProbe:
 
 
 class TestPreferGpuEnv:
+    @pytest.fixture(autouse=True)
+    def clean_cache(self):
+        RenderService.clear_encoder_cache()
+        yield
+        RenderService.clear_encoder_cache()
+
     def test_force_cpu(self, monkeypatch):
         monkeypatch.setenv("AE_FORCE_CPU_ENCODE", "1")
         monkeypatch.delenv("AE_FORCE_GPU_ENCODE", raising=False)
@@ -292,3 +299,103 @@ class TestRunFfmpeg:
         )
         assert ok is False
         proc.kill.assert_called_once()
+
+
+class TestMultiGpuDetection:
+    @pytest.fixture(autouse=True)
+    def clean_cache(self):
+        RenderService.clear_encoder_cache()
+        yield
+        RenderService.clear_encoder_cache()
+
+    def test_encoder_cache_reuses_result_without_probing_again(self, monkeypatch):
+        probe_count = {"n": 0}
+
+        def fake_probe(ffmpeg, codec):
+            probe_count["n"] += 1
+            return codec == "h264_amf"
+
+        monkeypatch.setattr(RenderService, "_is_gpu_enabled", staticmethod(lambda: True))
+        monkeypatch.setattr(RenderService, "_has_nvenc", staticmethod(lambda _ff: False))
+        monkeypatch.setattr(RenderService, "_probe_codec", fake_probe)
+
+        # 第一次探测：真正探测并缓存
+        info1 = RenderService._detect_best_encoder("ffmpeg")
+        assert info1.codec_name == "h264_amf"
+        first_calls = probe_count["n"]
+        assert first_calls > 0
+
+        # 第二次探测（批量渲染下一个剧目）：直接从内存缓存返回，0 次多余探测
+        info2 = RenderService._detect_best_encoder("ffmpeg")
+        assert info2.codec_name == "h264_amf"
+        assert probe_count["n"] == first_calls
+
+    def test_nvenc_preferred(self, monkeypatch):
+        monkeypatch.setattr(RenderService, "_is_gpu_enabled", staticmethod(lambda: True))
+        monkeypatch.setattr(RenderService, "_has_nvenc", staticmethod(lambda _ff: True))
+        monkeypatch.setattr(RenderService, "_probe_codec", staticmethod(lambda _ff, codec: True))
+        info = RenderService._detect_best_encoder("ffmpeg")
+        assert info.codec_name == "h264_nvenc"
+        assert info.is_gpu is True
+        assert "NVIDIA" in info.vendor_label
+
+    def test_amf_fallback_when_nvenc_fails(self, monkeypatch):
+        monkeypatch.setattr(RenderService, "_is_gpu_enabled", staticmethod(lambda: True))
+        monkeypatch.setattr(RenderService, "_has_nvenc", staticmethod(lambda _ff: False))
+        monkeypatch.setattr(
+            RenderService,
+            "_probe_codec",
+            staticmethod(lambda _ff, codec: codec == "h264_amf"),
+        )
+        info = RenderService._detect_best_encoder("ffmpeg")
+        assert info.codec_name == "h264_amf"
+        assert info.is_gpu is True
+        assert "AMD" in info.vendor_label
+
+    def test_qsv_fallback_when_nvenc_amf_fail(self, monkeypatch):
+        monkeypatch.setattr(RenderService, "_is_gpu_enabled", staticmethod(lambda: True))
+        monkeypatch.setattr(RenderService, "_has_nvenc", staticmethod(lambda _ff: False))
+        monkeypatch.setattr(
+            RenderService,
+            "_probe_codec",
+            staticmethod(lambda _ff, codec: codec == "h264_qsv"),
+        )
+        info = RenderService._detect_best_encoder("ffmpeg")
+        assert info.codec_name == "h264_qsv"
+        assert info.is_gpu is True
+        assert "Intel" in info.vendor_label
+
+    def test_cpu_fallback_when_all_gpu_fail(self, monkeypatch):
+        monkeypatch.setattr(RenderService, "_is_gpu_enabled", staticmethod(lambda: True))
+        monkeypatch.setattr(RenderService, "_has_nvenc", staticmethod(lambda _ff: False))
+        monkeypatch.setattr(RenderService, "_probe_codec", staticmethod(lambda _ff, _c: False))
+        info = RenderService._detect_best_encoder("ffmpeg")
+        assert info.codec_name == "libx264"
+        assert info.is_gpu is False
+
+    def test_gpu_disabled_toggle_forces_cpu(self, monkeypatch):
+        monkeypatch.setattr(RenderService, "_is_gpu_enabled", staticmethod(lambda: False))
+        monkeypatch.setattr(RenderService, "_has_nvenc", staticmethod(lambda _ff: True))
+        info = RenderService._detect_best_encoder("ffmpeg")
+        assert info.codec_name == "libx264"
+        assert info.is_gpu is False
+        assert "已关闭" in info.vendor_label
+
+
+class TestMultiGpuEncodeArgs:
+    def test_amf_args(self):
+        args = RenderService._video_encode_args(use_gpu=True, codec="h264_amf")
+        assert "-c:v" in args and "h264_amf" in args
+        assert "-quality" in args and "speed" in args
+
+    def test_qsv_args(self):
+        args = RenderService._video_encode_args(use_gpu=True, codec="h264_qsv")
+        assert "-c:v" in args and "h264_qsv" in args
+        assert "-preset" in args and "veryfast" in args
+
+    def test_cache_enc_tag_multi(self):
+        assert RenderService._cache_enc_tag(True, "h264_amf") == "amfspeed"
+        assert RenderService._cache_enc_tag(True, "h264_qsv") == "qsvveryfast"
+        assert "nvenc" in RenderService._cache_enc_tag(True, "h264_nvenc")
+        assert "x264" in RenderService._cache_enc_tag(False)
+

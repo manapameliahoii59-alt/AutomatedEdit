@@ -12,6 +12,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable
 
+from app.common.error_sanitizer import sanitize_transcribe_error
 from app.common.runtime import is_dev_runtime
 from app.data.services.changdu_paths import (
     DEFAULT_DOWNLOAD_DIR,
@@ -385,7 +386,8 @@ def _transcribe_drama_folder(folder_path: Path, logger: BatchLogger) -> str | No
         logger.say("   ✅ 识别完成", f"   ✅ 识别完成: {output_path}")
         return scan.folder_path
     except Exception as exc:
-        logger.both(f"   ❌ 识别失败: {exc}")
+        safe_msg = sanitize_transcribe_error(exc, drama_name=scan.name)
+        logger.both(f"   ❌ 识别失败: {safe_msg}")
         return None
 
 

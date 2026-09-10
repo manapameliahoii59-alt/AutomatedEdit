@@ -40,6 +40,19 @@ class ClipSettingsDialog(QDialog):
         form = QFormLayout()
         form.setSpacing(10)
 
+        row_gpu = QHBoxLayout()
+        self._gpu_switch = SwitchButton(self)
+        self._gpu_switch.setOnText("开")
+        self._gpu_switch.setOffText("关")
+        self._gpu_switch.setChecked(bool(cfg.encode_enable_gpu.value))
+        self._gpu_switch.setToolTip(
+            "开启后自动检测显卡硬件加速（支持 NVIDIA 独显、AMD 独显/核显、Intel 核显），大幅提高渲染剪辑速度；\n"
+            "关闭后强制使用纯 CPU 软编码。"
+        )
+        row_gpu.addWidget(self._gpu_switch)
+        row_gpu.addStretch(1)
+        form.addRow("显卡加速检测：", row_gpu)
+
         row = QHBoxLayout()
         self._trim_switch = SwitchButton(self)
         self._trim_switch.setOnText("开")
@@ -76,6 +89,9 @@ class ClipSettingsDialog(QDialog):
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
         root.addWidget(buttons)
+
+    def result_enable_gpu(self) -> bool:
+        return bool(self._gpu_switch.isChecked())
 
     def result_trim_ep1_continued(self) -> bool:
         return bool(self._trim_switch.isChecked())
