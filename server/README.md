@@ -103,7 +103,7 @@ source /www/server/pyporject_evn/项目名_venv/bin/activate
 
 ```env
 DEEPSEEK_API_URL=https://api.deepseek.com/chat/completions
-DEEPSEEK_MODEL=deepseek-v4-flash
+DEEPSEEK_MODEL=deepseek-flash
 # OpenCode Go（用户选 Go 通道时使用）
 OPENCODE_GO_API_URL=https://opencode.ai/zen/go/v1/chat/completions
 OPENCODE_GO_MODEL=deepseek-v4-flash

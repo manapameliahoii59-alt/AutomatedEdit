@@ -104,4 +104,5 @@ changdu_data/
 .deploy.env
 *.tar.gz
 *.log
+.log_housekeeping
 

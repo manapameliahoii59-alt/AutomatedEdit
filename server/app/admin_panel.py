@@ -399,7 +399,7 @@ def user_edit_page(
             plan_thinking_enabled=thinking_enabled,
             plan_choices=list(PLAN_LLM_PRESET_CHOICES),
             saved=bool(saved),
-            default_preset=f"{PLAN_LLM_PROVIDER_DEEPSEEK}|deepseek-v4-flash",
+            default_preset=f"{PLAN_LLM_PROVIDER_DEEPSEEK}|deepseek-flash",
         ),
     )
 

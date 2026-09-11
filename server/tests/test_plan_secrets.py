@@ -123,7 +123,7 @@ def test_plan_llm_preset_roundtrip():
     assert plan_llm_preset_label(zp47, zm47) == "智谱 GLM / glm-4.7-flash"
 
 
-def test_plan_llm_preset_supports_multiple_deepseek_v4_1_flash():
+def test_plan_llm_preset_deepseek_flash_normalized():
     from app.services.plan_secrets import (
         PLAN_LLM_PRESET_CHOICES,
         decode_plan_llm_preset,
@@ -132,22 +132,30 @@ def test_plan_llm_preset_supports_multiple_deepseek_v4_1_flash():
     )
 
     preset_values = {value for value, _label in PLAN_LLM_PRESET_CHOICES}
-    # 同一模型 deepseek-v4.1-flash 通过不同厂商提供多个可选项
-    assert "deepseek|deepseek-v4.1-flash" in preset_values
-    assert "opencode_go|deepseek-v4.1-flash" in preset_values
+    # 官方 DeepSeek flash 统一为 deepseek-flash
+    assert "deepseek|deepseek-flash" in preset_values
+    assert "deepseek|deepseek-v4-flash" not in preset_values
+    assert "deepseek|deepseek-v4.1-flash" not in preset_values
+    # OpenCode Go 的 V4.1 flash 选项已移除
+    assert "opencode_go|deepseek-v4.1-flash" not in preset_values
 
-    for provider, label_prefix in (
-        ("deepseek", "官方 DeepSeek"),
-        ("opencode_go", "OpenCode Go"),
-    ):
-        value = encode_plan_llm_preset(provider, "deepseek-v4.1-flash")
-        assert value == f"{provider}|deepseek-v4.1-flash"
-        got_provider, got_model = decode_plan_llm_preset(value)
-        assert got_provider == provider
-        assert got_model == "deepseek-v4.1-flash"
-        assert plan_llm_preset_label(got_provider, got_model) == (
-            f"{label_prefix} / deepseek-v4.1-flash"
+    # 历史/旧名自动归一为 deepseek-flash
+    for legacy in ("deepseek-v4-flash", "deepseek-v4.1-flash"):
+        assert encode_plan_llm_preset("deepseek", legacy) == (
+            "deepseek|deepseek-flash"
         )
+        provider, model = decode_plan_llm_preset(f"deepseek|{legacy}")
+        assert provider == "deepseek"
+        assert model == "deepseek-flash"
+
+    assert plan_llm_preset_label("deepseek", "deepseek-v4.1-flash") == (
+        "官方 DeepSeek / deepseek-flash（V4.1 Flash）"
+    )
+
+    # OpenCode Go 的 deepseek-v4-flash 不受影响
+    assert encode_plan_llm_preset("opencode_go", "deepseek-v4-flash") == (
+        "opencode_go|deepseek-v4-flash"
+    )
 
 
 def test_resolve_plan_llm_config_xiaomi(monkeypatch):

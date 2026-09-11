@@ -26,12 +26,8 @@ PLAN_LLM_PROVIDERS = frozenset(
 # 管理后台下拉：(value, label)；value = provider|model
 PLAN_LLM_PRESET_CHOICES: tuple[tuple[str, str], ...] = (
     (
-        f"{PLAN_LLM_PROVIDER_DEEPSEEK}|deepseek-v4-flash",
-        "官方 DeepSeek / deepseek-v4-flash",
-    ),
-    (
-        f"{PLAN_LLM_PROVIDER_DEEPSEEK}|deepseek-v4.1-flash",
-        "官方 DeepSeek / deepseek-v4.1-flash",
+        f"{PLAN_LLM_PROVIDER_DEEPSEEK}|deepseek-flash",
+        "官方 DeepSeek / deepseek-flash（V4.1 Flash）",
     ),
     (
         f"{PLAN_LLM_PROVIDER_DEEPSEEK}|deepseek-v4-pro",
@@ -40,10 +36,6 @@ PLAN_LLM_PRESET_CHOICES: tuple[tuple[str, str], ...] = (
     (
         f"{PLAN_LLM_PROVIDER_OPENCODE_GO}|deepseek-v4-flash",
         "OpenCode Go / deepseek-v4-flash",
-    ),
-    (
-        f"{PLAN_LLM_PROVIDER_OPENCODE_GO}|deepseek-v4.1-flash",
-        "OpenCode Go / deepseek-v4.1-flash",
     ),
     (
         f"{PLAN_LLM_PROVIDER_OPENCODE_GO}|deepseek-v4-pro",
@@ -105,9 +97,18 @@ def normalize_plan_llm_provider(value: str | None) -> str:
     return PLAN_LLM_PROVIDER_DEEPSEEK
 
 
+# 官方 DeepSeek 通道旧 flash 名称 → 当前可用模型 ID（deepseek-flash）
+_DEEPSEEK_FLASH_ALIASES = frozenset({"deepseek-v4-flash", "deepseek-v4.1-flash"})
+
+
 def normalize_plan_llm_model(value: str | None, *, provider: str) -> str:
     model = str(value or "").strip()
     if model:
+        if (
+            provider == PLAN_LLM_PROVIDER_DEEPSEEK
+            and model in _DEEPSEEK_FLASH_ALIASES
+        ):
+            return "deepseek-flash"
         return model
     if provider == PLAN_LLM_PROVIDER_OPENCODE_GO:
         return (settings.opencode_go_model or "deepseek-v4-flash").strip()
@@ -115,7 +116,7 @@ def normalize_plan_llm_model(value: str | None, *, provider: str) -> str:
         return (settings.xiaomi_mimo_model or "mimo-v2.5").strip()
     if provider == PLAN_LLM_PROVIDER_ZHIPU:
         return (settings.zhipu_model or "glm-5.3-flash").strip()
-    return (settings.deepseek_model or "deepseek-v4-flash").strip()
+    return (settings.deepseek_model or "deepseek-flash").strip()
 
 
 def encode_plan_llm_preset(provider: str, model: str) -> str:

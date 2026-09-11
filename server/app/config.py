@@ -12,7 +12,7 @@ class Settings(BaseSettings):
     iocpx_base_url: str = "https://api.iocpx.com"
 
     deepseek_api_url: str = "https://api.deepseek.com/chat/completions"
-    deepseek_model: str = "deepseek-v4-flash"
+    deepseek_model: str = "deepseek-flash"
     deepseek_api_keys: str = ""
 
     # OpenCode Go（Zen）策划通道默认端点
