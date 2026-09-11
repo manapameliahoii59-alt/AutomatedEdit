@@ -1,6 +1,6 @@
 import pytest
 from unittest.mock import MagicMock
-from app.common.utils import StyleSheet, set_window_center, show_dialog
+from app.common.utils import StyleSheet, set_window_center, show_dialog, show_error_toast
 from qfluentwidgets import Theme, qconfig, Dialog
 from PySide6.QtWidgets import QWidget
 from PySide6.QtCore import QRect, QPoint
@@ -86,4 +86,45 @@ class TestUtils:
         show_dialog(parent, "音频识别遇到异常")
         # 应该调用 insertWidget 插入 feedback_btn
         mock_instance.buttonLayout.insertWidget.assert_called()
+
+    def test_show_error_toast_weak_hint_and_auto_report(self, mocker):
+        mock_toast = mocker.patch("app.common.utils.show_toast")
+        mock_task_manager = mocker.patch("app.core.task_manager.TaskManager")
+
+        show_error_toast(MagicMock(), "识别失败，请重试")
+
+        mock_toast.assert_called_once()
+        assert mock_toast.call_args.kwargs.get("level") == "error"
+        mock_task_manager.instance.return_value.submit_task.assert_called_once()
+        assert (
+            mock_task_manager.instance.return_value.submit_task.call_args.kwargs.get(
+                "check_access"
+            )
+            is False
+        )
+
+    def test_show_error_toast_can_disable_auto_report(self, mocker):
+        mock_toast = mocker.patch("app.common.utils.show_toast")
+        mock_task_manager = mocker.patch("app.core.task_manager.TaskManager")
+
+        show_error_toast(MagicMock(), "仅提示不上报", auto_report=False)
+
+        mock_toast.assert_called_once()
+        mock_task_manager.instance.return_value.submit_task.assert_not_called()
+
+    def test_show_error_toast_targets_active_modal(self, mocker):
+        mock_toast = mocker.patch("app.common.utils.show_toast")
+        mocker.patch("app.core.task_manager.TaskManager")
+
+        modal = MagicMock()
+        modal.isVisible.return_value = True
+        mock_app = mocker.patch("app.common.utils.QApplication")
+        mock_app.instance.return_value = mock_app
+        mock_app.activeModalWidget.return_value = modal
+
+        shadowed = MagicMock()
+        show_error_toast(shadowed, "被一键执行看板遮挡")
+
+        # 弱提示应挂到活动模态窗口，而不是被遮挡的主页面
+        assert mock_toast.call_args[0][0] is modal
 

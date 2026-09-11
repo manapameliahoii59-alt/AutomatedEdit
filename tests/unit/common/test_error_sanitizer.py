@@ -11,6 +11,7 @@ from app.common.error_sanitizer import (
     sanitize_render_error,
     sanitize_transcribe_error,
     sanitize_transcribe_warning,
+    sanitize_ui_error,
 )
 
 
@@ -76,6 +77,19 @@ class TestErrorSanitizerDevMode:
         result = sanitize_transcribe_warning(warning)
         assert result == warning
 
+    def test_ui_error_dev_keeps_raw_detail(self, monkeypatch):
+        monkeypatch.setenv("AE_FORCE_DEV_ERROR", "1")
+        monkeypatch.delenv("AE_FORCE_PROD_ERROR", raising=False)
+
+        raw = "无法连接服务器（连接超时）：http://129.204.86.63:7172"
+        result = sanitize_ui_error(
+            raw, stage="settings_sync", friendly="设置同步失败，请检查网络后重试"
+        )
+
+        assert "设置同步失败，请检查网络后重试" in result
+        assert "[开发诊断]" in result
+        assert "129.204.86.63" in result
+
 
 class TestErrorSanitizerProdMode:
     """In production packaged mode, users must never see model names, LLM references, or raw technical internals."""
@@ -113,6 +127,41 @@ class TestErrorSanitizerProdMode:
         assert "组件未就绪" in sanitized or "加载异常" in sanitized
         assert "NoneType" not in sanitized
         assert "not callable" not in sanitized
+
+    def test_ui_error_prod_masks_technical_detail(self, monkeypatch):
+        monkeypatch.delenv("AE_FORCE_DEV_ERROR", raising=False)
+        monkeypatch.setenv("AE_FORCE_PROD_ERROR", "1")
+
+        raw = (
+            "无法连接服务器：HTTPSConnectionPool(host='129.204.86.63', port=7172): "
+            "Max retries exceeded with url: /api/client/quota/today"
+        )
+        sanitized = sanitize_ui_error(
+            raw, stage="settings_sync", friendly="设置同步失败，请检查网络后重试"
+        )
+
+        assert sanitized == "设置同步失败，请检查网络后重试"
+        assert "129.204.86.63" not in sanitized
+        assert "HTTPSConnectionPool" not in sanitized
+        assert "[开发诊断]" not in sanitized
+
+    def test_ui_error_records_reportable_raw(self, monkeypatch):
+        from app.data.services.error_feedback_service import error_feedback_service
+
+        monkeypatch.delenv("AE_FORCE_DEV_ERROR", raising=False)
+        monkeypatch.setenv("AE_FORCE_PROD_ERROR", "1")
+
+        sanitize_ui_error(
+            "底层堆栈：api.py line 95 ConnectTimeout",
+            stage="render_test",
+            friendly="编码速度测试失败，请稍后重试",
+        )
+
+        latest = error_feedback_service.get_latest_report()
+        assert latest is not None
+        assert latest.error_stage == "render_test"
+        assert "ConnectTimeout" in latest.raw_error
+        assert latest.friendly_msg == "编码速度测试失败，请稍后重试"
 
     def test_plan_error_prod_masks_llm_details(self, monkeypatch):
         monkeypatch.delenv("AE_FORCE_DEV_ERROR", raising=False)

@@ -6,12 +6,21 @@ from qfluentwidgets import qconfig
 
 from app.common.aes import aes_decrypt
 from app.common.config import VERSION, cfg, DEFAULT_API_BASE_URL
+from app.common.my_logger import my_logger as logger
 
 
 class ApiError(Exception):
-    def __init__(self, message: str, status_code: int | None = None):
+    def __init__(
+        self,
+        message: str,
+        status_code: int | None = None,
+        *,
+        detail: str = "",
+    ):
         super().__init__(message)
         self.status_code = status_code
+        # 技术细节（服务器地址 / 底层异常）仅用于日志与排查，不面向用户展示
+        self.detail = detail or ""
 
 
 @dataclass
@@ -91,15 +100,23 @@ class RemoteApi:
                 method, url, headers=self._headers(), timeout=timeout, **kwargs
             )
         except requests.exceptions.ConnectTimeout as e:
+            logger.warning("连接服务器超时: {} ({})", self.base_url, e)
             raise ApiError(
-                f'无法连接服务器（连接超时）：{self.base_url}，请检查网络或稍后重试'
+                "无法连接服务器（连接超时），请检查网络或稍后重试",
+                detail=f"{self.base_url} | {e}",
             ) from e
         except requests.exceptions.ReadTimeout as e:
+            logger.warning("服务器响应超时: {} ({})", self.base_url, e)
             raise ApiError(
-                f'服务器响应超时：{self.base_url}，请稍后重试'
+                "服务器响应超时，请稍后重试",
+                detail=f"{self.base_url} | {e}",
             ) from e
         except requests.RequestException as e:
-            raise ApiError(f'无法连接服务器：{e}') from e
+            logger.warning("无法连接服务器: {} ({})", self.base_url, e)
+            raise ApiError(
+                "无法连接服务器，请检查网络或稍后重试",
+                detail=f"{self.base_url} | {e}",
+            ) from e
         if resp.encoding is None:
             resp.encoding = 'utf-8'
         if resp.status_code >= 400:

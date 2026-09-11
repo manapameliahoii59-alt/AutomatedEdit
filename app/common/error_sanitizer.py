@@ -188,6 +188,29 @@ def sanitize_render_error(error: Any, *, drama_name: str = "") -> str:
     return _finish(f"{prefix}视频渲染合成失败，请检查文件后重试")
 
 
+def sanitize_ui_error(
+    error: Any,
+    *,
+    stage: str = "ui",
+    drama_name: str = "",
+    friendly: str = "操作失败，请稍后重试",
+) -> str:
+    """通用 UI 报错脱敏：记录原始异常，生产环境仅返回友好文案。
+
+    用于不经过识别/策划/渲染专用脱敏函数的报错（设置同步、速度测试等），
+    避免服务器地址、底层异常等技术细节泄漏给用户，同时保留可上报的异常记录。
+    """
+    raw = _to_raw_string(error)
+    prefix = f"《{drama_name}》" if drama_name else ""
+    return _format_error_message(
+        f"{prefix}{friendly}",
+        raw,
+        stage=stage,
+        drama_name=drama_name,
+        original_error=error,
+    )
+
+
 def sanitize_transcribe_warning(warning: str) -> str:
     """清洗环境检查警告文案。"""
     raw = str(warning or "").strip()

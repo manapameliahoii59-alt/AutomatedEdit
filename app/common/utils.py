@@ -2,7 +2,7 @@ from enum import Enum
 
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QDesktopServices
-from PySide6.QtWidgets import QLabel, QLineEdit, QWidget
+from PySide6.QtWidgets import QApplication, QLabel, QLineEdit, QWidget
 from qfluentwidgets import BodyLabel, Dialog, InfoBar, InfoBarPosition, LineEdit, PushButton, StyleSheetBase, Theme, qconfig
 
 from app.common.aes import aes_encrypt
@@ -174,6 +174,68 @@ def show_toast(
         InfoBar.info(**kwargs)
     else:
         InfoBar.success(**kwargs)
+
+
+def resolve_toast_parent(parent):
+    """弱提示优先挂到当前活动模态窗口，避免被「一键执行」等看板弹框遮挡。"""
+    try:
+        app = QApplication.instance()
+        if app is not None:
+            modal = app.activeModalWidget()
+            if modal is not None and modal.isVisible():
+                return modal
+            active = app.activeWindow()
+            if (
+                active is not None
+                and active.isVisible()
+                and bool(getattr(active, "isModal", lambda: False)())
+            ):
+                return active
+    except Exception:
+        pass
+    return parent
+
+
+def show_error_toast(
+    parent,
+    content: str,
+    *,
+    title: str = "错误",
+    duration: int = 5000,
+    auto_report: bool = True,
+) -> None:
+    """非阻塞报错弱提示；并自动将本次异常上报服务器（同内容 60 秒去重）。"""
+    show_toast(
+        resolve_toast_parent(parent),
+        content,
+        title=title,
+        level="error",
+        duration=duration,
+    )
+    if not auto_report:
+        return
+
+    def _async_send():
+        from app.data.services.error_feedback_service import error_feedback_service
+
+        return error_feedback_service.submit_matching_report(content)
+
+    def _noop(*_args, **_kwargs):
+        return None
+
+    try:
+        from app.core.task_manager import TaskManager
+
+        TaskManager.instance().submit_task(
+            _async_send,
+            on_success=_noop,
+            on_error=_noop,
+            check_access=False,
+        )
+    except Exception:
+        import threading
+
+        threading.Thread(target=_async_send, daemon=True).start()
 
 
 def changdu_account_summary() -> str:

@@ -55,6 +55,16 @@ _startup_log(f"python={sys.version.split()[0]} platform={sys.platform}")
 
 sys.excepthook = _write_crash_log
 
+# 清理膨胀的本地日志（每日一次），必须在重定向 stderr 之前执行
+_startup_log("log housekeeping begin")
+try:
+    from app.common.log_housekeeping import run_daily_log_cleanup  # noqa: E402
+
+    run_daily_log_cleanup(_APP_DIR)
+except Exception:
+    pass
+_startup_log("log housekeeping done")
+
 # 未处理的异常也通过 stderr 写入文件
 try:
     stderr_fd = open(_CRASH_LOG, "a", encoding="utf-8")

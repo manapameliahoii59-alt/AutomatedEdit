@@ -17,6 +17,7 @@ from app.common.error_sanitizer import (
     sanitize_render_error,
     sanitize_transcribe_error,
     sanitize_transcribe_warning,
+    sanitize_ui_error,
 )
 from app.core.render_queue import CANCEL_MESSAGE, render_queue
 from app.core.task_manager import task_manager
@@ -105,7 +106,11 @@ class ClipEditViewModel(ViewModel):
             return True
 
         def _on_error(msg: str):
-            self.errorOccurred.emit(f"文件名标识同步失败：{msg}")
+            self.errorOccurred.emit(
+                sanitize_ui_error(
+                    msg, stage="settings_sync", friendly="文件名标识同步失败，请检查网络后重试"
+                )
+            )
 
         task_manager.submit_task(_do, on_success=lambda _ok: None, on_error=_on_error)
 
@@ -124,7 +129,11 @@ class ClipEditViewModel(ViewModel):
             return True
 
         def _on_error(msg: str):
-            self.errorOccurred.emit(f"文件名格式同步失败：{msg}")
+            self.errorOccurred.emit(
+                sanitize_ui_error(
+                    msg, stage="settings_sync", friendly="文件名格式同步失败，请检查网络后重试"
+                )
+            )
 
         task_manager.submit_task(_do, on_success=lambda _ok: None, on_error=_on_error)
 
@@ -142,7 +151,11 @@ class ClipEditViewModel(ViewModel):
             return True
 
         def _on_error(msg: str):
-            self.errorOccurred.emit(f"成片分辨率同步失败：{msg}")
+            self.errorOccurred.emit(
+                sanitize_ui_error(
+                    msg, stage="settings_sync", friendly="成片分辨率同步失败，请检查网络后重试"
+                )
+            )
 
         task_manager.submit_task(_do, on_success=lambda _ok: None, on_error=_on_error)
 
@@ -166,7 +179,11 @@ class ClipEditViewModel(ViewModel):
             return True
 
         def _on_error(msg: str):
-            self.errorOccurred.emit(f"画面文字设置同步失败：{msg}")
+            self.errorOccurred.emit(
+                sanitize_ui_error(
+                    msg, stage="settings_sync", friendly="画面文字设置同步失败，请检查网络后重试"
+                )
+            )
 
         task_manager.submit_task(_do, on_success=lambda _ok: None, on_error=_on_error)
 
@@ -182,7 +199,11 @@ class ClipEditViewModel(ViewModel):
             return True
 
         def _on_error(msg: str):
-            self.errorOccurred.emit(f"画面文字组同步失败：{msg}")
+            self.errorOccurred.emit(
+                sanitize_ui_error(
+                    msg, stage="settings_sync", friendly="画面文字组同步失败，请检查网络后重试"
+                )
+            )
 
         task_manager.submit_task(_do, on_success=lambda _ok: None, on_error=_on_error)
 
@@ -220,7 +241,11 @@ class ClipEditViewModel(ViewModel):
             return True
 
         def _on_error(msg: str):
-            self.errorOccurred.emit(f"策划设置同步失败：{msg}")
+            self.errorOccurred.emit(
+                sanitize_ui_error(
+                    msg, stage="settings_sync", friendly="策划设置同步失败，请检查网络后重试"
+                )
+            )
 
         task_manager.submit_task(_do, on_success=lambda _ok: None, on_error=_on_error)
 
@@ -650,7 +675,11 @@ class ClipEditViewModel(ViewModel):
             if self._is_render_cancelled(msg):
                 self.messageReceived.emit("编码速度测试已取消")
             else:
-                self.errorOccurred.emit(f"编码速度测试失败：{msg}")
+                self.errorOccurred.emit(
+                    sanitize_ui_error(
+                        msg, stage="render_test", friendly="编码速度测试失败，请稍后重试"
+                    )
+                )
             self._finish_loading_if_idle()
 
         task_manager.submit_task(_do, on_success=_on_success, on_error=_on_error)

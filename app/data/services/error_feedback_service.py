@@ -6,6 +6,7 @@ import collections
 from dataclasses import dataclass, field
 import platform
 import sys
+import threading
 import time
 import traceback
 from typing import Any
@@ -52,6 +53,9 @@ class ErrorFeedbackService:
     def __init__(self, max_history: int = 20) -> None:
         self._history: collections.deque[ErrorReportData] = collections.deque(maxlen=max_history)
         self._latest_report: ErrorReportData | None = None
+        # 去重：同一条错误文案在窗口期内只自动上报一次
+        self._recent_submitted: dict[str, float] = {}
+        self._submit_lock = threading.Lock()
 
     def record_error(
         self,
@@ -150,6 +154,43 @@ class ErrorFeedbackService:
             msg = str(e) or "网络连接异常"
             logger.warning("上报错误反馈失败: {}", msg)
             return False, msg
+
+    def _is_recently_submitted(self, key: str, now: float, window: float) -> bool:
+        ts = self._recent_submitted.get(key)
+        return ts is not None and (now - ts) < window
+
+    def _prune_recent_submitted(self, now: float, window: float) -> None:
+        expired = [key for key, ts in self._recent_submitted.items() if now - ts >= window]
+        for key in expired:
+            self._recent_submitted.pop(key, None)
+
+    def submit_matching_report(
+        self,
+        content: str = "",
+        *,
+        max_age_seconds: float = 60.0,
+        dedupe_seconds: float = 60.0,
+    ) -> bool:
+        """查找并自动上报与文案匹配的异常；同内容在去重窗口内只上报一次。
+
+        供非阻塞弱提示复用：命中已记录的异常才上报，业务提示类文案不会上报。
+        """
+        with self._submit_lock:
+            report = self.find_matching_report(content, max_age_seconds=max_age_seconds)
+            if report is None:
+                return False
+
+            key = (report.friendly_msg or content or "").strip()
+            now = time.time()
+            if key and self._is_recently_submitted(key, now, dedupe_seconds):
+                logger.info("错误反馈去重跳过（{} 秒内已上报）: {}", dedupe_seconds, key)
+                return False
+
+            ok, _msg = self.submit_report(report)
+            if ok and key:
+                self._recent_submitted[key] = now
+                self._prune_recent_submitted(now, dedupe_seconds)
+            return ok
 
 
 error_feedback_service = ErrorFeedbackService()

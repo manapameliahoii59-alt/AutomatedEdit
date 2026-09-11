@@ -73,7 +73,14 @@ from app.ui.components.export_name_format_dialog import ExportNameFormatDialog
 from app.ui.components.outro_settings_dialog import OutroSettingsDialog
 from app.ui.components.overlay_text_groups_dialog import OverlayTextGroupsDialog
 from app.common.runtime import is_dev_runtime
-from app.common.utils import StyleSheet, setup_confirm_dialog, show_dialog, show_toast
+from app.common.error_sanitizer import sanitize_ui_error
+from app.common.utils import (
+    StyleSheet,
+    setup_confirm_dialog,
+    show_dialog,
+    show_error_toast,
+    show_toast,
+)
 from app.data.models.drama_project import DramaProject, DramaStatus
 from app.data.services.changdu_paths import resolve_video_download_root
 from app.data.services.drama_folder_service import (
@@ -357,7 +364,7 @@ class ClipEditPage(ScrollArea):
         self.vm.batchExecutionUpdated.connect(self._on_batch_execution_updated)
         self.vm.batchExecutionFinished.connect(self._on_batch_execution_finished)
         self.vm.messageReceived.connect(self._on_message_received)
-        self.vm.errorOccurred.connect(lambda msg: show_dialog(self, msg, "提示"))
+        self.vm.errorOccurred.connect(lambda msg: show_error_toast(self, msg))
         self.vm.settingsLoaded.connect(self._on_settings_loaded)
         self._refresh_table(self.vm.get_projects())
         qconfig.themeChanged.connect(lambda *_: self._refresh_table(self.vm.get_projects()))
@@ -968,7 +975,12 @@ class ClipEditPage(ScrollArea):
                     self._set_all_rows_checked(True)
                 self.vm.batch_all(ids)
             except Exception as e:
-                show_dialog(self, f"一键执行失败：{e}", "错误")
+                show_error_toast(
+                    self,
+                    sanitize_ui_error(
+                        e, stage="clip", friendly="一键执行失败，请稍后重试"
+                    ),
+                )
 
     def _confirm_delete(self, project_id: str):
         self.vm.remove_project(project_id)

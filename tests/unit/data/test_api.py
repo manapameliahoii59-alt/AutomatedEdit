@@ -1,3 +1,4 @@
+import requests
 import pytest
 from app.data.api.api import DemoApi, RemoteApi, ApiError
 
@@ -39,3 +40,21 @@ class TestRemoteApi:
 
         with pytest.raises(ApiError):
             api.login('u', 'wrong')
+
+    def test_connect_timeout_hides_server_address(self, mocker):
+        api = RemoteApi('http://129.204.86.63:7172')
+        mocker.patch.object(
+            api._session,
+            'request',
+            side_effect=requests.exceptions.ConnectTimeout('boom'),
+        )
+
+        with pytest.raises(ApiError) as excinfo:
+            api._request('GET', '/api/auth/me')
+
+        msg = str(excinfo.value)
+        assert '无法连接服务器' in msg
+        assert '129.204.86.63' not in msg
+        assert 'http://' not in msg
+        # 技术细节保留在 detail 中，仅用于日志/排查
+        assert '129.204.86.63' in excinfo.value.detail

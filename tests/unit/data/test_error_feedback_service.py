@@ -100,6 +100,57 @@ class TestErrorFeedbackService:
         assert "网络不可达" in msg
         assert rep.submitted is False
 
+    def test_submit_matching_report_success_and_dedupe(self, mocker):
+        svc = ErrorFeedbackService()
+        mock_api = mocker.MagicMock()
+        mock_api.post_error_report.return_value = {"ok": True, "id": 1}
+        mocker.patch("app.data.services.error_feedback_service.get_api", return_value=mock_api)
+
+        rep = svc.record_error(
+            stage="render",
+            drama_name="剧目B",
+            friendly_msg="视频渲染合成失败，请检查文件后重试",
+            raw_error="ffmpeg exit 1",
+        )
+        assert svc.submit_matching_report("《剧目B》视频渲染合成失败，请检查文件后重试") is True
+        assert rep.submitted is True
+        assert mock_api.post_error_report.call_count == 1
+
+        # 同内容 60 秒内再次出现，不再重复上报
+        svc.record_error(
+            stage="render",
+            drama_name="剧目B",
+            friendly_msg="视频渲染合成失败，请检查文件后重试",
+            raw_error="ffmpeg exit 1 again",
+        )
+        assert svc.submit_matching_report("《剧目B》视频渲染合成失败，请检查文件后重试") is False
+        assert mock_api.post_error_report.call_count == 1
+
+    def test_submit_matching_report_returns_false_without_match(self, mocker):
+        svc = ErrorFeedbackService()
+        mock_api = mocker.MagicMock()
+        mocker.patch("app.data.services.error_feedback_service.get_api", return_value=mock_api)
+
+        assert svc.submit_matching_report("这里没有任何匹配的异常") is False
+        mock_api.post_error_report.assert_not_called()
+
+    def test_submit_matching_report_failure_retries(self, mocker):
+        svc = ErrorFeedbackService()
+        mock_api = mocker.MagicMock()
+        mock_api.post_error_report.side_effect = Exception("网络不可达")
+        mocker.patch("app.data.services.error_feedback_service.get_api", return_value=mock_api)
+
+        svc.record_error(
+            stage="plan",
+            drama_name="剧目C",
+            friendly_msg="智能策划方案生成失败，请稍后重试",
+            raw_error="timeout",
+        )
+        assert svc.submit_matching_report("《剧目C》智能策划方案生成失败，请稍后重试") is False
+        # 失败不写入去重窗口，可再次尝试
+        assert svc.submit_matching_report("《剧目C》智能策划方案生成失败，请稍后重试") is False
+        assert mock_api.post_error_report.call_count == 2
+
 
 class TestErrorSanitizerIntegration:
     def test_transcribe_error_records_feedback(self):
