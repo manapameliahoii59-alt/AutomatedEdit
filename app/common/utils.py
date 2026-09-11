@@ -2,8 +2,8 @@ from enum import Enum
 
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QDesktopServices
-from PySide6.QtWidgets import QLabel, QLineEdit
-from qfluentwidgets import BodyLabel, InfoBar, InfoBarPosition, LineEdit, Theme, Dialog, StyleSheetBase, qconfig
+from PySide6.QtWidgets import QLabel, QLineEdit, QWidget
+from qfluentwidgets import BodyLabel, Dialog, InfoBar, InfoBarPosition, LineEdit, PushButton, StyleSheetBase, Theme, qconfig
 
 from app.common.aes import aes_encrypt
 from app.common.config import cfg
@@ -52,7 +52,7 @@ def setup_confirm_dialog(
     dialog.buttonGroup.setFixedHeight(52)
 
 
-def show_dialog(parent, content, title='提示', url=None, callback=None):
+def show_dialog(parent, content, title='提示', url=None, callback=None, *, error_report=None):
     w = Dialog(title, content, parent)
     w.contentLabel.setOpenExternalLinks(True)
     w.contentLabel.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
@@ -64,12 +64,82 @@ def show_dialog(parent, content, title='提示', url=None, callback=None):
     w.contentLabel.setMaximumHeight(max_height * 0.5)
     # w.contentLabel.setMinimumWidth(240)
     w.windowTitleLabel.hide()
+
+    target_report = error_report
+    if target_report is None:
+        try:
+            from app.data.services.error_feedback_service import error_feedback_service
+
+            target_report = error_feedback_service.find_matching_report(content)
+        except Exception:
+            target_report = None
+
+    feedback_btn = None
+    if target_report:
+        btn_parent = w if isinstance(w, QWidget) else None
+        feedback_btn = PushButton("反馈错误", btn_parent)
+        feedback_btn.setToolTip("将此次异常诊断信息上传至服务器以协助排查")
+
+        def _on_feedback_click():
+            try:
+                feedback_btn.setEnabled(False)
+                feedback_btn.setText("正在反馈...")
+            except RuntimeError:
+                pass
+
+            def _async_send():
+                from app.data.services.error_feedback_service import error_feedback_service
+
+                return error_feedback_service.submit_report(target_report)
+
+            def _on_finish(result):
+                ok, err_msg = result if isinstance(result, tuple) else (False, str(result))
+                try:
+                    if ok:
+                        feedback_btn.setText("已反馈 ✅")
+                        feedback_btn.setEnabled(False)
+                    else:
+                        feedback_btn.setText("重试反馈")
+                        feedback_btn.setEnabled(True)
+                        show_toast(w, f"反馈发送失败: {err_msg}", level="warning")
+                except RuntimeError:
+                    pass
+
+            try:
+                from app.core.task_manager import TaskManager
+
+                TaskManager.instance().submit_task(
+                    _async_send,
+                    on_success=_on_finish,
+                    on_error=lambda err: _on_finish((False, err)),
+                    check_access=False,
+                )
+            except Exception:
+                import threading
+
+                def _run_thread():
+                    res = _async_send()
+                    _on_finish(res)
+
+                threading.Thread(target=_run_thread, daemon=True).start()
+
+        feedback_btn.clicked.connect(_on_feedback_click)
+
     if not callback:
         w.yesButton.hide()
         w.cancelButton.setText('确定')
-        w.buttonLayout.insertWidget(0, QLabel(''))
-        w.buttonLayout.setStretch(0, 1)
-        w.buttonLayout.setStretch(1, 1)
+        if feedback_btn:
+            w.buttonLayout.insertWidget(0, feedback_btn)
+            w.buttonLayout.insertStretch(1, 1)
+        else:
+            w.buttonLayout.insertWidget(0, QLabel(''))
+            w.buttonLayout.setStretch(0, 1)
+            w.buttonLayout.setStretch(1, 1)
+    else:
+        if feedback_btn:
+            w.buttonLayout.insertWidget(0, feedback_btn)
+            w.buttonLayout.insertStretch(1, 1)
+
     if w.exec():
         if callback:
             callback()

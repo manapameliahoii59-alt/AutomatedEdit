@@ -32,6 +32,9 @@ NUITKA_NOFOLLOW_MODULES = (
     "modelscope",
     # funasr 依赖包内 version.txt 等数据文件，编译后易缺失，改为源码拷贝
     "funasr",
+    # sentencepiece 的 SWIG 原生扩展 _sentencepiece.pyd 被 Nuitka 编译版包遮蔽后无法加载，
+    # 导致 funasr 的 SentencepiecesTokenizer 注册失败（识别时组件未就绪），改为源码拷贝
+    "sentencepiece",
     # torch 子包中使用 walrus 操作符等语法，Nuitka 无法稳定编译
     "torch._dynamo",
     "torch._inductor",
@@ -87,6 +90,8 @@ FUNASR_RUNTIME_COPY_PACKAGES = (
     "llvmlite",
     "llvmlite.libs",
     "sentencepiece",
+    # sentencepiece 的 *_pb2 依赖 google.protobuf（含 _upb/_message.pyd）
+    "google",
     "rapidocr_onnxruntime",
     "onnxruntime",
     # modelscope / transformers / funasr 常见传递依赖（Nuitka 常漏）
@@ -100,6 +105,8 @@ FUNASR_RUNTIME_COPY_PACKAGES = (
     "requests",
     "urllib3",
     "charset_normalizer",
+    "*__mypyc*.pyd",
+    "typing_extensions.py",
     "idna",
     "certifi",
     "huggingface_hub",
@@ -289,6 +296,7 @@ def bundle_config() -> None:
         "User": {
             "user": "",
             "password": "",
+            "enabled_tabs": "video_download,clip_edit",
         },
         "LLM": {
             "dashscope_api_key": "",
@@ -419,9 +427,21 @@ def bundle_vc_runtime() -> None:
 
 
 def _copy_site_package(name: str, *, label: str) -> None:
-    """从 venv site-packages 拷贝目录包或单文件模块到 dist。"""
-    # 单文件模块：soundfile.py
-    if name.endswith(".py"):
+    """从 venv site-packages 拷贝目录包、单文件模块或 .pyd 扩展到 dist。"""
+    # 通配符匹配（如 *__mypyc*.pyd）
+    if "*" in name or "?" in name:
+        matched = list(SITE_PACKAGES.glob(name))
+        if not matched:
+            print(f"Warning: {label} pattern {name} matched nothing in venv, skip copy")
+            return
+        for src in matched:
+            dst = DIST_DIR / src.name
+            shutil.copy2(src, dst)
+            print(f"Copied {label}: {src.name}")
+        return
+
+    # 单文件模块/扩展：soundfile.py, typing_extensions.py, *.pyd
+    if name.endswith(".py") or name.endswith(".pyd"):
         src = SITE_PACKAGES / name
         dst = DIST_DIR / name
         if not src.is_file():
@@ -431,13 +451,20 @@ def _copy_site_package(name: str, *, label: str) -> None:
         print(f"Copied {label}: {name}")
         return
 
-    # 支持子包路径：torch.testing -> SITE_PACKAGES/torch/testing
-    parts = name.split(".")
-    src = SITE_PACKAGES.joinpath(*parts)
+    # 优先匹配直接目录（如带点的 delvewheel 目录 llvmlite.libs 等）
+    direct_src = SITE_PACKAGES / name
+    if direct_src.is_dir():
+        src = direct_src
+        dst = DIST_DIR / name
+    else:
+        # 支持子包路径：torch.testing -> SITE_PACKAGES/torch/testing
+        parts = name.split(".")
+        src = SITE_PACKAGES.joinpath(*parts)
+        dst = DIST_DIR.joinpath(*parts)
+
     if not src.is_dir():
         print(f"Warning: {label} {name} not found in venv, skip copy")
         return
-    dst = DIST_DIR.joinpath(*parts)
     if dst.exists():
         shutil.rmtree(dst)
     dst.parent.mkdir(parents=True, exist_ok=True)
@@ -523,7 +550,10 @@ def _ae_ensure_critical_asr_models():
     _log = os.path.join(os.path.dirname(os.path.dirname(__file__)), "funasr_import_debug.log")
     for _name in (
         "funasr.utils.load_utils",
+        "funasr.frontends.wav_frontend",
+        "funasr.tokenizer.sentencepiece_tokenizer",
         "funasr.models.sense_voice.model",
+        "funasr.models.fsmn_vad_streaming.model",
         "funasr.models.paraformer.model",
         "funasr.models.bicif_paraformer.model",
     ):
@@ -571,6 +601,76 @@ def install_stdlib_bootstrap() -> None:
                 text = text.rstrip() + "\n" + _CRITICAL_MODELS_FOOTER
                 print("Injected critical ASR model ensure into funasr/__init__.py")
         init_py.write_text(text, encoding="utf-8")
+
+
+def verify_bundled_dependencies() -> None:
+    """打包后冒烟测试：验证 requests 依赖零警告、sentencepiece 原生扩展可用、ASR 组件注册表完整。"""
+    print("Verifying bundled dependencies in dist...")
+
+    # sentencepiece 必须保持 nofollow 源码形态，否则 Nuitka 编译版会遮蔽 _sentencepiece.pyd
+    build_module_c = OUT_DIR / "entry.build" / "module.sentencepiece.c"
+    if build_module_c.exists():
+        sys.exit(
+            "Bundled dependencies verification failed: sentencepiece 被 Nuitka 编译"
+            f"（{build_module_c} 存在），原生扩展会被遮蔽，请检查 NUITKA_NOFOLLOW_MODULES。"
+        )
+
+    dist_literal = repr(str(DIST_DIR))
+    test_code = (
+        "import sys, os, glob, warnings\n"
+        f"dist = {dist_literal}\n"
+        "sys.path.insert(0, dist)\n"
+        "pyd = glob.glob(os.path.join(dist, 'sentencepiece', '_sentencepiece*.pyd'))\n"
+        "assert pyd, 'missing sentencepiece native extension _sentencepiece*.pyd'\n"
+        "warnings.simplefilter('error')\n"
+        "import charset_normalizer\n"
+        "import requests\n"
+        "warnings.resetwarnings()\n"
+        "print('Dependency verification OK')\n"
+        "_orig_path = list(sys.path)\n"
+        "_orig_cwd = os.getcwd()\n"
+        "sys.path = [p for p in sys.path if 'site-packages' not in p.lower()]\n"
+        "os.chdir(dist)\n"
+        "try:\n"
+        "    os.add_dll_directory(dist)\n"
+        "except Exception:\n"
+        "    pass\n"
+        "import sentencepiece\n"
+        "assert hasattr(sentencepiece, 'SentencePieceProcessor'), 'SentencePieceProcessor missing'\n"
+        "print('sentencepiece isolated import OK')\n"
+        "sys.path[:] = _orig_path\n"
+        "os.chdir(_orig_cwd)\n"
+        "import importlib\n"
+        "for _name in (\n"
+        "    'funasr.utils.load_utils',\n"
+        "    'funasr.frontends.wav_frontend',\n"
+        "    'funasr.tokenizer.sentencepiece_tokenizer',\n"
+        "    'funasr.models.sense_voice.model',\n"
+        "    'funasr.models.fsmn_vad_streaming.model',\n"
+        "):\n"
+        "    importlib.import_module(_name)\n"
+        "from funasr.register import tables\n"
+        "required = {\n"
+        "    'model_classes': ('SenseVoiceSmall', 'FsmnVADStreaming'),\n"
+        "    'encoder_classes': ('SenseVoiceEncoderSmall', 'FSMN'),\n"
+        "    'frontend_classes': ('WavFrontend', 'WavFrontendOnline'),\n"
+        "    'tokenizer_classes': ('SentencepiecesTokenizer',),\n"
+        "}\n"
+        "missing = [\n"
+        "    f'{_t}:{_k}'\n"
+        "    for _t, _keys in required.items()\n"
+        "    for _k in _keys\n"
+        "    if _k not in getattr(tables, _t, {})\n"
+        "]\n"
+        "assert not missing, f'Missing ASR components: {missing}'\n"
+        "print('ASR component registry verification OK')\n"
+    )
+    cmd = [sys.executable, "-c", test_code]
+    res = subprocess.run(cmd, capture_output=True, text=True)
+    if res.returncode != 0:
+        print(f"Dependency verification FAILED:\nSTDOUT: {res.stdout}\nSTDERR: {res.stderr}")
+        sys.exit(f"Bundled dependencies verification failed: {res.stderr.strip()}")
+    print("Bundled dependencies verification passed: requests + sentencepiece + ASR components OK.")
 
 
 def main():
@@ -627,6 +727,7 @@ def main():
     bundle_playwright_browsers()
     bundle_config()
     cleanup_dist()
+    verify_bundled_dependencies()
     print("Build success")
 
 

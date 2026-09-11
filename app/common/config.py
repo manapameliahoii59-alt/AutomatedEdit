@@ -12,6 +12,7 @@ class MyQConfig(QConfig):
 class Config(MyQConfig):
     user = ConfigItem("User", "user", '')
     password = ConfigItem("User", "password", '')
+    enabled_tabs = ConfigItem("User", "enabled_tabs", "video_download,clip_edit")
 
     """ Config of application """
 
@@ -113,7 +114,7 @@ DEFAULT_API_BASE_URL = "http://129.204.86.63:7172"
 YEAR = datetime.datetime.now().year
 AUTHOR = "dragon"
 AUTHOR_EMAIL = "857134647@qq.com"
-VERSION = '0.0.8'
+VERSION = '0.0.14'
 APP_NAME = "剪辑助手"
 FEEDBACK_URL = f"mailto:{AUTHOR_EMAIL}"
 

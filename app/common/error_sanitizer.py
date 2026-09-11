@@ -35,8 +35,29 @@ def _to_raw_string(error: Any) -> str:
     return str(error or "").strip()
 
 
-def _format_error_message(friendly: str, raw: str) -> str:
-    """按运行环境格式化错误输出。"""
+def _format_error_message(
+    friendly: str,
+    raw: str,
+    *,
+    stage: str = "general",
+    drama_name: str = "",
+    original_error: Any = None,
+) -> str:
+    """按运行环境格式化错误输出，并自动记录至错误反馈服务。"""
+    raw_lower = raw.lower()
+    if "已取消" not in raw and "cancel" not in raw_lower:
+        try:
+            from app.data.services.error_feedback_service import error_feedback_service
+
+            error_feedback_service.record_error(
+                stage=stage,
+                drama_name=drama_name,
+                friendly_msg=friendly,
+                raw_error=original_error if original_error is not None else raw,
+            )
+        except Exception:
+            pass
+
     if is_dev_runtime():
         clean_raw = raw.strip()
         if clean_raw and clean_raw != friendly:
@@ -50,30 +71,38 @@ def sanitize_transcribe_error(error: Any, *, drama_name: str = "") -> str:
     raw = _to_raw_string(error)
     prefix = f"《{drama_name}》" if drama_name else ""
 
+    def _finish(friendly_text: str) -> str:
+        return _format_error_message(
+            friendly_text,
+            raw,
+            stage="transcribe",
+            drama_name=drama_name,
+            original_error=error,
+        )
+
     # 1. 业务已知正常拦截
     if "未找到视频文件" in raw or "未找到待识别" in raw:
-        friendly = f"{prefix}未找到视频文件，请检查剧目文件目录"
-        return _format_error_message(friendly, raw)
+        return _finish(f"{prefix}未找到视频文件，请检查剧目文件目录")
 
     # 2. 识别无台词 / 内容空
     if "未识别到任何内容" in raw or "无可用文本" in raw or "返回空结果" in raw:
-        friendly = f"{prefix}未识别到有效台词，请检查视频音频是否清晰或存在有效人声"
-        return _format_error_message(friendly, raw)
+        return _finish(f"{prefix}未识别到有效台词，请检查视频音频是否清晰或存在有效人声")
 
     # 3. 核心依赖/模型未就绪
     lower_raw = raw.lower()
     if any(k in lower_raw for k in ("importerror", "modulenotfounderror", "torch", "funasr", "modelscope")):
-        friendly = f"{prefix}语音识别核心组件未就绪或加载异常，请重启应用或联系管理员"
-        return _format_error_message(friendly, raw)
+        return _finish(f"{prefix}语音识别核心组件未就绪或加载异常，请重启应用或联系管理员")
+
+    # 3b. 打包环境组件注册表为空：AutoModel 内部调用到 None
+    if "not callable" in lower_raw or "未正确注册" in raw or "noneType" in lower_raw:
+        return _finish(f"{prefix}语音识别核心组件未就绪或加载异常，请重启应用或联系管理员")
 
     # 4. FFmpeg / 音频解码问题
     if "ffmpeg" in lower_raw or "decode" in lower_raw or "audio" in lower_raw:
-        friendly = f"{prefix}视频音频解析异常，请检查视频文件是否完整"
-        return _format_error_message(friendly, raw)
+        return _finish(f"{prefix}视频音频解析异常，请检查视频文件是否完整")
 
     # 5. 兜底模糊文案
-    friendly = f"{prefix}音频识别遇到异常，请检查视频文件后重试"
-    return _format_error_message(friendly, raw)
+    return _finish(f"{prefix}音频识别遇到异常，请检查视频文件后重试")
 
 
 def sanitize_plan_error(error: Any, *, drama_name: str = "") -> str:
@@ -81,39 +110,41 @@ def sanitize_plan_error(error: Any, *, drama_name: str = "") -> str:
     raw = _to_raw_string(error)
     prefix = f"《{drama_name}》" if drama_name else ""
 
+    def _finish(friendly_text: str) -> str:
+        return _format_error_message(
+            friendly_text,
+            raw,
+            stage="plan",
+            drama_name=drama_name,
+            original_error=error,
+        )
+
     # 1. 前置依赖缺失
     if "full_script_data.json" in raw or "未找到剧本" in raw or "请先识别" in raw:
-        friendly = f"{prefix}未找到剧本台词数据，请先完成视频识别"
-        return _format_error_message(friendly, raw)
+        return _finish(f"{prefix}未找到剧本台词数据，请先完成视频识别")
 
     if "未找到视频文件" in raw:
-        friendly = f"{prefix}未找到视频文件，请检查剧目文件目录"
-        return _format_error_message(friendly, raw)
+        return _finish(f"{prefix}未找到视频文件，请检查剧目文件目录")
 
     # 2. 账号/登录凭据问题
     if any(k in raw for k in ("请先登录", "策划密钥未就绪", "凭据已失效", "401", "Unauthorized")):
-        friendly = f"{prefix}登录凭据已失效或策划服务未就绪，请重新登录账号"
-        return _format_error_message(friendly, raw)
+        return _finish(f"{prefix}登录凭据已失效或策划服务未就绪，请重新登录账号")
 
     # 3. 网络通信 / 超时问题
     lower_raw = raw.lower()
     if any(k in lower_raw for k in ("timeout", "timed out", "connect", "无法连接", "bad gateway", "502", "503", "504")):
-        friendly = f"{prefix}网络连接超时，策划方案生成失败，请检查网络后重试"
-        return _format_error_message(friendly, raw)
+        return _finish(f"{prefix}网络连接超时，策划方案生成失败，请检查网络后重试")
 
     # 4. 服务端中断/重启
     if "服务重启" in raw or "任务已中断" in raw:
-        friendly = f"{prefix}服务重启或任务中断，请重新发起策划"
-        return _format_error_message(friendly, raw)
+        return _finish(f"{prefix}服务重启或任务中断，请重新发起策划")
 
     # 5. 策划规则 / 方案筛选未通过
     if "未产出有效方案" in raw or "未匹配" in raw or "不满足" in raw:
-        friendly = f"{prefix}剧本内容暂不满足当前策划规则要求，可调整参数后重试"
-        return _format_error_message(friendly, raw)
+        return _finish(f"{prefix}剧本内容暂不满足当前策划规则要求，可调整参数后重试")
 
     # 6. 兜底模糊文案
-    friendly = f"{prefix}智能策划方案生成失败，请稍后重试"
-    return _format_error_message(friendly, raw)
+    return _finish(f"{prefix}智能策划方案生成失败，请稍后重试")
 
 
 def sanitize_render_error(error: Any, *, drama_name: str = "") -> str:
@@ -121,38 +152,40 @@ def sanitize_render_error(error: Any, *, drama_name: str = "") -> str:
     raw = _to_raw_string(error)
     prefix = f"《{drama_name}》" if drama_name else ""
 
+    def _finish(friendly_text: str) -> str:
+        return _format_error_message(
+            friendly_text,
+            raw,
+            stage="render",
+            drama_name=drama_name,
+            original_error=error,
+        )
+
     # 1. 取消动作
     if "已取消" in raw or "cancel" in raw.lower():
-        friendly = f"{prefix}渲染已取消"
-        return _format_error_message(friendly, raw)
+        return _finish(f"{prefix}渲染已取消")
 
     # 2. 前置依赖缺失
     if "production_plan_v3.json" in raw or "请先完成策划" in raw:
-        friendly = f"{prefix}未找到策划方案，请先完成策划"
-        return _format_error_message(friendly, raw)
+        return _finish(f"{prefix}未找到策划方案，请先完成策划")
 
     if "未找到可用于判断画幅" in raw or "未找到视频文件" in raw:
-        friendly = f"{prefix}未找到有效的视频文件，请检查剧目文件目录"
-        return _format_error_message(friendly, raw)
+        return _finish(f"{prefix}未找到有效的视频文件，请检查剧目文件目录")
 
     if "找不到片尾素材" in raw or "outro" in raw.lower():
-        friendly = f"{prefix}缺少必要的片尾素材，请检查素材配置"
-        return _format_error_message(friendly, raw)
+        return _finish(f"{prefix}缺少必要的片尾素材，请检查素材配置")
 
     # 3. 磁盘 / 写入权限
     lower_raw = raw.lower()
     if "space" in lower_raw or "disk" in lower_raw or "permission" in lower_raw or "oserror" in lower_raw:
-        friendly = f"{prefix}成片保存失败，请检查磁盘空间或写入权限"
-        return _format_error_message(friendly, raw)
+        return _finish(f"{prefix}成片保存失败，请检查磁盘空间或写入权限")
 
     # 4. 显卡驱动 / 编码异常
     if any(k in lower_raw for k in ("nvenc", "amf", "qsv", "encode", "codec")):
-        friendly = f"{prefix}视频合成编码异常，请检查源视频文件或在设置中调整编码配置"
-        return _format_error_message(friendly, raw)
+        return _finish(f"{prefix}视频合成编码异常，请检查源视频文件或在设置中调整编码配置")
 
     # 5. 兜底模糊文案
-    friendly = f"{prefix}视频渲染合成失败，请检查文件后重试"
-    return _format_error_message(friendly, raw)
+    return _finish(f"{prefix}视频渲染合成失败，请检查文件后重试")
 
 
 def sanitize_transcribe_warning(warning: str) -> str:

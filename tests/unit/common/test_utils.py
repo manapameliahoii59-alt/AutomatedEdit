@@ -61,3 +61,29 @@ class TestUtils:
         mock_instance.exec.return_value = True
         show_dialog(parent, "content", callback=callback)
         callback.assert_called()
+
+    def test_show_dialog_with_error_feedback(self, mocker, qapp):
+        from app.data.services.error_feedback_service import ErrorReportData, error_feedback_service
+
+        mock_dialog_cls = mocker.patch('app.common.utils.Dialog')
+        mock_instance = mock_dialog_cls.return_value
+        mock_instance.contentLabel = MagicMock()
+        mock_instance.yesButton = MagicMock()
+        mock_instance.cancelButton = MagicMock()
+        mock_instance.buttonLayout = MagicMock()
+
+        rep = ErrorReportData(
+            error_stage="transcribe",
+            drama_name="逆子",
+            friendly_msg="音频识别遇到异常",
+            raw_error="Torch Error",
+        )
+        mocker.patch.object(error_feedback_service, "find_matching_report", return_value=rep)
+
+        parent = MagicMock()
+        parent.screen.return_value.availableGeometry.return_value.height.return_value = 1000
+
+        show_dialog(parent, "音频识别遇到异常")
+        # 应该调用 insertWidget 插入 feedback_btn
+        mock_instance.buttonLayout.insertWidget.assert_called()
+

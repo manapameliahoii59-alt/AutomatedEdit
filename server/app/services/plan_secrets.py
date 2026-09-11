@@ -30,12 +30,20 @@ PLAN_LLM_PRESET_CHOICES: tuple[tuple[str, str], ...] = (
         "官方 DeepSeek / deepseek-v4-flash",
     ),
     (
+        f"{PLAN_LLM_PROVIDER_DEEPSEEK}|deepseek-v4.1-flash",
+        "官方 DeepSeek / deepseek-v4.1-flash",
+    ),
+    (
         f"{PLAN_LLM_PROVIDER_DEEPSEEK}|deepseek-v4-pro",
         "官方 DeepSeek / deepseek-v4-pro",
     ),
     (
         f"{PLAN_LLM_PROVIDER_OPENCODE_GO}|deepseek-v4-flash",
         "OpenCode Go / deepseek-v4-flash",
+    ),
+    (
+        f"{PLAN_LLM_PROVIDER_OPENCODE_GO}|deepseek-v4.1-flash",
+        "OpenCode Go / deepseek-v4.1-flash",
     ),
     (
         f"{PLAN_LLM_PROVIDER_OPENCODE_GO}|deepseek-v4-pro",

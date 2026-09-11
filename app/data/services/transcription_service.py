@@ -14,6 +14,24 @@ MODEL_ID = "iic/SenseVoiceSmall"
 VAD_MODEL = "iic/speech_fsmn_vad_zh-cn-16k-common-pytorch"
 MAX_SEGMENT_GAP_MS = 1000
 
+# Nuitka 冻结环境下 funasr 的递归子模块注册可能被跳过，导致组件注册表为空，
+# AutoModel 内部随即出现 `'NoneType' object is not callable`。显式导入这些模块即可触发注册。
+CRITICAL_FUNASR_MODULES = (
+    "funasr.utils.load_utils",
+    "funasr.frontends.wav_frontend",
+    "funasr.tokenizer.sentencepiece_tokenizer",
+    "funasr.models.sense_voice.model",
+    "funasr.models.fsmn_vad_streaming.model",
+)
+
+# 识别链路必需注册的组件（对应 SenseVoiceSmall + FSMN VAD）
+REQUIRED_FUNASR_COMPONENTS = {
+    "model_classes": ("SenseVoiceSmall", "FsmnVADStreaming"),
+    "encoder_classes": ("SenseVoiceEncoderSmall", "FSMN"),
+    "frontend_classes": ("WavFrontend", "WavFrontendOnline"),
+    "tokenizer_classes": ("SentencepiecesTokenizer",),
+}
+
 
 def _safe_print(text: str, flush: bool = True):
     try:
@@ -161,6 +179,72 @@ class TranscriptionService:
         cls._cached_env_warnings = warnings
         return warnings
 
+    @staticmethod
+    def _missing_asr_components(tables) -> list[str]:
+        """返回注册表里缺失的必需组件键，用于诊断与兜底。"""
+        missing: list[str] = []
+        for table_name, keys in REQUIRED_FUNASR_COMPONENTS.items():
+            registry = getattr(tables, table_name, None) or {}
+            for key in keys:
+                if key not in registry:
+                    missing.append(f"{table_name}:{key}")
+        return missing
+
+    @classmethod
+    def _ensure_asr_components(cls) -> None:
+        """打包环境兜底：显式导入关键模块并校验 FunASR 组件注册表。"""
+        import importlib
+        import traceback
+
+        explicit_errors: dict[str, str] = {}
+        for name in CRITICAL_FUNASR_MODULES:
+            try:
+                importlib.import_module(name)
+            except Exception as e:
+                explicit_errors[name] = f"{type(e).__name__}: {e}"
+                logger.warning(
+                    "ASR 组件模块导入失败 {}: {}\n{}",
+                    name,
+                    e,
+                    traceback.format_exc(),
+                )
+
+        try:
+            from funasr.register import tables
+        except Exception as e:
+            raise ImportError(f"语音识别核心组件加载失败：{e}") from e
+
+        missing = cls._missing_asr_components(tables)
+        if not missing:
+            return
+
+        detail_parts: list[str] = []
+        if explicit_errors:
+            detail_parts.append(
+                "显式导入失败："
+                + "；".join(f"{key}: {value}" for key, value in explicit_errors.items())
+            )
+        try:
+            import funasr
+
+            errors = funasr.get_import_errors()
+            if errors:
+                logger.warning(
+                    "FunASR 注册期导入失败共 {} 条：{}", len(errors), errors
+                )
+                preview = list(errors.items())[:15]
+                text = "；".join(f"{key}: {value}" for key, value in preview)
+                if len(errors) > len(preview):
+                    text += f"；…（共 {len(errors)} 条）"
+                detail_parts.append("funasr 注册期导入失败：" + text)
+        except Exception:
+            pass
+        detail = ("（" + " | ".join(detail_parts) + "）") if detail_parts else ""
+        raise ImportError(
+            f"语音识别组件未正确注册：{', '.join(missing)}。"
+            f"请重启应用或联系管理员{detail}"
+        )
+
     @classmethod
     def init_model(cls):
         with cls._lock:
@@ -168,6 +252,8 @@ class TranscriptionService:
                 return
             ensure_ffmpeg_on_path()
             import torch
+
+            cls._ensure_asr_components()
             from funasr import AutoModel
             cls._torch = torch
             device = "cuda" if torch.cuda.is_available() else "cpu"

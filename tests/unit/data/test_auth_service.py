@@ -22,7 +22,8 @@ class TestAuthService:
         assert result.access_token == 'tok'
         mock_api.login.assert_called_once_with("user", "pass")
         from app.common.config import cfg
-        mock_set.assert_any_call(cfg.access_token, 'tok')
+        from app.common.aes import aes_encrypt
+        mock_set.assert_any_call(cfg.access_token, aes_encrypt('tok'))
 
     def test_try_auto_login_without_token(self, mock_get_api, mocker):
         mocker.patch('app.data.services.auth_service.cfg')

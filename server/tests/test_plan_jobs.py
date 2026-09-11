@@ -142,3 +142,52 @@ def test_fail_interrupted_jobs_marks_running(monkeypatch):
         assert "服务重启" in row.error
     finally:
         db.close()
+
+
+def test_cleanup_old_jobs_retains_24h(monkeypatch):
+    from datetime import datetime, timedelta, timezone
+    from sqlalchemy.pool import StaticPool
+
+    from app.database import Base
+    from app.models import PlanJob
+    from app.services import plan_jobs
+
+    engine = create_engine(
+        "sqlite://",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    Base.metadata.create_all(engine)
+    TestSession = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+    monkeypatch.setattr(plan_jobs, "SessionLocal", TestSession)
+
+    now = datetime.now(timezone.utc)
+    db = TestSession()
+    try:
+        job_recent = PlanJob(
+            id="job_recent",
+            user_id=1,
+            status="done",
+            updated_at=now - timedelta(hours=10),
+        )
+        job_old = PlanJob(
+            id="job_old",
+            user_id=1,
+            status="done",
+            updated_at=now - timedelta(hours=25),
+        )
+        db.add(job_recent)
+        db.add(job_old)
+        db.commit()
+    finally:
+        db.close()
+
+    plan_jobs._cleanup_old_jobs()
+
+    db = TestSession()
+    try:
+        assert db.get(PlanJob, "job_recent") is not None
+        assert db.get(PlanJob, "job_old") is None
+    finally:
+        db.close()
+

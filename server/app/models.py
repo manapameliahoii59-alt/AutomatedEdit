@@ -16,6 +16,9 @@ class User(Base):
     role: Mapped[str] = mapped_column(String(16), default="user")
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     download_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    enabled_tabs: Mapped[str] = mapped_column(
+        String(255), default="video_download,clip_edit"
+    )
     daily_plan_limit: Mapped[int] = mapped_column(Integer, default=30)
     daily_clip_limit: Mapped[int] = mapped_column(Integer, default=30)
     daily_download_limit: Mapped[int] = mapped_column(Integer, default=30)
@@ -124,3 +127,24 @@ class PlanJob(Base):
     )
 
     user: Mapped["User | None"] = relationship(back_populates="plan_jobs")
+
+
+class ErrorReport(Base):
+    """客户端错误反馈记录（方便开发者与管理员集中定位排查）。"""
+
+    __tablename__ = "error_reports"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), index=True, nullable=True)
+    username: Mapped[str] = mapped_column(String(64), default="", index=True)
+    app_version: Mapped[str] = mapped_column(String(32), default="")
+    error_stage: Mapped[str] = mapped_column(String(32), default="general", index=True)  # transcribe, plan, render, download, general
+    drama_name: Mapped[str] = mapped_column(String(255), default="")
+    friendly_msg: Mapped[str] = mapped_column(Text, default="")
+    raw_error: Mapped[str] = mapped_column(Text, default="")
+    client_info: Mapped[str] = mapped_column(Text, default="")  # OS, Python, CPU/GPU
+    status: Mapped[str] = mapped_column(String(16), default="pending", index=True)  # pending | resolved | ignored
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), index=True)
+
+    user: Mapped["User | None"] = relationship()
+

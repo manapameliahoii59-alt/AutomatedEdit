@@ -1,6 +1,116 @@
 {% extends "admin/base.html" %}
 {% block title %}编辑用户 · {{ app_name }}{% endblock %}
 {% block body %}
+<style>
+  .form-wrap.edit-container {
+    max-width: 1360px;
+    width: 100%;
+  }
+  .edit-layout {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 20px;
+    align-items: start;
+  }
+  .edit-col {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+  }
+  .block {
+    background: #fff;
+    border: 1px solid #ebeef5;
+    border-radius: 6px;
+    padding: 18px 20px 14px;
+    margin-bottom: 0;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.02);
+  }
+  .block h2 {
+    margin: 0 0 14px;
+    font-size: 14px;
+    font-weight: 650;
+    color: #303133;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding-bottom: 8px;
+    border-bottom: 1px solid #f0f2f5;
+  }
+  .grid-2 {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 14px 18px;
+  }
+  .grid-3 {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 14px;
+  }
+  .tab-card {
+    background: #fafbfc;
+    border: 1px solid #edf0f5;
+    border-radius: 6px;
+    padding: 12px 14px;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    transition: all 0.15s ease;
+  }
+  .tab-card:hover {
+    background: #f5f8ff;
+    border-color: #d0e2ff;
+  }
+  .tab-card-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 6px;
+  }
+  .tab-card-desc {
+    font-size: 12px;
+    color: #909399;
+    margin: 0;
+    line-height: 1.4;
+  }
+  .user-overview {
+    background: #fafbfc;
+    border: 1px solid #edf0f5;
+    border-radius: 6px;
+    padding: 14px 16px;
+    margin-bottom: 14px;
+  }
+  .user-meta-grid {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 10px 14px;
+    font-size: 13px;
+  }
+  .user-meta-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .user-meta-label {
+    color: #909399;
+    min-width: 62px;
+  }
+  .user-meta-value {
+    color: #303133;
+    font-weight: 500;
+  }
+  .action-bar {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+  .m-0 { margin: 0 !important; }
+  @media (max-width: 1080px) {
+    .edit-layout {
+      grid-template-columns: 1fr;
+    }
+  }
+</style>
+
 <div class="head">
   <div>
     <h1>编辑用户</h1>
@@ -8,116 +118,208 @@
   </div>
   <a class="el-button" href="/admin/users">返回列表</a>
 </div>
+
 {% if saved %}
 <div class="flash">
   <div class="el-alert el-alert--success is-light" role="alert">
-    <div class="el-alert__content"><span class="el-alert__title">已保存</span></div>
+    <div class="el-alert__content"><span class="el-alert__title">已保存所有配置</span></div>
   </div>
 </div>
 {% endif %}
-<form class="form-wrap" method="post" action="/admin/user/edit/{{ user.id }}">
-  <section class="block">
-    <h2>账号与权限</h2>
-    <div class="form-grid">
-      <div>
-        <label class="lbl" for="username">账号</label>
-        <div class="el-input">
-          <div class="el-input__wrapper">
-            <input class="el-input__inner" id="username" name="username" value="{{ user.username }}">
+
+<form id="userEditForm" class="form-wrap edit-container" method="post" action="/admin/user/edit/{{ user.id }}">
+  <input type="hidden" name="tabs_submitted" value="1">
+
+  <div class="edit-layout">
+    <!-- 左列：账号、Tab 权限与配额 -->
+    <div class="edit-col">
+      <!-- 账号与基础权限 -->
+      <section class="block">
+        <h2>账号与权限</h2>
+        <div class="grid-2">
+          <div>
+            <label class="lbl" for="username">账号</label>
+            <div class="el-input">
+              <div class="el-input__wrapper">
+                <input class="el-input__inner" id="username" name="username" value="{{ user.username }}">
+              </div>
+            </div>
+          </div>
+          <div>
+            <label class="lbl" for="role">角色</label>
+            <select class="admin-select" id="role" name="role">
+              <option value="user" {% if user.role == "user" %}selected{% endif %}>user (普通用户)</option>
+              <option value="admin" {% if user.role == "admin" %}selected{% endif %}>admin (管理员)</option>
+            </select>
+          </div>
+          <div>
+            <label class="lbl" for="valid_until">使用期限（空=永久）</label>
+            <div class="el-input">
+              <div class="el-input__wrapper">
+                <input class="el-input__inner" id="valid_until" name="valid_until" type="date" value="{{ user.valid_until.isoformat() if user.valid_until else '' }}">
+              </div>
+            </div>
+          </div>
+          <div>
+            <label class="lbl" for="is_active">允许使用桌面端</label>
+            <div class="form-check form-switch m-0">
+              <input class="form-check-input" id="is_active" type="checkbox" role="switch" name="is_active" value="y"{% if user.is_active %} checked{% endif %}>
+            </div>
           </div>
         </div>
-      </div>
-      <div>
-        <label class="lbl" for="role">角色</label>
-        <select class="admin-select" id="role" name="role">
-          <option value="user" {% if user.role == "user" %}selected{% endif %}>user</option>
-          <option value="admin" {% if user.role == "admin" %}selected{% endif %}>admin</option>
-        </select>
-      </div>
-      <div>
-        <label class="lbl" for="is_active">允许使用桌面端</label>
-        <div class="form-check form-switch m-0">
-          <input class="form-check-input" id="is_active" type="checkbox" role="switch" name="is_active" value="y"{% if user.is_active %} checked{% endif %}>
-        </div>
-      </div>
-      <div>
-        <label class="lbl" for="download_enabled">允许使用视频下载</label>
-        <div class="form-check form-switch m-0">
-          <input class="form-check-input" id="download_enabled" type="checkbox" role="switch" name="download_enabled" value="y"{% if user.download_enabled %} checked{% endif %}>
-        </div>
-      </div>
-      <div>
-        <label class="lbl" for="valid_until">使用期限（空=永久）</label>
-        <div class="el-input">
-          <div class="el-input__wrapper">
-            <input class="el-input__inner" id="valid_until" name="valid_until" type="date" value="{{ user.valid_until.isoformat() if user.valid_until else '' }}">
+      </section>
+
+      <!-- Tab 权限 -->
+      <section class="block">
+        <h2>应用导航页面展示 (Tab 权限)</h2>
+        <p class="hint" style="margin-top:-6px; margin-bottom:14px;">控制客户端左侧导航栏中对该用户显示的 Tab 功能页面（“设置”页面固定展示）</p>
+        <div class="grid-3">
+          <div class="tab-card">
+            <div class="tab-card-header">
+              <label class="lbl m-0" for="download_enabled" style="cursor:pointer; font-weight:600; color:#303133;">允许使用视频下载</label>
+              <div class="form-check form-switch m-0">
+                <input class="form-check-input" id="download_enabled" type="checkbox" role="switch" name="download_enabled" value="y"{% if user.download_enabled and "video_download" in enabled_tabs %} checked{% endif %}>
+              </div>
+            </div>
+            <p class="tab-card-desc">短视频/平台视频解析与下载</p>
+          </div>
+          <div class="tab-card">
+            <div class="tab-card-header">
+              <label class="lbl m-0" for="tab_clip_edit" style="cursor:pointer; font-weight:600; color:#303133;">自动化剪辑</label>
+              <div class="form-check form-switch m-0">
+                <input class="form-check-input" id="tab_clip_edit" type="checkbox" role="switch" name="tab_clip_edit" value="y"{% if "clip_edit" in enabled_tabs %} checked{% endif %}>
+              </div>
+            </div>
+            <p class="tab-card-desc">短剧识别、AI 策划与自动渲染</p>
+          </div>
+          <div class="tab-card">
+            <div class="tab-card-header">
+              <label class="lbl m-0" for="tab_batch_edit" style="cursor:pointer; font-weight:600; color:#303133;">批量打码</label>
+              <div class="form-check form-switch m-0">
+                <input class="form-check-input" id="tab_batch_edit" type="checkbox" role="switch" name="tab_batch_edit" value="y"{% if "batch_edit" in enabled_tabs %} checked{% endif %}>
+              </div>
+            </div>
+            <p class="tab-card-desc">多剧目批量画面遮罩与打码</p>
           </div>
         </div>
-      </div>
-      <div>
-        <label class="lbl" for="daily_plan_limit">每日策划上限（0=不限）</label>
-        <div class="el-input">
-          <div class="el-input__wrapper">
-            <input class="el-input__inner" id="daily_plan_limit" name="daily_plan_limit" value="{{ user.daily_plan_limit }}">
+      </section>
+
+      <!-- 每日配额 -->
+      <section class="block">
+        <h2>每日限额配置</h2>
+        <div class="grid-3">
+          <div>
+            <label class="lbl" for="daily_plan_limit">每日策划上限（0=不限）</label>
+            <div class="el-input">
+              <div class="el-input__wrapper">
+                <input class="el-input__inner" id="daily_plan_limit" name="daily_plan_limit" value="{{ user.daily_plan_limit }}">
+              </div>
+            </div>
+          </div>
+          <div>
+            <label class="lbl" for="daily_clip_limit">每日剪辑上限（0=不限）</label>
+            <div class="el-input">
+              <div class="el-input__wrapper">
+                <input class="el-input__inner" id="daily_clip_limit" name="daily_clip_limit" value="{{ user.daily_clip_limit }}">
+              </div>
+            </div>
+          </div>
+          <div>
+            <label class="lbl" for="daily_download_limit">每日下载上限（0=不限）</label>
+            <div class="el-input">
+              <div class="el-input__wrapper">
+                <input class="el-input__inner" id="daily_download_limit" name="daily_download_limit" value="{{ user.daily_download_limit }}">
+              </div>
+            </div>
           </div>
         </div>
-      </div>
-      <div>
-        <label class="lbl" for="daily_clip_limit">每日剪辑上限（0=不限）</label>
-        <div class="el-input">
-          <div class="el-input__wrapper">
-            <input class="el-input__inner" id="daily_clip_limit" name="daily_clip_limit" value="{{ user.daily_clip_limit }}">
-          </div>
-        </div>
-      </div>
-      <div>
-        <label class="lbl" for="daily_download_limit">每日下载上限（0=不限）</label>
-        <div class="el-input">
-          <div class="el-input__wrapper">
-            <input class="el-input__inner" id="daily_download_limit" name="daily_download_limit" value="{{ user.daily_download_limit }}">
-          </div>
-        </div>
-      </div>
+      </section>
     </div>
-  </section>
-  <section class="block">
-    <h2>策划通道</h2>
-    <div class="form-grid">
-      <div class="wide">
-        <label class="lbl" for="plan_llm_preset">策划模型</label>
-        <select class="admin-select" id="plan_llm_preset" name="plan_llm_preset">
-          {% for value, label in plan_choices %}
-          <option value="{{ value }}" {% if value == plan_llm_preset %}selected{% endif %}>{{ label }}</option>
-          {% endfor %}
-        </select>
-        <p class="hint">官方填 DeepSeek Key；OpenCode Go 填 Zen/Go Key；小米 MiMo 填 MiMo API Key；智谱 GLM 填智谱 API Key</p>
-      </div>
-      <div class="wide">
-        <label class="lbl" for="plan_thinking_enabled">深度思考模式（Thinking）</label>
-        <div class="form-check form-switch m-0">
-          <input class="form-check-input" id="plan_thinking_enabled" type="checkbox" role="switch" name="plan_thinking_enabled" value="y"{% if plan_thinking_enabled %} checked{% endif %}>
-        </div>
-        <p class="hint">默认关闭以大幅提速；开启后模型输出完整思维链。注：智谱 GLM-5.3-Flash 为始终思考模型，不受开关限制</p>
-      </div>
-      <div class="wide">
-        <label class="lbl" for="deepseek_keys">策划 API Keys（逗号分隔）</label>
-        <div class="el-textarea">
-          <textarea class="el-textarea__inner" id="deepseek_keys" name="deepseek_keys">{{ deepseek_keys }}</textarea>
-        </div>
-      </div>
-      <div class="wide">
-        <label class="lbl" for="dashscope_key">DashScope Key（可选）</label>
-        <div class="el-input">
-          <div class="el-input__wrapper">
-            <input class="el-input__inner" id="dashscope_key" name="dashscope_key" value="{{ dashscope_key }}">
+
+    <!-- 右列：策划通道与状态操作 -->
+    <div class="edit-col">
+      <!-- 策划通道 -->
+      <section class="block">
+        <h2>策划通道</h2>
+        <div class="form-grid">
+          <div class="wide">
+            <label class="lbl" for="plan_llm_preset">策划模型</label>
+            <select class="admin-select" id="plan_llm_preset" name="plan_llm_preset">
+              {% for value, label in plan_choices %}
+              <option value="{{ value }}" {% if value == plan_llm_preset %}selected{% endif %}>{{ label }}</option>
+              {% endfor %}
+            </select>
+            <p class="hint">官方填 DeepSeek Key；OpenCode Go 填 Zen/Go Key；小米 MiMo 填 MiMo API Key；智谱 GLM 填智谱 API Key</p>
+          </div>
+          <div class="wide">
+            <div style="display: flex; align-items: center; justify-content: space-between;">
+              <label class="lbl m-0" for="plan_thinking_enabled">深度思考模式（Thinking）</label>
+              <div class="form-check form-switch m-0">
+                <input class="form-check-input" id="plan_thinking_enabled" type="checkbox" role="switch" name="plan_thinking_enabled" value="y"{% if plan_thinking_enabled %} checked{% endif %}>
+              </div>
+            </div>
+            <p class="hint">默认关闭以大幅提速；开启后模型输出完整思维链。注：智谱 GLM-5.3-Flash 为始终思考模型，不受开关限制</p>
+          </div>
+          <div class="wide">
+            <label class="lbl" for="deepseek_keys">策划 API Keys（逗号分隔）</label>
+            <div class="el-textarea">
+              <textarea class="el-textarea__inner" id="deepseek_keys" name="deepseek_keys" style="min-height: 110px;">{{ deepseek_keys }}</textarea>
+            </div>
+          </div>
+          <div class="wide">
+            <label class="lbl" for="dashscope_key">DashScope Key（可选）</label>
+            <div class="el-input">
+              <div class="el-input__wrapper">
+                <input class="el-input__inner" id="dashscope_key" name="dashscope_key" value="{{ dashscope_key }}">
+              </div>
+            </div>
           </div>
         </div>
-      </div>
+      </section>
+
+      <!-- 用户信息概览与操作栏 -->
+      <section class="block">
+        <h2>用户状态概览</h2>
+        <div class="user-overview">
+          <div class="user-meta-grid">
+            <div class="user-meta-item">
+              <span class="user-meta-label">用户 ID:</span>
+              <span class="user-meta-value">#{{ user.id }}</span>
+            </div>
+            <div class="user-meta-item">
+              <span class="user-meta-label">当前状态:</span>
+              <span class="user-meta-value">
+                {% if user.is_active %}
+                <span style="color:#67c23a; font-weight:600;">正常启用</span>
+                {% else %}
+                <span style="color:#f56c6c; font-weight:600;">已禁用</span>
+                {% endif %}
+              </span>
+            </div>
+            <div class="user-meta-item">
+              <span class="user-meta-label">登录账号:</span>
+              <span class="user-meta-value">{{ user.username }}</span>
+            </div>
+            <div class="user-meta-item">
+              <span class="user-meta-label">初始密码:</span>
+              <span class="user-meta-value">{{ user.plain_password or '（已加密存储）' }}</span>
+            </div>
+            <div class="user-meta-item">
+              <span class="user-meta-label">注册时间:</span>
+              <span class="user-meta-value">{{ user.created_at.strftime('%Y-%m-%d %H:%M') if user.created_at else '-' }}</span>
+            </div>
+            <div class="user-meta-item">
+              <span class="user-meta-label">使用期限:</span>
+              <span class="user-meta-value">{{ user.valid_until.isoformat() if user.valid_until else '永久有效' }}</span>
+            </div>
+          </div>
+        </div>
+        <div class="action-bar">
+          <button class="el-button el-button--primary" type="submit" name="save" value="Save" style="padding: 9px 24px; font-size: 14px; font-weight: 500;">保存所有更改</button>
+          <a class="el-button" href="/admin/users" style="padding: 9px 20px;">取消</a>
+        </div>
+      </section>
     </div>
-  </section>
-  <div class="actions">
-    <button class="el-button el-button--primary" type="submit" name="save" value="Save">保存</button>
-    <a class="el-button" href="/admin/users">取消</a>
   </div>
 </form>
 {% endblock %}

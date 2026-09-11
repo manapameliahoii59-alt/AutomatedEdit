@@ -11,10 +11,16 @@ from app.services.iocpx_auth import IocpxAuthError, verify_iocpx_credentials
 
 
 class _FakeResponse:
-    def __init__(self, status_code: int, cookies: dict | None = None, set_cookie: list[str] | None = None):
+    def __init__(self, status_code: int, cookies: dict | None = None, set_cookie: list[str] | None = None, json_data: dict | None = None):
         self.status_code = status_code
         self.cookies = cookies or {}
         self.headers = _FakeHeaders(set_cookie or [])
+        self._json_data = json_data
+
+    def json(self):
+        if self._json_data is not None:
+            return self._json_data
+        raise ValueError("No JSON")
 
 
 class _FakeHeaders:
@@ -73,4 +79,31 @@ def test_verify_iocpx_credentials_requires_session_cookie(monkeypatch):
 
     monkeypatch.setattr("app.services.iocpx_auth.httpx.Client", _NoCookieClient)
     with pytest.raises(IocpxAuthError, match="未获取到会话信息"):
+        verify_iocpx_credentials("user@example.com", "secret")
+
+
+def test_verify_iocpx_credentials_strips_spaces(monkeypatch):
+    class _CaptureClient(_FakeClient):
+        def post(self, path, **kwargs):
+            if path == "/merchant/auth/login1":
+                json_payload = kwargs.get("json", {})
+                assert json_payload.get("email") == "user@example.com"
+                assert json_payload.get("password") == "secret"
+                return _FakeResponse(200, cookies={"ocpx_session_id": "sess-stripped"})
+            return super().post(path, **kwargs)
+
+    monkeypatch.setattr("app.services.iocpx_auth.httpx.Client", _CaptureClient)
+    sid = verify_iocpx_credentials("  user@example.com  \n", "  secret  \t")
+    assert sid == "sess-stripped"
+
+
+def test_verify_iocpx_credentials_propagates_business_error(monkeypatch):
+    class _BizErrorClient(_FakeClient):
+        def post(self, path, **kwargs):
+            if path == "/merchant/auth/login1":
+                return _FakeResponse(200, json_data={"code": 102001002, "msg": "密码错误"})
+            return super().post(path, **kwargs)
+
+    monkeypatch.setattr("app.services.iocpx_auth.httpx.Client", _BizErrorClient)
+    with pytest.raises(IocpxAuthError, match="密码错误"):
         verify_iocpx_credentials("user@example.com", "secret")

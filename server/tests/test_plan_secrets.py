@@ -123,6 +123,33 @@ def test_plan_llm_preset_roundtrip():
     assert plan_llm_preset_label(zp47, zm47) == "智谱 GLM / glm-4.7-flash"
 
 
+def test_plan_llm_preset_supports_multiple_deepseek_v4_1_flash():
+    from app.services.plan_secrets import (
+        PLAN_LLM_PRESET_CHOICES,
+        decode_plan_llm_preset,
+        encode_plan_llm_preset,
+        plan_llm_preset_label,
+    )
+
+    preset_values = {value for value, _label in PLAN_LLM_PRESET_CHOICES}
+    # 同一模型 deepseek-v4.1-flash 通过不同厂商提供多个可选项
+    assert "deepseek|deepseek-v4.1-flash" in preset_values
+    assert "opencode_go|deepseek-v4.1-flash" in preset_values
+
+    for provider, label_prefix in (
+        ("deepseek", "官方 DeepSeek"),
+        ("opencode_go", "OpenCode Go"),
+    ):
+        value = encode_plan_llm_preset(provider, "deepseek-v4.1-flash")
+        assert value == f"{provider}|deepseek-v4.1-flash"
+        got_provider, got_model = decode_plan_llm_preset(value)
+        assert got_provider == provider
+        assert got_model == "deepseek-v4.1-flash"
+        assert plan_llm_preset_label(got_provider, got_model) == (
+            f"{label_prefix} / deepseek-v4.1-flash"
+        )
+
+
 def test_resolve_plan_llm_config_xiaomi(monkeypatch):
     from app.services.plan_secrets import resolve_plan_llm_config
 

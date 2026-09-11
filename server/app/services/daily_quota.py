@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
@@ -27,6 +27,9 @@ class DailyQuotaOut:
     can_plan: bool
     can_clip: bool
     can_download: bool
+    enabled_tabs: list[str] = field(
+        default_factory=lambda: ["video_download", "clip_edit"]
+    )
 
     def to_dict(self) -> dict:
         return {
@@ -38,6 +41,7 @@ class DailyQuotaOut:
             "clip_limit": self.clip_limit,
             "download_limit": self.download_limit,
             "download_enabled": self.download_enabled,
+            "enabled_tabs": self.enabled_tabs,
             "planned_dramas": self.planned_dramas,
             "clipped_dramas": self.clipped_dramas,
             "downloaded_dramas": self.downloaded_dramas,
@@ -64,9 +68,23 @@ def _is_download_enabled(user: User) -> bool:
     return bool(getattr(user, "download_enabled", True))
 
 
+def _resolve_enabled_tabs(user: User) -> list[str]:
+    raw = getattr(user, "enabled_tabs", None)
+    if raw is None or not str(raw).strip():
+        tabs = ["clip_edit"]
+        if _is_download_enabled(user):
+            tabs.insert(0, "video_download")
+        return tabs
+    tabs = [t.strip() for t in str(raw).split(",") if t.strip()]
+    if not _is_download_enabled(user):
+        tabs = [t for t in tabs if t != "video_download"]
+    return tabs
+
+
 def build_daily_quota(db: Session, user: User) -> DailyQuotaOut:
     plan_limit, clip_limit, download_limit = get_user_limits(user)
     download_enabled = _is_download_enabled(user)
+    enabled_tabs = _resolve_enabled_tabs(user)
     row = _get_or_create_today(db, user.id)
     planned = _load_names(row.planned_dramas)
     clipped = _load_names(row.clipped_dramas)
@@ -86,6 +104,7 @@ def build_daily_quota(db: Session, user: User) -> DailyQuotaOut:
         clip_limit=clip_limit,
         download_limit=download_limit,
         download_enabled=download_enabled,
+        enabled_tabs=enabled_tabs,
         planned_dramas=planned,
         clipped_dramas=clipped,
         downloaded_dramas=downloaded,

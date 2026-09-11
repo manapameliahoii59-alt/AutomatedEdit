@@ -91,6 +91,8 @@ class TestErrorSanitizerProdMode:
             "ffmpeg decode audio error in C:/temp/1.mp4",
             "未找到视频文件: D:/dramas/episodes",
             "识别返回空结果，无可用文本",
+            "'NoneType' object is not callable",
+            "语音识别组件未正确注册：frontend_classes:WavFrontend",
         ]
 
         for raw in samples:
@@ -100,6 +102,17 @@ class TestErrorSanitizerProdMode:
             # 绝对不能泄露底层 ASR / 模型 / 算法库关键词
             assert not _RE_SENSITIVE_ASR.search(sanitized), f"Leaked sensitive word in: {sanitized}"
             assert "《豪门归来》" in sanitized
+
+    def test_transcribe_error_prod_maps_unregistered_component(self, monkeypatch):
+        monkeypatch.delenv("AE_FORCE_DEV_ERROR", raising=False)
+        monkeypatch.setenv("AE_FORCE_PROD_ERROR", "1")
+
+        sanitized = sanitize_transcribe_error(
+            "'NoneType' object is not callable", drama_name="豪门归来"
+        )
+        assert "组件未就绪" in sanitized or "加载异常" in sanitized
+        assert "NoneType" not in sanitized
+        assert "not callable" not in sanitized
 
     def test_plan_error_prod_masks_llm_details(self, monkeypatch):
         monkeypatch.delenv("AE_FORCE_DEV_ERROR", raising=False)

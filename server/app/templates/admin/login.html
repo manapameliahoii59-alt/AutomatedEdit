@@ -81,5 +81,10 @@
       <button class="el-button el-button--primary" type="submit" style="width:100%">进入后台</button>
     </form>
   </div>
+  <script>
+    try {
+      sessionStorage.removeItem("missing_keys_dialog_dismissed");
+    } catch (e) {}
+  </script>
 </body>
 </html>

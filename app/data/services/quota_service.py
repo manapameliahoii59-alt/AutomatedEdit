@@ -23,6 +23,9 @@ class DailyQuota:
     can_plan: bool = True
     can_clip: bool = True
     can_download: bool = True
+    enabled_tabs: list[str] = field(
+        default_factory=lambda: ["video_download", "clip_edit"]
+    )
 
     @classmethod
     def from_api(cls, data: dict | None) -> "DailyQuota":
@@ -42,6 +45,14 @@ class DailyQuota:
             can_plan=bool(data.get("can_plan", True)),
             can_clip=bool(data.get("can_clip", True)),
             can_download=bool(data.get("can_download", True)),
+            enabled_tabs=list(
+                data.get("enabled_tabs")
+                or (
+                    ["video_download", "clip_edit"]
+                    if data.get("download_enabled", True)
+                    else ["clip_edit"]
+                )
+            ),
         )
 
 

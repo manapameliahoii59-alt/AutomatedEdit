@@ -196,3 +196,12 @@ class TestClipEditAutoSelectAfterImport:
             assert cfg.clip_auto_select_after_import.value is True
 
         page.deleteLater()
+
+    def test_delete_project_without_confirmation(self, qapp):
+        page = ClipEditPage()
+        with patch.object(page.vm, "remove_project") as mock_remove, \
+             patch("app.ui.views.clip_edit.view.Dialog") as mock_dialog:
+            page._confirm_delete("test-proj-id")
+            mock_remove.assert_called_once_with("test-proj-id")
+            mock_dialog.assert_not_called()
+        page.deleteLater()

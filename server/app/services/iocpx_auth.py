@@ -35,8 +35,9 @@ def verify_iocpx_credentials(
     使用易投账号密码登录，成功返回 ocpx_session_id。
     流程：login1 → 取 Cookie → login2(moduleId=3)
     """
-    account = email.strip()
-    if not account or not password:
+    account = (email or "").strip()
+    pwd = (password or "").strip()
+    if not account or not pwd:
         raise IocpxAuthError("请输入易投账号和密码")
 
     api_base = (base_url or settings.iocpx_base_url).rstrip("/")
@@ -50,14 +51,21 @@ def verify_iocpx_credentials(
         with httpx.Client(base_url=api_base, timeout=15.0, headers=headers) as client:
             login1 = client.post(
                 "/merchant/auth/login1",
-                json={"email": account, "password": password, "rememberMe": True},
+                json={"email": account, "password": pwd, "rememberMe": True},
             )
-            if login1.status_code >= 400:
-                raise IocpxAuthError("易投账号或密码错误")
+            login1_data = {}
+            try:
+                login1_data = login1.json() or {}
+            except Exception:
+                pass
+            code = login1_data.get("code")
+            msg = login1_data.get("msg")
+            if login1.status_code >= 400 or (code is not None and code != 0):
+                raise IocpxAuthError(f"易投登录失败：{msg}" if msg else "易投账号或密码错误")
 
             session_id = _extract_session_id(login1)
             if not session_id:
-                raise IocpxAuthError("易投登录失败：未获取到会话信息")
+                raise IocpxAuthError(f"易投登录失败：{msg}" if msg else "易投登录失败：未获取到会话信息")
 
             login2 = client.post(
                 "/merchant/auth/login2",

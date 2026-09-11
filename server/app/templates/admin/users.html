@@ -16,6 +16,15 @@
     <button class="el-button el-button--primary" type="submit">搜索</button>
   </form>
 </div>
+{% if missing_plan_keys_users %}
+<div class="el-alert el-alert--warning is-light" style="margin-bottom: 14px; border: 1px solid #faecd8; display: flex; align-items: center; justify-content: space-between; background: #fdf6ec; color: #b88230; padding: 10px 16px; border-radius: 4px;">
+  <div style="display: flex; align-items: center; gap: 8px;">
+    <span style="font-size: 15px;">⚠️</span>
+    <span>发现 <strong>{{ missing_plan_keys_users|length }}</strong> 位用户未配置「策划 API Keys」，将无法正常使用 AI 策划功能。</span>
+  </div>
+  <button type="button" class="el-button btn-sm" id="btn-reopen-missing-keys" style="padding: 4px 12px; font-size: 12px; background: #e6a23c; color: #fff; border: 0; cursor: pointer; border-radius: 4px;">查看未配置用户</button>
+</div>
+{% endif %}
 <div class="grid-card">
   <table class="ssr-table" id="user-ssr-table">
     <thead>

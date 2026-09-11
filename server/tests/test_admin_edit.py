@@ -254,3 +254,152 @@ def test_user_edit_toggle_plan_thinking_enabled(admin_client):
         'name="plan_thinking_enabled" value="y" checked'
     ) in check_resp2.text
 
+
+def test_user_edit_enabled_tabs(admin_client):
+    # 默认状态
+    resp = admin_client.get("/admin/user/edit/1")
+    assert resp.status_code == 200
+    assert "应用导航页面展示 (Tab 权限)" in resp.text
+    assert 'id="tab_clip_edit"' in resp.text
+    assert 'id="tab_batch_edit"' in resp.text
+    assert 'name="tab_clip_edit" value="y" checked' in resp.text
+    assert 'name="tab_batch_edit" value="y" checked' not in resp.text
+
+    # 仅开启 batch_edit
+    save_resp = admin_client.post(
+        "/admin/user/edit/1",
+        data={
+            "username": "a@b.com",
+            "role": "user",
+            "tabs_submitted": "1",
+            "tab_batch_edit": "y",
+            "save": "Save",
+        },
+        follow_redirects=False,
+    )
+    assert save_resp.status_code == 302
+
+    check_resp = admin_client.get("/admin/user/edit/1")
+    assert check_resp.status_code == 200
+    assert 'name="tab_batch_edit" value="y" checked' in check_resp.text
+    assert 'name="tab_clip_edit" value="y" checked' not in check_resp.text
+    assert (
+        'id="download_enabled" type="checkbox" role="switch" '
+        'name="download_enabled" value="y" checked'
+    ) not in check_resp.text
+
+    # 全开启
+    save_resp2 = admin_client.post(
+        "/admin/user/edit/1",
+        data={
+            "username": "a@b.com",
+            "role": "user",
+            "tabs_submitted": "1",
+            "download_enabled": "y",
+            "tab_clip_edit": "y",
+            "tab_batch_edit": "y",
+            "save": "Save",
+        },
+        follow_redirects=False,
+    )
+    assert save_resp2.status_code == 302
+
+    check_resp2 = admin_client.get("/admin/user/edit/1")
+    assert check_resp2.status_code == 200
+    assert 'name="tab_batch_edit" value="y" checked' in check_resp2.text
+    assert 'name="tab_clip_edit" value="y" checked' in check_resp2.text
+    assert (
+        'id="download_enabled" type="checkbox" role="switch" '
+        'name="download_enabled" value="y" checked'
+    ) in check_resp2.text
+
+
+def test_unconfigured_keys_modal_and_api(admin_client):
+    # 初始状态：用户 a@b.com 尚未配置密钥
+    resp = admin_client.get("/admin/users")
+    assert resp.status_code == 200
+    assert 'id="missing-keys-dialog"' in resp.text
+    assert 'id="missing-keys-dismiss-today"' in resp.text
+    assert 'admin_missing_keys_dismissed_today' in resp.text
+    assert 'min(880px, 96vw)' in resp.text
+    assert 'isEditPage' in resp.text
+    assert "a@b.com" in resp.text
+    assert "menu-missing-keys-badge" in resp.text
+
+    # 测试 API 接口返回
+    api_resp = admin_client.get("/admin/api/unconfigured-users")
+    assert api_resp.status_code == 200
+    users = api_resp.json().get("users", [])
+    assert len(users) == 1
+    assert users[0]["username"] == "a@b.com"
+
+    # 配置密钥并保存
+    save_resp = admin_client.post(
+        "/admin/user/edit/1",
+        data={
+            "username": "a@b.com",
+            "role": "user",
+            "plan_llm_preset": "deepseek|deepseek-v4-flash",
+            "deepseek_keys": "sk-real-key-123456",
+            "save": "Save",
+        },
+        follow_redirects=False,
+    )
+    assert save_resp.status_code == 302
+
+    # 再次访问用户列表：未配置弹窗与角标不再呈现
+    resp2 = admin_client.get("/admin/users")
+    assert resp2.status_code == 200
+    assert 'id="missing-keys-dialog"' not in resp2.text
+    assert "menu-missing-keys-badge" not in resp2.text
+
+    # API 返回空
+    api_resp2 = admin_client.get("/admin/api/unconfigured-users")
+    assert api_resp2.status_code == 200
+    assert api_resp2.json().get("users") == []
+
+
+def test_unconfigured_keys_skips_demo_user(admin_client):
+    import app.admin_panel as ap
+    from sqlalchemy.orm import sessionmaker
+
+    Session = sessionmaker(bind=ap.engine)
+    db = Session()
+    db.add(
+        User(
+            username="demo",
+            password_hash="pwd_hash",
+            plain_password="demo",
+            role="user",
+            is_active=True,
+        )
+    )
+    db.commit()
+    db.close()
+
+    # 先为 a@b.com 配置好密钥，此时数据库中仅剩 demo 用户未配置
+    admin_client.post(
+        "/admin/user/edit/1",
+        data={
+            "username": "a@b.com",
+            "role": "user",
+            "plan_llm_preset": "deepseek|deepseek-v4-flash",
+            "deepseek_keys": "sk-real-key-123456",
+            "save": "Save",
+        },
+        follow_redirects=False,
+    )
+
+    # 验证 demo 用户被豁免，不触发未配置弹窗与角标，API 返回空
+    resp = admin_client.get("/admin/users")
+    assert resp.status_code == 200
+    assert 'id="missing-keys-dialog"' not in resp.text
+    assert "menu-missing-keys-badge" not in resp.text
+
+    api_resp = admin_client.get("/admin/api/unconfigured-users")
+    assert api_resp.status_code == 200
+    assert api_resp.json().get("users") == []
+
+
+
+

@@ -1,0 +1,257 @@
+{% extends "admin/base.html" %}
+{% from "admin/macros.html" import pager %}
+{% block title %}错误反馈 · {{ app_name }}{% endblock %}
+{% block body %}
+<div class="head">
+  <div>
+    <h1>错误反馈</h1>
+    <p>共 {{ total }} 条 · 客户端一键上报的真实异常堆栈与诊断信息</p>
+  </div>
+  <div style="display: flex; gap: 12px; align-items: center;">
+    <div class="status-tabs" style="display: flex; gap: 4px; background: #f0f2f5; padding: 3px; border-radius: 4px;">
+      <a href="/admin/errors{% if q %}?q={{ q }}{% endif %}" class="el-button btn-sm{% if not request.query_params.get('status') %} el-button--primary{% endif %}" style="border: none; padding: 4px 10px; height: 26px; font-size: 12px;">全部</a>
+      <a href="/admin/errors?status=pending{% if q %}&q={{ q }}{% endif %}" class="el-button btn-sm{% if request.query_params.get('status') == 'pending' %} el-button--primary{% endif %}" style="border: none; padding: 4px 10px; height: 26px; font-size: 12px;">待处理</a>
+      <a href="/admin/errors?status=resolved{% if q %}&q={{ q }}{% endif %}" class="el-button btn-sm{% if request.query_params.get('status') == 'resolved' %} el-button--primary{% endif %}" style="border: none; padding: 4px 10px; height: 26px; font-size: 12px;">已解决</a>
+      <a href="/admin/errors?status=ignored{% if q %}&q={{ q }}{% endif %}" class="el-button btn-sm{% if request.query_params.get('status') == 'ignored' %} el-button--primary{% endif %}" style="border: none; padding: 4px 10px; height: 26px; font-size: 12px;">已忽略</a>
+    </div>
+    <form class="search" method="get">
+      {% if request.query_params.get('status') %}
+      <input type="hidden" name="status" value="{{ request.query_params.get('status') }}">
+      {% endif %}
+      <div class="el-input">
+        <div class="el-input__wrapper">
+          <input class="el-input__inner" name="q" value="{{ q }}" placeholder="搜索账号 / 剧名 / 报错">
+        </div>
+      </div>
+      <button class="el-button el-button--primary" type="submit">搜索</button>
+    </form>
+  </div>
+</div>
+
+<div class="grid-card">
+  <table class="ssr-table" id="errors-ssr-table">
+    <thead>
+      <tr>
+        <th style="width: 60px;">ID</th>
+        <th style="width: 130px;">时间</th>
+        <th style="width: 140px;">用户账号</th>
+        <th style="width: 80px;">版本</th>
+        <th style="width: 90px;">业务阶段</th>
+        <th style="min-width: 140px;">关联剧目</th>
+        <th style="min-width: 180px;">提示信息</th>
+        <th style="width: 80px;">状态</th>
+        <th style="width: 160px;">操作</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for row in rows %}
+      <tr>
+        <td>#{{ row.id }}</td>
+        <td>{{ row.created_at }}</td>
+        <td><strong>{{ row.username }}</strong></td>
+        <td>{{ row.app_version }}</td>
+        <td><span class="tag tag-ok">{{ row.error_stage_label }}</span></td>
+        <td class="ellipsis" title="{{ row.drama_name }}">{{ row.drama_name }}</td>
+        <td class="ellipsis" title="{{ row.friendly_msg }}">{{ row.friendly_msg }}</td>
+        <td>
+          {% if row.status == 'resolved' %}
+          <span class="tag tag-ok">已解决</span>
+          {% elif row.status == 'ignored' %}
+          <span class="tag tag-off">已忽略</span>
+          {% else %}
+          <span class="tag" style="background:#fdf6ec; color:#e6a23c; border-color:#faecd8;">待处理</span>
+          {% endif %}
+        </td>
+        <td>
+          <button type="button" class="el-button btn-sm" onclick="openDetailModal({{ loop.index0 }})" style="padding: 2px 8px; font-size: 12px; height: 24px;">详情</button>
+          {% if row.status != 'resolved' %}
+          <form method="post" action="/admin/errors/{{ row.id }}/status" style="display:inline;">
+            <input type="hidden" name="status" value="resolved">
+            <button type="submit" class="el-button el-button--primary btn-sm" style="padding: 2px 8px; font-size: 12px; height: 24px;">解决</button>
+          </form>
+          {% else %}
+          <form method="post" action="/admin/errors/{{ row.id }}/status" style="display:inline;">
+            <input type="hidden" name="status" value="pending">
+            <button type="submit" class="el-button btn-sm" style="padding: 2px 8px; font-size: 12px; height: 24px;">重开</button>
+          </form>
+          {% endif %}
+          <form method="post" action="/admin/errors/{{ row.id }}/delete" style="display:inline;" onsubmit="return confirm('确定删除该错误报告吗？');">
+            <button type="submit" class="el-button el-button--danger btn-sm" style="padding: 2px 8px; font-size: 12px; height: 24px; color: #f56c6c; border-color: #fbc4c4;">删除</button>
+          </form>
+        </td>
+      </tr>
+      {% else %}
+      <tr><td class="empty" colspan="9">暂无错误反馈记录</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  <div id="errors-grid"></div>
+</div>
+{{ pager("/admin/errors", page, total_pages, total, q) }}
+
+<!-- 错误详情模态弹窗 -->
+<div id="error-detail-modal" class="missing-keys-dialog-mask" role="dialog" aria-modal="true">
+  <div class="missing-keys-dialog" style="width: min(960px, 96vw); max-height: 90vh;">
+    <div class="missing-keys-dialog__head" style="border-bottom: 1px solid #ebeef5; padding: 14px 20px;">
+      <h2 class="missing-keys-dialog__title" id="modal-title" style="font-size: 16px;">
+        <span style="color: #f56c6c; margin-right: 6px;">●</span>错误详情
+      </h2>
+      <button type="button" class="missing-keys-dialog__close" onclick="closeDetailModal()">×</button>
+    </div>
+    <div class="missing-keys-dialog__body" style="padding: 20px; overflow-y: auto;">
+      <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; margin-bottom: 16px; background: #f8f9fa; padding: 12px 16px; border-radius: 6px;">
+        <div><span style="color: #909399; font-size: 12px;">用户账号：</span><strong id="modal-username" style="font-size: 13px;"></strong></div>
+        <div><span style="color: #909399; font-size: 12px;">客户端版本：</span><span id="modal-version"></span></div>
+        <div><span style="color: #909399; font-size: 12px;">业务阶段：</span><span id="modal-stage" class="tag tag-ok"></span></div>
+        <div><span style="color: #909399; font-size: 12px;">发生时间：</span><span id="modal-time"></span></div>
+        <div style="grid-column: 1 / -1;"><span style="color: #909399; font-size: 12px;">关联剧目：</span><strong id="modal-drama"></strong></div>
+        <div style="grid-column: 1 / -1;"><span style="color: #909399; font-size: 12px;">运行环境：</span><span id="modal-client-info" style="font-family: monospace; font-size: 12px;"></span></div>
+      </div>
+
+      <div style="margin-bottom: 16px;">
+        <div style="font-size: 13px; font-weight: 600; margin-bottom: 6px; color: #303133;">用户端展示提示（脱敏文案）：</div>
+        <div id="modal-friendly" style="background: #eef2f7; padding: 10px 14px; border-radius: 4px; font-size: 13px; color: #2c3e50; border-left: 4px solid #409eff;"></div>
+      </div>
+
+      <div>
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+          <div style="font-size: 13px; font-weight: 600; color: #f56c6c;">真实错误堆栈（Raw Exception & Traceback）：</div>
+          <button type="button" class="el-button btn-sm" id="copy-stack-btn" onclick="copyRawStack()" style="font-size: 12px; height: 26px; padding: 2px 12px;">一键复制堆栈</button>
+        </div>
+        <pre id="modal-raw" style="background: #1e1e1e; color: #d4d4d4; padding: 14px; border-radius: 6px; font-family: Consolas, Monaco, 'Courier New', monospace; font-size: 12px; line-height: 1.5; max-height: 380px; overflow: auto; white-space: pre-wrap; word-break: break-all; margin: 0;"></pre>
+      </div>
+    </div>
+    <div class="missing-keys-dialog__foot" style="padding: 12px 20px; display: flex; justify-content: space-between; align-items: center;">
+      <div id="modal-actions" style="display: flex; gap: 8px;"></div>
+      <button type="button" class="el-button" onclick="closeDetailModal()">关闭</button>
+    </div>
+  </div>
+</div>
+
+{% endblock %}
+{% block scripts %}
+<script>
+  const errorRows = {{ rows | tojson }};
+
+  function openDetailModal(index) {
+    const row = errorRows[index];
+    if (!row) return;
+    document.getElementById("modal-title").innerHTML = `<span style="color: #f56c6c; margin-right: 6px;">●</span>错误详情 #${row.id} · ${row.drama_name}`;
+    document.getElementById("modal-username").innerText = row.username;
+    document.getElementById("modal-version").innerText = row.app_version;
+    document.getElementById("modal-stage").innerText = row.error_stage_label;
+    document.getElementById("modal-time").innerText = row.created_at;
+    document.getElementById("modal-drama").innerText = row.drama_name;
+    document.getElementById("modal-client-info").innerText = row.client_info;
+    document.getElementById("modal-friendly").innerText = row.friendly_msg;
+    document.getElementById("modal-raw").innerText = row.raw_error;
+
+    const actionContainer = document.getElementById("modal-actions");
+    let actionHtml = "";
+    if (row.status !== "resolved") {
+      actionHtml += `
+        <form method="post" action="/admin/errors/${row.id}/status" style="display:inline;">
+          <input type="hidden" name="status" value="resolved">
+          <button type="submit" class="el-button el-button--primary">标记为已解决</button>
+        </form>
+      `;
+    } else {
+      actionHtml += `
+        <form method="post" action="/admin/errors/${row.id}/status" style="display:inline;">
+          <input type="hidden" name="status" value="pending">
+          <button type="submit" class="el-button">重新标记为待处理</button>
+        </form>
+      `;
+    }
+    if (row.status !== "ignored") {
+      actionHtml += `
+        <form method="post" action="/admin/errors/${row.id}/status" style="display:inline;">
+          <input type="hidden" name="status" value="ignored">
+          <button type="submit" class="el-button">标记为已忽略</button>
+        </form>
+      `;
+    }
+    actionContainer.innerHTML = actionHtml;
+
+    document.getElementById("error-detail-modal").classList.add("is-open");
+  }
+
+  function closeDetailModal() {
+    document.getElementById("error-detail-modal").classList.remove("is-open");
+  }
+
+  function copyRawStack() {
+    const text = document.getElementById("modal-raw").innerText;
+    const btn = document.getElementById("copy-stack-btn");
+    navigator.clipboard.writeText(text).then(() => {
+      const orig = btn.innerText;
+      btn.innerText = "已复制 ✅";
+      btn.style.borderColor = "#67c23a";
+      btn.style.color = "#67c23a";
+      setTimeout(() => {
+        btn.innerText = orig;
+        btn.style.borderColor = "";
+        btn.style.color = "";
+      }, 1800);
+    }).catch(err => {
+      alert("复制失败，请手动选择文本复制");
+    });
+  }
+
+  if (window.Vue && window.VXETable) {
+    mountAdminGrid("#errors-grid", {
+      fallback: "#errors-ssr-table",
+      data: errorRows,
+      columns: [
+        { field: "id", title: "ID", width: 60 },
+        { field: "created_at", title: "时间", width: 130 },
+        { field: "username", title: "用户账号", width: 140 },
+        { field: "app_version", title: "版本", width: 75 },
+        {
+          field: "error_stage_label",
+          title: "业务阶段",
+          width: 90,
+          slots: {
+            default: ({ row }) => {
+              return [Vue.h("span", { class: "tag tag-ok" }, row.error_stage_label)];
+            }
+          }
+        },
+        { field: "drama_name", title: "关联剧目", minWidth: 150 },
+        { field: "friendly_msg", title: "提示信息", minWidth: 160 },
+        {
+          field: "status",
+          title: "状态",
+          width: 80,
+          slots: {
+            default: ({ row }) => {
+              if (row.status === "resolved") {
+                return [Vue.h("span", { class: "tag tag-ok" }, "已解决")];
+              } else if (row.status === "ignored") {
+                return [Vue.h("span", { class: "tag tag-off" }, "已忽略")];
+              }
+              return [Vue.h("span", { class: "tag", style: "background:#fdf6ec; color:#e6a23c; border-color:#faecd8;" }, "待处理")];
+            }
+          }
+        },
+        {
+          title: "操作",
+          width: 140,
+          fixed: "right",
+          slots: {
+            default: ({ $rowIndex }) => {
+              return [
+                Vue.h("button", {
+                  class: "el-button btn-sm",
+                  style: "padding: 2px 8px; font-size: 12px; height: 24px; margin-right: 4px;",
+                  onClick: () => openDetailModal($rowIndex)
+                }, "详情")
+              ];
+            }
+          }
+        }
+      ]
+    });
+  }
+</script>
+{% endblock %}

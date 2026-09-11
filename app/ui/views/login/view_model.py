@@ -16,6 +16,8 @@ class LoginViewModel(ViewModel):
         self.auth_service = None # Injected via DI
 
     def login(self, username, password, remember_me, auto_login):
+        username = (username or "").strip()
+        password = (password or "").strip()
         if not username or not password:
              self.loginFailed.emit('请输入用户名和密码')
              return

@@ -10,6 +10,8 @@ from app.core.navigation import LazyViewProxy
 from app.data.services.access_control_service import access_control
 from app.data.services.update_service import prompt_update_on_startup
 from app.data.services.usage_service import UsageService
+from app.ui.components.icon import MyIcon
+from app.ui.views.batch_edit.view import BatchEditPage
 from app.ui.views.clip_edit.view import ClipEditPage
 from app.ui.views.settings.view import SettingInterface
 from app.ui.views.video_download.view import VideoDownloadPage
@@ -42,11 +44,16 @@ class MainWindow(FluentWindow):
             self.navigationInterface.setExpandWidth(150)
 
     def init_navigation(self):
+        raw = str(cfg.enabled_tabs.value or "").strip()
+        if not raw:
+            enabled_tab_keys = ["video_download", "clip_edit"]
+        else:
+            enabled_tab_keys = [t.strip() for t in raw.split(",") if t.strip()]
+
         # Use LazyViewProxy for lazy loading
-        # self.batchEditPage = LazyViewProxy(lambda: BatchEditPage(self), "batchEditPage")
+        self.batchEditPage = LazyViewProxy(lambda: BatchEditPage(self), "batchEditPage")
         self.clipEditPage = LazyViewProxy(lambda: ClipEditPage(self), "clipEditPage")
         self.videoDownloadPage = LazyViewProxy(lambda: VideoDownloadPage(self), "videoDownloadPage")
-        # self.settingInterface = LazyViewProxy(lambda: SettingInterface(self), "settingInterface")
         self.settingInterface = SettingInterface(self)
         self.settingInterface.logout.connect(self.logout)
 
@@ -56,11 +63,25 @@ class MainWindow(FluentWindow):
         self._access_timer.timeout.connect(self._check_access)
         self._access_timer.start()
 
-        # self.addSubInterface(self.batchEditPage, MyIcon.TOOL, '批量打码')
-        self.addSubInterface(self.videoDownloadPage, FIF.DOWNLOAD, '视频下载')
-        self.addSubInterface(self.clipEditPage, FIF.VIDEO, '自动化剪辑')
-        
+        first_page = None
+        if "video_download" in enabled_tab_keys:
+            self.addSubInterface(self.videoDownloadPage, FIF.DOWNLOAD, '视频下载')
+            if first_page is None:
+                first_page = self.videoDownloadPage
+        if "clip_edit" in enabled_tab_keys:
+            self.addSubInterface(self.clipEditPage, FIF.VIDEO, '自动化剪辑')
+            if first_page is None:
+                first_page = self.clipEditPage
+        if "batch_edit" in enabled_tab_keys:
+            self.addSubInterface(self.batchEditPage, MyIcon.TOOL, '批量打码')
+            if first_page is None:
+                first_page = self.batchEditPage
+
         self.addSubInterface(self.settingInterface, FIF.SETTING, '设置', NavigationItemPosition.BOTTOM)
+        if first_page is None:
+            first_page = self.settingInterface
+
+        self.switchTo(first_page)
 
         QTimer.singleShot(0, lambda: self.navigationInterface.expand(useAni=False))
         QTimer.singleShot(800, lambda: prompt_update_on_startup(self))
@@ -81,6 +102,10 @@ class MainWindow(FluentWindow):
 
         folder_paths 为空时仍可仅切换到剪辑页（用于批量下载全部结束后跳转）。
         """
+        raw = str(cfg.enabled_tabs.value or "").strip()
+        enabled = [t.strip() for t in raw.split(",") if t.strip()] if raw else ["video_download", "clip_edit"]
+        if "clip_edit" not in enabled:
+            return
         page = self.clipEditPage.ensure_loaded()
         if switch_tab:
             self.switchTo(self.clipEditPage)
@@ -95,6 +120,10 @@ class MainWindow(FluentWindow):
     def import_to_clip_edit(self, folder_paths: list[str]) -> None:
         """将下载目录中的剧目导入自动化剪辑页（不执行后续流程）。"""
         if not folder_paths:
+            return
+        raw = str(cfg.enabled_tabs.value or "").strip()
+        enabled = [t.strip() for t in raw.split(",") if t.strip()] if raw else ["video_download", "clip_edit"]
+        if "clip_edit" not in enabled:
             return
         page = self.clipEditPage.ensure_loaded()
         self.switchTo(self.clipEditPage)

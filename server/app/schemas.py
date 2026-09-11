@@ -1,7 +1,7 @@
 from datetime import date, datetime
 from typing import Any
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 class LoginRequest(BaseModel):
@@ -14,6 +14,27 @@ class UserOut(BaseModel):
     username: str
     role: str
     is_active: bool
+    download_enabled: bool = True
+    enabled_tabs: list[str] = Field(
+        default_factory=lambda: ["video_download", "clip_edit"]
+    )
+
+    @field_validator("enabled_tabs", mode="before")
+    @classmethod
+    def _parse_enabled_tabs(cls, v):
+        if isinstance(v, str):
+            return [x.strip() for x in v.split(",") if x.strip()]
+        if isinstance(v, (list, tuple, set)):
+            return [str(x).strip() for x in v if str(x).strip()]
+        return ["video_download", "clip_edit"]
+
+    @model_validator(mode="after")
+    def _sync_download_enabled_with_tabs(self):
+        if not self.download_enabled:
+            self.enabled_tabs = [t for t in self.enabled_tabs if t != "video_download"]
+        elif "video_download" not in self.enabled_tabs:
+            self.download_enabled = False
+        return self
 
     model_config = {"from_attributes": True}
 
@@ -118,6 +139,9 @@ class DailyQuotaOut(BaseModel):
     clip_limit: int
     download_limit: int = 0
     download_enabled: bool = True
+    enabled_tabs: list[str] = Field(
+        default_factory=lambda: ["video_download", "clip_edit"]
+    )
     planned_dramas: list[str]
     clipped_dramas: list[str]
     downloaded_dramas: list[str] = []
@@ -619,3 +643,13 @@ class ClientVersionOut(BaseModel):
     min_supported: str = ""
     download_url: str = ""
     changelog: str = ""
+
+
+class ErrorReportCreate(BaseModel):
+    app_version: str = ""
+    error_stage: str = "general"
+    drama_name: str = ""
+    friendly_msg: str = ""
+    raw_error: str
+    client_info: str = ""
+

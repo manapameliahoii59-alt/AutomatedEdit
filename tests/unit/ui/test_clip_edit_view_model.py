@@ -54,3 +54,14 @@ class TestClipEditViewModelTiming:
         status = vm._status[project_id]
         assert status["transcribe"] == DramaStatus.DONE
         assert status["plan"] == DramaStatus.DONE
+
+    def test_remove_project(self, tmp_path):
+        folder = _make_drama_folder(tmp_path)
+        vm = ClipEditViewModel()
+        vm.import_drama_folder(str(folder), emit_message=False)
+        assert len(vm.get_projects()) == 1
+        pid = vm.get_projects()[0].id
+
+        vm.remove_project(pid)
+        assert len(vm.get_projects()) == 0
+        assert pid not in vm._status

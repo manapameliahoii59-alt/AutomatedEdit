@@ -4,12 +4,13 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.deps import get_current_user
-from app.models import UsageEvent, User, UserDailyActivity
+from app.deps import get_current_user, get_optional_current_user
+from app.models import ErrorReport, UsageEvent, User, UserDailyActivity
 from app.schemas import (
     ClientVersionOut,
     DailyActivityOut,
     DailyQuotaOut,
+    ErrorReportCreate,
     PlanJobCreateRequest,
     PlanJobCreateResponse,
     PlanJobResultOut,
@@ -53,6 +54,7 @@ def _quota_to_schema(quota) -> DailyQuotaOut:
         clip_limit=quota.clip_limit,
         download_limit=quota.download_limit,
         download_enabled=quota.download_enabled,
+        enabled_tabs=getattr(quota, "enabled_tabs", ["video_download", "clip_edit"]),
         planned_dramas=quota.planned_dramas,
         clipped_dramas=quota.clipped_dramas,
         downloaded_dramas=quota.downloaded_dramas,
@@ -241,3 +243,29 @@ def update_settings(
     result = patch_user_settings(db, user.id, patch)
     db.commit()
     return result
+
+
+@router.post("/error-reports")
+def submit_error_report(
+    body: ErrorReportCreate,
+    user: User | None = Depends(get_optional_current_user),
+    db: Session = Depends(get_db),
+):
+    """接收桌面端上报的真实错误信息。"""
+    username = user.username if user else "未登录用户"
+    report = ErrorReport(
+        user_id=user.id if user else None,
+        username=username,
+        app_version=body.app_version,
+        error_stage=body.error_stage,
+        drama_name=body.drama_name,
+        friendly_msg=body.friendly_msg,
+        raw_error=body.raw_error,
+        client_info=body.client_info,
+        status="pending",
+    )
+    db.add(report)
+    db.commit()
+    db.refresh(report)
+    return {"ok": True, "id": report.id}
+

@@ -971,13 +971,7 @@ class ClipEditPage(ScrollArea):
                 show_dialog(self, f"一键执行失败：{e}", "错误")
 
     def _confirm_delete(self, project_id: str):
-        project = next((p for p in self.vm.get_projects() if p.id == project_id), None)
-        if not project:
-            return
-        w = Dialog("删除剧目", f"确定要删除《{project.name}》吗？", self.window())
-        setup_confirm_dialog(w, window_title="删除剧目")
-        if w.exec():
-            self.vm.remove_project(project_id)
+        self.vm.remove_project(project_id)
 
     def _save_export_name_tag(self):
         tag = self.export_name_tag_input.text().strip()[:20]

@@ -74,6 +74,13 @@ def _ensure_daily_quota_columns() -> None:
                         "NOT NULL DEFAULT 1"
                     )
                 )
+            if "enabled_tabs" not in user_cols:
+                conn.execute(
+                    text(
+                        "ALTER TABLE users ADD COLUMN enabled_tabs VARCHAR(255) "
+                        "NOT NULL DEFAULT 'video_download,clip_edit'"
+                    )
+                )
             if added_plan_limit:
                 conn.execute(
                     text(

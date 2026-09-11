@@ -9,6 +9,14 @@ _CRASH_LOG = os.path.join(_APP_DIR, "crash.log")
 _STARTUP_LOG = os.path.join(_APP_DIR, "startup.log")
 _STARTUP_T0 = time.perf_counter()
 
+if _APP_DIR not in sys.path:
+    sys.path.insert(0, _APP_DIR)
+if hasattr(os, "add_dll_directory") and os.path.isdir(_APP_DIR):
+    try:
+        os.add_dll_directory(_APP_DIR)
+    except Exception:
+        pass
+
 
 def _startup_log(msg: str) -> None:
     """写入启动步骤轨迹，供客户机秒退时排查。失败时静默。"""

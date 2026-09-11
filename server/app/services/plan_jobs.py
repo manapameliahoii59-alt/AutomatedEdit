@@ -26,7 +26,7 @@ from app.services.plan_secrets import (
 
 logger = logging.getLogger(__name__)
 
-JOB_TTL = timedelta(hours=2)
+JOB_TTL = timedelta(hours=24)
 # 进度回调写库节流，避免 LLM 流式回调打爆连接池
 _PROGRESS_WRITE_INTERVAL_SEC = 1.0
 

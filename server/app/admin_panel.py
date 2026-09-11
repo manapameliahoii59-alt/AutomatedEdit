@@ -20,7 +20,7 @@ from starlette.middleware.sessions import SessionMiddleware
 
 from app.config import settings
 from app.database import engine
-from app.models import PlanJob, UsageEvent, User, UserDailyActivity, UserSettings
+from app.models import ErrorReport, PlanJob, UsageEvent, User, UserDailyActivity, UserSettings
 from app.services.plan_secrets import (
     PLAN_LLM_PRESET_CHOICES,
     PLAN_LLM_PROVIDER_DEEPSEEK,
@@ -161,6 +161,7 @@ def _nav(active: str) -> list[dict[str, str]]:
         ("usage", "/admin/usage", "使用记录"),
         ("jobs", "/admin/jobs", "策划任务"),
         ("settings", "/admin/settings", "用户配置"),
+        ("errors", "/admin/errors", "错误反馈"),
     ]
     return [
         {"key": key, "href": href, "label": label, "active": key == active}
@@ -168,12 +169,62 @@ def _nav(active: str) -> list[dict[str, str]]:
     ]
 
 
-def _ctx(request: Request, *, active: str, **extra: Any) -> dict[str, Any]:
+def _get_users_missing_plan_keys(db: Session) -> list[dict[str, Any]]:
+    """查询所有尚未配置「策划 API Keys」的用户（启用与禁用均包含，启用排在前面）。"""
+    stmt = (
+        select(User)
+        .options(joinedload(User.secrets))
+        .order_by(desc(User.is_active), desc(User.id))
+    )
+    rows = db.scalars(stmt).unique().all()
+    missing = []
+    for user in rows:
+        if (user.username or "").strip().lower() == "demo":
+            continue
+        _preset, _label, keys, _dash, _thinking = _user_plan_fields(user)
+        if not (keys or "").strip():
+            missing.append(
+                {
+                    "id": user.id,
+                    "username": user.username,
+                    "role": user.role,
+                    "is_active": user.is_active,
+                    "valid_until": user.valid_until.isoformat() if user.valid_until else "永久",
+                }
+            )
+    return missing
+
+
+def _ctx(
+    request: Request,
+    *,
+    active: str,
+    db: Session | None = None,
+    **extra: Any,
+) -> dict[str, Any]:
+    missing_plan_keys_users = []
+    pending_errors_count = 0
+    if db is not None:
+        try:
+            missing_plan_keys_users = _get_users_missing_plan_keys(db)
+        except Exception:
+            missing_plan_keys_users = []
+        try:
+            pending_errors_count = int(
+                db.scalar(select(func.count(ErrorReport.id)).where(ErrorReport.status == "pending")) or 0
+            )
+        except Exception:
+            pending_errors_count = 0
+    just_logged_in = bool(request.session.pop("just_logged_in", False))
     data = {
         "request": request,
         "nav": _nav(active),
         "active": active,
         "app_name": "剪辑助手",
+        "missing_plan_keys_users": missing_plan_keys_users,
+        "pending_errors_count": pending_errors_count,
+        "just_logged_in": just_logged_in,
+        "today_date": date.today().isoformat(),
     }
     data.update(extra)
     return data
@@ -223,6 +274,7 @@ def login_submit(
 ):
     if username == settings.admin_username and password == settings.admin_password:
         request.session["admin"] = True
+        request.session["just_logged_in"] = True
         dest = (next or "").strip() or "/admin/users"
         if not dest.startswith("/admin"):
             dest = "/admin/users"
@@ -300,6 +352,7 @@ def users_list(
         _ctx(
             request,
             active="users",
+            db=db,
             users=users,
             q=keyword,
             page=page,
@@ -323,13 +376,23 @@ def user_edit_page(
     if user is None:
         return HTMLResponse("用户不存在", status_code=404)
     preset, _label, keys, dashscope, thinking_enabled = _user_plan_fields(user)
+    raw_tabs = getattr(user, "enabled_tabs", None)
+    enabled_tabs = (
+        [t.strip() for t in str(raw_tabs).split(",") if t.strip()]
+        if raw_tabs
+        else ["video_download", "clip_edit"]
+    )
+    if not getattr(user, "download_enabled", True):
+        enabled_tabs = [t for t in enabled_tabs if t != "video_download"]
     return templates.TemplateResponse(
         request,
         "admin/user_edit.html",
         _ctx(
             request,
             active="users",
+            db=db,
             user=user,
+            enabled_tabs=enabled_tabs,
             plan_llm_preset=preset,
             deepseek_keys=keys,
             dashscope_key=dashscope,
@@ -355,6 +418,10 @@ def user_edit_save(
     daily_plan_limit: Annotated[str | None, Form()] = None,
     daily_clip_limit: Annotated[str | None, Form()] = None,
     daily_download_limit: Annotated[str | None, Form()] = None,
+    tabs_submitted: Annotated[str | None, Form()] = None,
+    tab_video_download: Annotated[str | None, Form()] = None,
+    tab_clip_edit: Annotated[str | None, Form()] = None,
+    tab_batch_edit: Annotated[str | None, Form()] = None,
     plan_llm_preset: Annotated[str | None, Form()] = None,
     plan_thinking_enabled: Annotated[str | None, Form()] = None,
     deepseek_keys: Annotated[str | None, Form()] = None,
@@ -368,7 +435,6 @@ def user_edit_save(
     user.username = name
     user.role = (role or "user").strip() or "user"
     user.is_active = bool(is_active)
-    user.download_enabled = bool(download_enabled)
     user.valid_until = _parse_valid_until(valid_until)
     if daily_plan_limit is not None and str(daily_plan_limit).strip() != "":
         user.daily_plan_limit = _parse_int(daily_plan_limit, user.daily_plan_limit)
@@ -378,6 +444,33 @@ def user_edit_save(
         user.daily_download_limit = _parse_int(
             daily_download_limit, user.daily_download_limit
         )
+
+    # 导航栏 Tab 权限配置
+    video_on = bool(download_enabled) or bool(tab_video_download)
+    if tabs_submitted or tab_video_download or tab_clip_edit or tab_batch_edit:
+        tabs = []
+        if video_on:
+            tabs.append("video_download")
+        if tab_clip_edit:
+            tabs.append("clip_edit")
+        if tab_batch_edit:
+            tabs.append("batch_edit")
+        user.enabled_tabs = ",".join(tabs)
+        user.download_enabled = video_on
+    else:
+        user.download_enabled = video_on
+        current_tabs = [
+            t.strip()
+            for t in str(getattr(user, "enabled_tabs", "") or "").split(",")
+            if t.strip()
+        ]
+        if not current_tabs:
+            current_tabs = ["video_download", "clip_edit"]
+        if video_on and "video_download" not in current_tabs:
+            current_tabs.append("video_download")
+        elif not video_on and "video_download" in current_tabs:
+            current_tabs.remove("video_download")
+        user.enabled_tabs = ",".join(current_tabs)
     db.commit()
 
     preset = (plan_llm_preset or "").strip()
@@ -430,6 +523,7 @@ def _list_page(
         _ctx(
             request,
             active=active,
+            db=db,
             rows=[row_mapper(row) for row in rows],
             q=keyword,
             page=page,
@@ -585,6 +679,107 @@ def settings_list(
         page=page,
         row_mapper=mapper,
     )
+
+
+@router.get("/api/unconfigured-users")
+def get_unconfigured_users(db: Db):
+    return {"users": _get_users_missing_plan_keys(db)}
+
+
+_ERROR_STAGE_LABELS = {
+    "transcribe": "语音识别",
+    "plan": "方案策划",
+    "render": "动态渲染",
+    "download": "视频下载",
+    "general": "通用业务",
+}
+
+
+@router.get("/errors", response_class=HTMLResponse)
+def error_reports_list(
+    request: Request,
+    db: Db,
+    q: str = "",
+    status: str = "",
+    page: int = Query(default=1, ge=1),
+):
+    def mapper(row: ErrorReport) -> dict:
+        username = row.username or (row.user.username if row.user else "—")
+        stage_label = _ERROR_STAGE_LABELS.get(row.error_stage, row.error_stage or "通用业务")
+        raw = row.raw_error or ""
+        preview = raw if len(raw) <= 100 else raw[:100] + "…"
+        return {
+            "id": row.id,
+            "username": username,
+            "app_version": row.app_version or "—",
+            "error_stage": row.error_stage,
+            "error_stage_label": stage_label,
+            "drama_name": row.drama_name or "—",
+            "friendly_msg": row.friendly_msg or "—",
+            "raw_error": raw,
+            "raw_error_preview": preview,
+            "client_info": row.client_info or "—",
+            "status": row.status or "pending",
+            "created_at": _fmt_dt(row.created_at),
+        }
+
+    def status_filter(stmt):
+        if status.strip() in ("pending", "resolved", "ignored"):
+            return stmt.where(ErrorReport.status == status.strip())
+        return stmt
+
+    return _list_page(
+        request,
+        db,
+        active="errors",
+        template="admin/errors.html",
+        model=ErrorReport,
+        order_col=ErrorReport.created_at,
+        search_cols=[
+            ErrorReport.username,
+            ErrorReport.drama_name,
+            ErrorReport.friendly_msg,
+            ErrorReport.raw_error,
+            ErrorReport.error_stage,
+        ],
+        q=q,
+        page=page,
+        row_mapper=mapper,
+        extra_filters=status_filter,
+    )
+
+
+@router.post("/errors/{report_id}/status")
+def error_report_set_status(
+    request: Request,
+    report_id: int,
+    db: Db,
+    status: Annotated[str, Form()] = "resolved",
+):
+    if not _is_logged_in(request):
+        return RedirectResponse("/admin/login", status_code=302)
+    report = db.get(ErrorReport, report_id)
+    if report:
+        report.status = status if status in ("pending", "resolved", "ignored") else "resolved"
+        db.commit()
+    referer = request.headers.get("referer") or "/admin/errors"
+    return RedirectResponse(referer, status_code=302)
+
+
+@router.post("/errors/{report_id}/delete")
+def error_report_delete(
+    request: Request,
+    report_id: int,
+    db: Db,
+):
+    if not _is_logged_in(request):
+        return RedirectResponse("/admin/login", status_code=302)
+    report = db.get(ErrorReport, report_id)
+    if report:
+        db.delete(report)
+        db.commit()
+    referer = request.headers.get("referer") or "/admin/errors"
+    return RedirectResponse(referer, status_code=302)
 
 
 def setup_admin(app: Starlette):

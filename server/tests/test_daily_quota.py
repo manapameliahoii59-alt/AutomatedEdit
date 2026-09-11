@@ -153,3 +153,13 @@ def test_build_daily_quota_includes_download(monkeypatch):
     assert quota.download_limit == 30
     assert quota.download_enabled is True
     assert quota.can_download is True
+
+
+def test_build_daily_quota_enabled_tabs(monkeypatch):
+    monkeypatch.setattr("app.services.daily_activity._today", lambda: date(2026, 7, 7))
+    db = _FakeSession()
+    user = _user()
+    user.enabled_tabs = "batch_edit,clip_edit"
+    quota = build_daily_quota(db, user)
+    assert quota.enabled_tabs == ["batch_edit", "clip_edit"]
+    assert quota.to_dict()["enabled_tabs"] == ["batch_edit", "clip_edit"]

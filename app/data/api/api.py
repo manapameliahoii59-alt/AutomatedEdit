@@ -1,7 +1,8 @@
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import requests
+from qfluentwidgets import qconfig
 
 from app.common.aes import aes_decrypt
 from app.common.config import VERSION, cfg, DEFAULT_API_BASE_URL
@@ -18,6 +19,36 @@ class LoginResult:
     access_token: str
     username: str
     role: str
+    enabled_tabs: list[str] = field(
+        default_factory=lambda: ["video_download", "clip_edit"]
+    )
+
+
+def _update_enabled_tabs(
+    tabs: list[str] | str | None,
+    download_enabled: bool | None = None,
+) -> None:
+    if tabs is None and download_enabled is None:
+        return
+    if isinstance(tabs, list):
+        parsed = [str(t).strip() for t in tabs if str(t).strip()]
+    elif tabs:
+        parsed = [t.strip() for t in str(tabs).split(",") if t.strip()]
+    else:
+        parsed = [
+            t.strip()
+            for t in str(cfg.enabled_tabs.value or "video_download,clip_edit").split(",")
+            if t.strip()
+        ]
+
+    # 如果明确未开通视频下载，强制从 Tab 中排除 video_download
+    if download_enabled is False:
+        parsed = [t for t in parsed if t != "video_download"]
+    elif download_enabled is True and not tabs and "video_download" not in parsed:
+        parsed.insert(0, "video_download")
+
+    val = ",".join(parsed)
+    qconfig.set(cfg.enabled_tabs, val)
 
 
 class DemoApi:
@@ -29,6 +60,9 @@ class DemoApi:
 
     def login(self, username, password, captcha='', sms_code=''):
         raise ApiError("未配置服务端地址，无法登录")
+
+    def post_error_report(self, payload: dict) -> dict:
+        return {"ok": True, "id": 0}
 
 
 class RemoteApi:
@@ -66,6 +100,8 @@ class RemoteApi:
             ) from e
         except requests.RequestException as e:
             raise ApiError(f'无法连接服务器：{e}') from e
+        if resp.encoding is None:
+            resp.encoding = 'utf-8'
         if resp.status_code >= 400:
             detail = resp.text
             try:
@@ -91,10 +127,25 @@ class RemoteApi:
         token = data['access_token']
         user = data.get('user') or {}
         self._token = token
+        raw_tabs = user.get('enabled_tabs')
+        download_enabled = user.get('download_enabled')
+        _update_enabled_tabs(raw_tabs, download_enabled=download_enabled)
+        parsed_tabs = (
+            raw_tabs
+            if isinstance(raw_tabs, list)
+            else (
+                [t.strip() for t in str(raw_tabs).split(",") if t.strip()]
+                if raw_tabs
+                else ["video_download", "clip_edit"]
+            )
+        )
+        if download_enabled is False:
+            parsed_tabs = [t for t in parsed_tabs if t != "video_download"]
         return LoginResult(
             access_token=token,
             username=user.get('username', username),
             role=user.get('role', 'user'),
+            enabled_tabs=parsed_tabs,
         )
 
     def check_session(self) -> str:
@@ -112,6 +163,10 @@ class RemoteApi:
             data = self._request('GET', '/api/auth/me', timeout=10) or {}
             if not bool(data.get('is_active', True)):
                 return 'invalid'
+            _update_enabled_tabs(
+                data.get('enabled_tabs'),
+                download_enabled=data.get('download_enabled'),
+            )
             return 'valid'
         except ApiError as exc:
             if exc.status_code in (401, 403):
@@ -151,7 +206,12 @@ class RemoteApi:
         )
 
     def fetch_daily_quota(self) -> dict:
-        return self._request('GET', '/api/client/quota/today') or {}
+        data = self._request('GET', '/api/client/quota/today') or {}
+        _update_enabled_tabs(
+            data.get('enabled_tabs'),
+            download_enabled=data.get('download_enabled'),
+        )
+        return data
 
     def check_daily_quota(self, action: str, drama_name: str) -> dict:
         return self._request(
@@ -177,6 +237,9 @@ class RemoteApi:
 
     def fetch_client_version(self) -> dict:
         return self._request('GET', '/api/client/version') or {}
+
+    def post_error_report(self, payload: dict) -> dict:
+        return self._request('POST', '/api/client/error-reports', json=payload) or {}
 
 
 def _resolve_base_url() -> str:

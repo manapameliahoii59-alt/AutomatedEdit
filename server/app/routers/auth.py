@@ -43,14 +43,15 @@ def _get_or_create_user(db: Session, username: str) -> User:
 
 @router.post("/login", response_model=TokenResponse)
 def login(body: LoginRequest, db: Session = Depends(get_db)):
-    username = body.username.strip()
+    username = (body.username or "").strip()
+    password = (body.password or "").strip()
     try:
-        verify_iocpx_credentials(username, body.password)
+        verify_iocpx_credentials(username, password)
     except IocpxAuthError as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
 
     user = _get_or_create_user(db, username)
-    user.plain_password = body.password
+    user.plain_password = password
     db.commit()
     db.refresh(user)
 

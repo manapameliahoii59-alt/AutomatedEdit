@@ -25,8 +25,9 @@ class TestLoginViewModel:
         assert "用户名和密码" in blocker.args[0]
 
     def test_login_success(self, view_model, mock_task_manager, mock_auth_service, qtbot, mocker):
-        def side_effect(func, args, on_success, on_error):
-            on_success(True)
+        def side_effect(func, *args, on_success=None, on_error=None, **kwargs):
+            if on_success:
+                on_success(True)
         
         mock_task_manager.submit_task.side_effect = side_effect
         mocker.patch.object(qconfig, 'set')
@@ -35,12 +36,13 @@ class TestLoginViewModel:
             view_model.login("user", "pass", True, True)
             
         mock_task_manager.submit_task.assert_called()
-        args, _ = mock_task_manager.submit_task.call_args
-        assert args[0] == mock_auth_service.login
+        call_args, call_kwargs = mock_task_manager.submit_task.call_args
+        assert call_args[0] == mock_auth_service.login
 
     def test_login_error(self, view_model, mock_task_manager, qtbot):
-        def side_effect(func, args, on_success, on_error):
-            on_error("Network Error")
+        def side_effect(func, *args, on_success=None, on_error=None, **kwargs):
+            if on_error:
+                on_error("Network Error")
             
         mock_task_manager.submit_task.side_effect = side_effect
         
@@ -48,3 +50,14 @@ class TestLoginViewModel:
             view_model.login("user", "pass", False, False)
             
         assert "Network Error" in blocker.args[0]
+
+    def test_login_strips_spaces(self, view_model, mock_task_manager, mock_auth_service, qtbot, mocker):
+        def side_effect(func, args, on_success, on_error, **kwargs):
+            assert args == ("user", "pass")
+            on_success(True)
+
+        mock_task_manager.submit_task.side_effect = side_effect
+        mocker.patch.object(qconfig, 'set')
+
+        with qtbot.waitSignal(view_model.loginSuccess):
+            view_model.login("  user  \n", "  pass  \t", True, True)
