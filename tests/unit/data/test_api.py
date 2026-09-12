@@ -58,3 +58,47 @@ class TestRemoteApi:
         assert 'http://' not in msg
         # 技术细节保留在 detail 中，仅用于日志/排查
         assert '129.204.86.63' in excinfo.value.detail
+
+
+class TestResolveBaseUrl:
+    def _patch_cfg(self, mocker, base_url):
+        mocker.patch('app.data.api.api.cfg')
+        from app.data.api.api import cfg
+
+        cfg.api_base_url.value = base_url
+
+    def test_dev_defaults_local(self, monkeypatch, mocker):
+        monkeypatch.delenv('AE_API_BASE_URL', raising=False)
+        self._patch_cfg(mocker, '')
+        mocker.patch('app.data.api.api.is_dev_runtime', return_value=True)
+
+        from app.data.api.api import _resolve_base_url
+
+        assert _resolve_base_url() == 'http://127.0.0.1:8000'
+
+    def test_packaged_defaults_prod(self, monkeypatch, mocker):
+        monkeypatch.delenv('AE_API_BASE_URL', raising=False)
+        self._patch_cfg(mocker, '')
+        mocker.patch('app.data.api.api.is_dev_runtime', return_value=False)
+
+        from app.data.api.api import _resolve_base_url
+
+        assert _resolve_base_url() == 'http://129.204.86.63:7172'
+
+    def test_env_overrides_config_and_default(self, monkeypatch, mocker):
+        monkeypatch.setenv('AE_API_BASE_URL', 'http://env.example.com/')
+        self._patch_cfg(mocker, 'http://config.example.com')
+        mocker.patch('app.data.api.api.is_dev_runtime', return_value=False)
+
+        from app.data.api.api import _resolve_base_url
+
+        assert _resolve_base_url() == 'http://env.example.com'
+
+    def test_config_overrides_default(self, monkeypatch, mocker):
+        monkeypatch.delenv('AE_API_BASE_URL', raising=False)
+        self._patch_cfg(mocker, 'http://config.example.com/')
+        mocker.patch('app.data.api.api.is_dev_runtime', return_value=False)
+
+        from app.data.api.api import _resolve_base_url
+
+        assert _resolve_base_url() == 'http://config.example.com'

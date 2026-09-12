@@ -107,8 +107,10 @@ class Config(MyQConfig):
     update_dismissed_version = ConfigItem("Update", "dismissed_version", "")
 
 
-# 客户端 config.json 未配置 base_url 时使用的默认服务端地址
+# 客户端 config.json 未配置 base_url 时的默认服务端地址
+# 打包（正式）环境默认连正式服；源码开发环境默认连本地服务
 DEFAULT_API_BASE_URL = "http://129.204.86.63:7172"
+DEV_API_BASE_URL = "http://127.0.0.1:8000"
 
 
 YEAR = datetime.datetime.now().year

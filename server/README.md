@@ -24,6 +24,8 @@ python scripts/create_user.py demo --deepseek-keys sk-xxx
 
 uvicorn app.main:app --host 0.0.0.0 --port 8000
 
+.\.venv\Scripts\python.exe -m uvicorn app.main:app --host 0.0.0.0 --port 8000
+
 # 若 venv 在项目里
 source venv/bin/activate
 
@@ -62,7 +64,38 @@ source /www/server/pyporject_evn/项目名_venv/bin/activate
 }
 ```
 
-留空 `base_url` 时默认连接 `http://129.204.86.63:7172`；登录须经服务端校验易投账号密码。
+服务端地址解析优先级：
+
+1. 环境变量 `AE_API_BASE_URL`（显式覆盖，仅少数场景需要）
+2. `config.json` 的 `API.base_url`（非空即用，私有化部署/换域名用）
+3. 默认值：**源码开发环境**自动连本地 `http://127.0.0.1:8000`；**打包安装后**默认连正式服 `http://129.204.86.63:7172`
+
+登录须经服务端校验易投账号密码。开发/正式服务端 `JWT_SECRET` 不同，切换服务端后需重新登录。
+
+### 开发时连本地服务
+
+源码运行会**自动**连本地服务，无需设置任何变量：
+
+```powershell
+# 终端 A：启动本地服务（须在 server/ 目录，才能读到 .env）
+cd server
+pip install -r requirements.txt
+uvicorn app.main:app --host 0.0.0.0 --port 8000
+
+# 终端 B：直接启动桌面端，自动连本地 127.0.0.1:8000
+uv run python entry.py
+```
+
+如需临时改连其它地址（例如让源码连正式服），再设环境变量覆盖：
+
+```powershell
+$env:AE_API_BASE_URL = "http://129.204.86.63:7172"
+uv run python entry.py
+```
+
+打包产物在无该环境变量、`config.json` 留空时，默认连正式服。
+
+> 注意：本地 `server/.env` 直连线上同一个 MySQL，本地服务的读写会进入正式库。
 
 ## 每日策划/剪辑限额
 

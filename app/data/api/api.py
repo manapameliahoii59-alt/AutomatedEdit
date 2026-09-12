@@ -1,3 +1,4 @@
+import os
 import time
 from dataclasses import dataclass, field
 
@@ -5,8 +6,9 @@ import requests
 from qfluentwidgets import qconfig
 
 from app.common.aes import aes_decrypt
-from app.common.config import VERSION, cfg, DEFAULT_API_BASE_URL
+from app.common.config import VERSION, cfg, DEFAULT_API_BASE_URL, DEV_API_BASE_URL
 from app.common.my_logger import my_logger as logger
+from app.common.runtime import is_dev_runtime
 
 
 class ApiError(Exception):
@@ -260,8 +262,12 @@ class RemoteApi:
 
 
 def _resolve_base_url() -> str:
-    custom = (cfg.api_base_url.value or '').strip().rstrip('/')
-    return custom or DEFAULT_API_BASE_URL
+    custom = (
+        os.environ.get("AE_API_BASE_URL") or cfg.api_base_url.value or ""
+    ).strip().rstrip('/')
+    if custom:
+        return custom
+    return DEV_API_BASE_URL if is_dev_runtime() else DEFAULT_API_BASE_URL
 
 
 def get_api() -> RemoteApi:
