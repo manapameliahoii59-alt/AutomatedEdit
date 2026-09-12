@@ -1651,6 +1651,8 @@ class RenderService:
                 "aac",
                 "-b:a",
                 "192k",
+                "-video_track_timescale",
+                "1000000",
                 output_path,
             ],
             desc,
@@ -1672,6 +1674,8 @@ class RenderService:
                     "aac",
                     "-b:a",
                     "192k",
+                    "-video_track_timescale",
+                    "1000000",
                     output_path,
                 ],
                 f"{desc}(CPU回退)",
@@ -1771,6 +1775,8 @@ class RenderService:
                 [
                     ffmpeg,
                     "-y",
+                    "-fflags",
+                    "+genpts",
                     "-f",
                     "concat",
                     "-safe",
@@ -1779,6 +1785,8 @@ class RenderService:
                     list_path,
                     "-c",
                     "copy",
+                    "-avoid_negative_ts",
+                    "make_zero",
                     output_path,
                 ],
                 "拼接公共前缀+尾部",
@@ -1803,10 +1811,12 @@ class RenderService:
             duration = RenderService._probe_duration(
                 ffprobe, output_path, ctx.probe_cache
             )
-            # 防流拷贝静默截断：成片时长应与前缀+尾部之和基本一致
-            if expected_dur > 0 and duration < expected_dur * 0.8:
+            # 防流拷贝静默截断/时间基错乱：成片时长应与前缀+尾部之和基本一致
+            if expected_dur > 0 and (
+                duration < expected_dur * 0.8 or duration > expected_dur * 1.2
+            ):
                 _safe_print(
-                    f"   ⚠️ 拼接成片疑似截断（{duration:.1f}s < {expected_dur:.1f}s），回退整段合成",
+                    f"   ⚠️ 拼接成片时长异常（{duration:.1f}s，预期 {expected_dur:.1f}s），回退整段合成",
                     flush=True,
                 )
                 if os.path.exists(output_path):

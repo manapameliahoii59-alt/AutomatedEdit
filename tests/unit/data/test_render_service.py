@@ -694,6 +694,156 @@ class TestTryPrefixCompose:
         )
         assert ok is False and dur == 0.0
 
+    def test_returns_false_when_concat_inflated(self, monkeypatch, tmp_path):
+        # 时间基错乱会把时长放大（如 140s -> 12000s），也必须回退整段合成
+        ctx = self._ctx(tmp_path)
+        prefix_file = tmp_path / "prefix_cached.mp4"
+        prefix_file.write_bytes(b"x")
+        ctx.prefix_cache[(("1.mp4",), 0.0, 1.0)] = str(prefix_file)
+
+        def fake_render(*args, **kwargs):
+            with open(args[9], "wb") as fh:
+                fh.write(b"suffix")
+            return True, ""
+
+        def fake_run(cmd, desc, **kwargs):
+            with open(cmd[-1], "wb") as fh:
+                fh.write(b"final")
+            return True, ""
+
+        def fake_probe_duration(ffprobe, path, cache=None):
+            name = path.replace("\\", "/").rsplit("/", 1)[-1]
+            if name.startswith("ae_suffix_"):
+                return 40.0
+            if name.startswith("prefix_"):
+                return 100.0
+            return 12000.0  # 远大于前缀+尾部(140s) = 时间基错乱
+
+        monkeypatch.setattr(
+            RenderService, "_render_segments_output", staticmethod(fake_render)
+        )
+        monkeypatch.setattr(RenderService, "_run_ffmpeg", staticmethod(fake_run))
+        monkeypatch.setattr(
+            RenderService, "_validate_output", staticmethod(lambda *a, **k: True)
+        )
+        monkeypatch.setattr(
+            RenderService, "_probe_duration", staticmethod(fake_probe_duration)
+        )
+
+        ok, dur = RenderService._try_prefix_compose(
+            "ffmpeg",
+            "ffprobe",
+            ctx,
+            1.0,
+            [ClipSegment("1.mp4", 0, None)],
+            ["c1"],
+            [ClipSegment("2.mp4", 0, 5)],
+            ["c2"],
+            "outro.mp4",
+            [],
+            [],
+            str(tmp_path / "out.mp4"),
+            (("1.mp4",), 0.0, 1.0),
+            {},
+        )
+        assert ok is False and dur == 0.0
+
+    def test_concat_cmd_has_timestamp_guards(self, monkeypatch, tmp_path):
+        ctx = self._ctx(tmp_path)
+        prefix_file = tmp_path / "prefix_cached.mp4"
+        prefix_file.write_bytes(b"x")
+        key = (("1.mp4",), 0.0, 1.0)
+        ctx.prefix_cache[key] = str(prefix_file)
+        captured = {}
+
+        def fake_render(*args, **kwargs):
+            with open(args[9], "wb") as fh:
+                fh.write(b"suffix")
+            return True, ""
+
+        def fake_run(cmd, desc, **kwargs):
+            captured["cmd"] = cmd
+            with open(cmd[-1], "wb") as fh:
+                fh.write(b"final")
+            return True, ""
+
+        def fake_probe_duration(ffprobe, path, cache=None):
+            name = path.replace("\\", "/").rsplit("/", 1)[-1]
+            if name.startswith("ae_suffix_"):
+                return 40.0
+            if name.startswith("prefix_"):
+                return 100.0
+            return 140.0
+
+        monkeypatch.setattr(
+            RenderService, "_render_segments_output", staticmethod(fake_render)
+        )
+        monkeypatch.setattr(RenderService, "_run_ffmpeg", staticmethod(fake_run))
+        monkeypatch.setattr(
+            RenderService, "_validate_output", staticmethod(lambda *a, **k: True)
+        )
+        monkeypatch.setattr(
+            RenderService, "_probe_duration", staticmethod(fake_probe_duration)
+        )
+
+        ok, _ = RenderService._try_prefix_compose(
+            "ffmpeg",
+            "ffprobe",
+            ctx,
+            1.0,
+            [ClipSegment("1.mp4", 0, None)],
+            ["c1"],
+            [ClipSegment("2.mp4", 0, 5)],
+            ["c2"],
+            "outro.mp4",
+            [],
+            [],
+            str(tmp_path / "out.mp4"),
+            key,
+            {},
+        )
+        assert ok is True
+        cmd = captured["cmd"]
+        assert "-avoid_negative_ts" in cmd and "make_zero" in cmd
+        assert "+genpts" in cmd
+
+
+class TestRenderSegmentsOutput:
+    def test_forces_video_track_timescale(self, monkeypatch, tmp_path):
+        captured = {}
+
+        def fake_filter_complex(base_cmd, graph, tail_cmd, desc, **kwargs):
+            captured["tail"] = tail_cmd
+            return True, ""
+
+        monkeypatch.setattr(
+            RenderService,
+            "_run_ffmpeg_with_filter_complex",
+            staticmethod(fake_filter_complex),
+        )
+
+        ctx = RenderContext(
+            project_path="p", target_w=1280, target_h=720, use_gpu=False, enc_v="libx264"
+        )
+        ok, err = RenderService._render_segments_output(
+            "ffmpeg",
+            "ffprobe",
+            ctx,
+            [ClipSegment("1.mp4", 0, None)],
+            ["c1"],
+            1.0,
+            None,
+            [],
+            [],
+            str(tmp_path / "out.mp4"),
+            "测试合成",
+            {},
+        )
+        assert ok is True
+        tail = captured["tail"]
+        assert "-video_track_timescale" in tail
+        assert tail[tail.index("-video_track_timescale") + 1] == "1000000"
+
 
 class TestOverlayBake:
     @staticmethod
