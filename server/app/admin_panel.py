@@ -13,7 +13,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from markupsafe import Markup, escape
-from sqlalchemy import desc, func, or_, select
+from sqlalchemy import desc, func, or_, select, update
 from sqlalchemy.orm import Session, joinedload, sessionmaker
 from starlette.applications import Starlette
 from starlette.middleware.sessions import SessionMiddleware
@@ -901,6 +901,39 @@ def error_reports_list(
         row_mapper=mapper,
         extra_filters=status_filter,
     )
+
+
+@router.post("/errors/batch-resolve")
+def error_reports_batch_resolve(
+    request: Request,
+    db: Db,
+    q: Annotated[str, Form()] = "",
+    status: Annotated[str, Form()] = "resolved",
+):
+    if not _is_logged_in(request):
+        return RedirectResponse("/admin/login", status_code=302)
+
+    target_status = status if status in ("resolved", "ignored") else "resolved"
+    stmt = update(ErrorReport).where(ErrorReport.status == "pending")
+
+    keyword = (q or "").strip()
+    if keyword:
+        like = f"%{keyword}%"
+        search_cols = [
+            ErrorReport.username,
+            ErrorReport.drama_name,
+            ErrorReport.friendly_msg,
+            ErrorReport.raw_error,
+            ErrorReport.error_stage,
+        ]
+        stmt = stmt.where(or_(*[col.like(like) for col in search_cols]))
+
+    stmt = stmt.values(status=target_status)
+    db.execute(stmt)
+    db.commit()
+
+    referer = request.headers.get("referer") or "/admin/errors"
+    return RedirectResponse(referer, status_code=302)
 
 
 @router.post("/errors/{report_id}/status")

@@ -25,6 +25,16 @@
       </div>
       <button class="el-button el-button--primary" type="submit">搜索</button>
     </form>
+    <form method="post" action="/admin/errors/batch-resolve" onsubmit="return confirm('确定将待处理的错误反馈一键标记为已解决吗？');" style="margin: 0;">
+      {% if q %}<input type="hidden" name="q" value="{{ q }}">{% endif %}
+      <button
+        type="submit"
+        class="el-button{% if pending_errors_count == 0 %} is-disabled{% endif %}"
+        {% if pending_errors_count == 0 %}disabled style="opacity: 0.5; cursor: not-allowed; height: 32px; padding: 0 14px; font-size: 13px; display: inline-flex; align-items: center; gap: 4px; border-radius: 4px; white-space: nowrap;"{% else %}style="background: #67c23a; border-color: #67c23a; color: #fff; height: 32px; padding: 0 14px; font-size: 13px; display: inline-flex; align-items: center; gap: 4px; border-radius: 4px; white-space: nowrap;"{% endif %}
+      >
+        <span>✓ 一键处理{% if pending_errors_count > 0 %} ({{ pending_errors_count }}){% endif %}</span>
+      </button>
+    </form>
   </div>
 </div>
 
