@@ -190,6 +190,7 @@ class LocalPlanService:
             split_ab=payload.get("split_ab"),
             global_speed=payload.get("global_speed"),
             plan_mode=payload.get("plan_mode"),
+            plan_strategy=payload.get("plan_strategy"),
         )
         write_encrypted_json(plan_output, plans)
         finalize_written_artifact(plan_output)

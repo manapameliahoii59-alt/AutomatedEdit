@@ -80,6 +80,8 @@ class Config(MyQConfig):
     plan_mixed_max_duration_sec = ConfigItem(
         "Tools", "plan_mixed_max_duration_sec", 720
     )
+    # 混合模式策略版本：v1=经典稳定（旧逻辑）；v2=实验增强（新逻辑）
+    plan_mixed_strategy = ConfigItem("Tools", "plan_mixed_strategy", "v1")
     # 成片全局倍速（默认 1.15）
     plan_global_speed = ConfigItem("Tools", "plan_global_speed", 1.15)
     video_download_dir = ConfigItem("Tools", "video_download_dir", "")

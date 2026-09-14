@@ -274,6 +274,15 @@
               </div>
             </div>
           </div>
+          <div class="wide">
+            <label class="lbl" for="plan_mixed_strategy">混合模式策略版本（双向同步）</label>
+            <select class="admin-select" id="plan_mixed_strategy" name="plan_mixed_strategy">
+              <option value="" {% if not plan or plan.mixed_strategy is none %}selected{% endif %}>不设置（保持客户端本地值）</option>
+              <option value="v1" {% if plan and plan.mixed_strategy == 'v1' %}selected{% endif %}>经典稳定 (v1 / 旧逻辑)</option>
+              <option value="v2" {% if plan and plan.mixed_strategy == 'v2' %}selected{% endif %}>实验增强 (v2 / 新逻辑)</option>
+            </select>
+            <p class="hint">仅对混合模式生效；v1=6:9常规，v2=4:11首集片头固定+评分聚拢</p>
+          </div>
         </div>
       </section>
 

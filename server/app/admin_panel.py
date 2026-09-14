@@ -427,6 +427,7 @@ def user_edit_page(
             saved=bool(saved),
             machine=_machine_to_dict(get_machine(db, user.id)),
             clip_edit=get_user_settings(db, user.id).clip_edit,
+            plan=get_user_settings(db, user.id).plan,
             default_preset=f"{PLAN_LLM_PROVIDER_DEEPSEEK}|deepseek-flash",
         ),
     )
@@ -463,6 +464,7 @@ def user_edit_save(
     clip_overlay_bake_png: Annotated[str | None, Form()] = None,
     clip_auto_select_after_import: Annotated[str | None, Form()] = None,
     clip_render_engine: Annotated[str | None, Form()] = None,
+    plan_mixed_strategy: Annotated[str | None, Form()] = None,
     save: Annotated[str | None, Form()] = None,
 ):
     user = db.get(User, user_id)
@@ -545,6 +547,12 @@ def user_edit_save(
             clip_patch[key] = text
     if clip_patch:
         patch_user_settings(db, user.id, {"clip_edit": clip_patch})
+        db.commit()
+
+    # 策划设置：混合模式策略版本
+    strat = (plan_mixed_strategy or "").strip().lower()
+    if strat in ("v1", "v2"):
+        patch_user_settings(db, user.id, {"plan": {"mixed_strategy": strat}})
         db.commit()
 
     return RedirectResponse(f"/admin/user/edit/{user_id}?saved=1", status_code=302)

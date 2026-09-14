@@ -182,6 +182,7 @@ def _run_job(
             split_ab=payload.get("split_ab"),
             global_speed=payload.get("global_speed"),
             plan_mode=payload.get("plan_mode"),
+            plan_strategy=payload.get("plan_strategy"),
             provider=llm["provider"],
             llm_session_id=job_id,
             thinking_enabled=bool(llm.get("thinking_enabled", False)),
@@ -238,6 +239,19 @@ def create_plan_job(db: Session, user_id: int, payload: dict[str, Any]) -> PlanJ
         split_ab = payload.get("split_ab")
         use_ab = True if split_ab is None else bool(split_ab)
         plan_mode = "short" if not use_ab else "long"
+
+    from app.services.user_settings import get_user_settings
+
+    plan_strategy = payload.get("plan_strategy")
+    if not plan_strategy:
+        try:
+            user_settings = get_user_settings(db, user_id)
+            plan_strategy = getattr(user_settings.plan, "mixed_strategy", "v1")
+        except Exception:
+            plan_strategy = "v1"
+    payload["plan_strategy"] = (
+        "v2" if str(plan_strategy or "").strip().lower() == "v2" else "v1"
+    )
     progress = {
         "phase": "plan",
         "current": 0,

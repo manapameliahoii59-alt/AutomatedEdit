@@ -63,6 +63,8 @@ class PlanJobCreateRequest(BaseModel):
     split_ab: bool | None = None
     # short | long | mixed；缺省时由 split_ab 推断（兼容旧客户端）
     plan_mode: str | None = None
+    # 混合模式策略：v1（经典稳定）/ v2（实验增强）
+    plan_strategy: str | None = None
     # 成片全局倍速（缺省服务端用 1.15）
     global_speed: float | None = Field(default=None, ge=1.0, le=3.0)
 
@@ -229,6 +231,7 @@ class PlanSettings(BaseModel):
     short_max_duration_sec: int = Field(default=300, ge=120, le=360)
     mixed_clip_count: int = Field(default=15, ge=5, le=20)
     mixed_max_duration_sec: int = Field(default=720, ge=360, le=900)
+    mixed_strategy: str = Field(default="v1")
     global_speed: float = Field(default=1.15, ge=1.0, le=3.0)
 
     model_config = {"extra": "allow"}
@@ -248,6 +251,8 @@ class PlanSettings(BaseModel):
         self.short_max_duration_sec = max(120, min(360, int(self.short_max_duration_sec)))
         self.mixed_clip_count = max(5, min(20, int(self.mixed_clip_count)))
         self.mixed_max_duration_sec = max(360, min(900, int(self.mixed_max_duration_sec)))
+        strat = str(getattr(self, "mixed_strategy", "v1") or "").strip().lower()
+        self.mixed_strategy = "v2" if strat == "v2" else "v1"
         try:
             spd = float(self.global_speed)
         except (TypeError, ValueError):
@@ -264,6 +269,7 @@ class PlanSettingsPatch(BaseModel):
     short_max_duration_sec: int | None = Field(default=None, ge=120, le=360)
     mixed_clip_count: int | None = Field(default=None, ge=5, le=20)
     mixed_max_duration_sec: int | None = Field(default=None, ge=360, le=900)
+    mixed_strategy: str | None = None
     global_speed: float | None = Field(default=None, ge=1.0, le=3.0)
 
     model_config = {"extra": "allow"}

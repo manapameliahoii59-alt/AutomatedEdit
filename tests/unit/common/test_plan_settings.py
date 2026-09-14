@@ -171,6 +171,7 @@ def test_resolve_active_plan_params_mixed(monkeypatch):
     monkeypatch.setattr(config_mod.cfg, "plan_mixed_clip_count", _Item(20))
     monkeypatch.setattr(config_mod.cfg, "plan_mixed_max_duration_sec", _Item(720))
     monkeypatch.setattr(config_mod.cfg, "plan_global_speed", _Item(1.1))
+    monkeypatch.setattr(config_mod.cfg, "plan_mixed_strategy", _Item("v2"))
 
     params = resolve_active_plan_params()
     assert params["mode"] == PLAN_MODE_MIXED
@@ -179,3 +180,19 @@ def test_resolve_active_plan_params_mixed(monkeypatch):
     assert params["max_duration_sec"] == 720
     assert params["split_ab"] is True
     assert params["global_speed"] == 1.1
+    assert params["plan_strategy"] == "v2"
+
+
+def test_clamp_plan_strategy():
+    from app.common.plan_settings import (
+        PLAN_STRATEGY_V1,
+        PLAN_STRATEGY_V2,
+        clamp_plan_strategy,
+    )
+
+    assert clamp_plan_strategy("v1") == PLAN_STRATEGY_V1
+    assert clamp_plan_strategy("V1") == PLAN_STRATEGY_V1
+    assert clamp_plan_strategy("v2") == PLAN_STRATEGY_V2
+    assert clamp_plan_strategy("V2") == PLAN_STRATEGY_V2
+    assert clamp_plan_strategy("other") == PLAN_STRATEGY_V1
+    assert clamp_plan_strategy(None) == PLAN_STRATEGY_V1

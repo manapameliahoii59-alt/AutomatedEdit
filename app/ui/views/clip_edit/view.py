@@ -54,11 +54,14 @@ from app.common.plan_settings import (
     PLAN_MODE_LONG,
     PLAN_MODE_MIXED,
     PLAN_MODE_SHORT,
+    PLAN_STRATEGY_V1,
+    PLAN_STRATEGY_V2,
     clamp_clip_count,
     clamp_global_speed,
     clamp_max_duration_seconds,
     clamp_mixed_max_duration_seconds,
     clamp_plan_mode,
+    clamp_plan_strategy,
     clamp_short_max_duration_seconds,
     max_duration_minutes_from_seconds,
     max_duration_seconds_from_minutes,
@@ -678,9 +681,16 @@ class ClipEditPage(ScrollArea):
                 label += "（默认）"
             speed_combo.addItem(label, spd)
 
+        strategy_row_label = QLabel("策略版本", dlg)
+        strategy_combo = QComboBox(dlg)
+        strategy_combo.setMinimumWidth(200)
+        strategy_combo.addItem("经典稳定 (旧逻辑 / v1)", PLAN_STRATEGY_V1)
+        strategy_combo.addItem("实验增强 (新逻辑 / v2)", PLAN_STRATEGY_V2)
+
         form.addRow("总条数", count_combo)
         form.addRow("最长时长", max_combo)
         form.addRow("成片倍速", speed_combo)
+        form.addRow(strategy_row_label, strategy_combo)
         layout.addLayout(form)
 
         values = {
@@ -791,6 +801,9 @@ class ClipEditPage(ScrollArea):
             _refill_max_combo(mode)
             _set_combo_value(count_combo, values[mode]["count"])
             _set_combo_value(max_combo, values[mode]["max_min"])
+            is_mixed = (mode == PLAN_MODE_MIXED)
+            strategy_row_label.setVisible(is_mixed)
+            strategy_combo.setVisible(is_mixed)
 
         def _on_mode_toggled(_checked=False):
             if not (
@@ -810,6 +823,12 @@ class ClipEditPage(ScrollArea):
         mixed_radio.toggled.connect(_on_mode_toggled)
         _apply_mode(initial_mode)
         _set_combo_value(speed_combo, nearest_global_speed_choice(initial_speed))
+        initial_strategy = clamp_plan_strategy(
+            getattr(cfg, "plan_mixed_strategy", None).value
+            if hasattr(cfg, "plan_mixed_strategy")
+            else PLAN_STRATEGY_V1
+        )
+        _set_combo_value(strategy_combo, initial_strategy)
 
         btn_row = QHBoxLayout()
         reset_btn = PushButton("重置默认", dlg)
@@ -842,6 +861,7 @@ class ClipEditPage(ScrollArea):
             _set_combo_value(count_combo, values[mode]["count"])
             _set_combo_value(max_combo, values[mode]["max_min"])
             _set_combo_value(speed_combo, DEFAULT_GLOBAL_SPEED)
+            _set_combo_value(strategy_combo, PLAN_STRATEGY_V1)
 
         reset_btn.clicked.connect(_reset)
         buttons.accepted.connect(dlg.accept)
@@ -853,6 +873,7 @@ class ClipEditPage(ScrollArea):
         _persist_current()
         mode = _active_mode()
         global_speed = _combo_speed(speed_combo)
+        mixed_strategy = clamp_plan_strategy(strategy_combo.currentData())
         short_count = clamp_clip_count(values[PLAN_MODE_SHORT]["count"])
         short_max_sec = short_max_duration_seconds_from_minutes(
             values[PLAN_MODE_SHORT]["max_min"]
@@ -875,6 +896,8 @@ class ClipEditPage(ScrollArea):
         qconfig.set(cfg.plan_max_duration_sec, long_max_sec)
         qconfig.set(cfg.plan_mixed_clip_count, mixed_count)
         qconfig.set(cfg.plan_mixed_max_duration_sec, mixed_max_sec)
+        if hasattr(cfg, "plan_mixed_strategy"):
+            qconfig.set(cfg.plan_mixed_strategy, mixed_strategy)
         qconfig.set(cfg.plan_global_speed, global_speed)
         self.vm.save_plan_settings(
             mode=mode,
@@ -884,6 +907,7 @@ class ClipEditPage(ScrollArea):
             short_max_duration_sec=short_max_sec,
             mixed_clip_count=mixed_count,
             mixed_max_duration_sec=mixed_max_sec,
+            mixed_strategy=mixed_strategy,
             global_speed=global_speed,
         )
         if mode == PLAN_MODE_SHORT:

@@ -15,6 +15,11 @@ PLAN_MODE_LONG = "long"
 PLAN_MODE_MIXED = "mixed"
 PlanMode = Literal["short", "long", "mixed"]
 
+PLAN_STRATEGY_V1 = "v1"
+PLAN_STRATEGY_V2 = "v2"
+DEFAULT_PLAN_STRATEGY = PLAN_STRATEGY_V1
+PlanStrategy = Literal["v1", "v2"]
+
 # 长片：最短固定 2.5 分钟；最长 5~15 分钟
 MIN_DURATION_SECONDS = 150  # 2.5 分钟，固定最短
 DEFAULT_MAX_DURATION_SECONDS = 720  # 默认最长 12 分钟
@@ -59,6 +64,14 @@ class ActivePlanParams(TypedDict):
     max_duration_sec: int
     split_ab: bool
     global_speed: float
+    plan_strategy: str
+
+
+def clamp_plan_strategy(value: Any) -> PlanStrategy:
+    s = str(value or "").strip().lower()
+    if s == PLAN_STRATEGY_V2:
+        return PLAN_STRATEGY_V2
+    return PLAN_STRATEGY_V1
 
 
 def clamp_clip_count(
@@ -196,8 +209,14 @@ def resolve_active_plan_params() -> ActivePlanParams:
             ),
             "split_ab": False,
             "global_speed": speed,
+            "plan_strategy": PLAN_STRATEGY_V1,
         }
     if mode == PLAN_MODE_MIXED:
+        strategy = clamp_plan_strategy(
+            getattr(cfg, "plan_mixed_strategy", None).value
+            if hasattr(cfg, "plan_mixed_strategy")
+            else PLAN_STRATEGY_V1
+        )
         return {
             "mode": PLAN_MODE_MIXED,
             "clip_count": clamp_clip_count(
@@ -209,6 +228,7 @@ def resolve_active_plan_params() -> ActivePlanParams:
             ),
             "split_ab": True,
             "global_speed": speed,
+            "plan_strategy": strategy,
         }
     return {
         "mode": PLAN_MODE_LONG,
@@ -217,6 +237,7 @@ def resolve_active_plan_params() -> ActivePlanParams:
         "max_duration_sec": clamp_max_duration_seconds(cfg.plan_max_duration_sec.value),
         "split_ab": True,
         "global_speed": speed,
+        "plan_strategy": PLAN_STRATEGY_V1,
     }
 
 
@@ -258,6 +279,11 @@ def apply_plan_settings_dict(data: dict | None) -> None:
             cfg.plan_mixed_max_duration_sec,
             clamp_mixed_max_duration_seconds(data["mixed_max_duration_sec"]),
         )
+    if data.get("mixed_strategy") is not None and hasattr(cfg, "plan_mixed_strategy"):
+        qconfig.set(
+            cfg.plan_mixed_strategy,
+            clamp_plan_strategy(data["mixed_strategy"]),
+        )
     if data.get("global_speed") is not None:
         qconfig.set(cfg.plan_global_speed, clamp_global_speed(data["global_speed"]))
 
@@ -271,6 +297,7 @@ def plan_settings_patch(
     short_max_duration_sec: int | None = None,
     mixed_clip_count: int | None = None,
     mixed_max_duration_sec: int | None = None,
+    mixed_strategy: PlanStrategy | str | None = None,
     global_speed: float | None = None,
 ) -> dict:
     plan: dict[str, Any] = {}
@@ -294,6 +321,8 @@ def plan_settings_patch(
         plan["mixed_max_duration_sec"] = clamp_mixed_max_duration_seconds(
             mixed_max_duration_sec
         )
+    if mixed_strategy is not None:
+        plan["mixed_strategy"] = clamp_plan_strategy(mixed_strategy)
     if global_speed is not None:
         plan["global_speed"] = clamp_global_speed(global_speed)
     return {"plan": plan}

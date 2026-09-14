@@ -101,7 +101,7 @@ class RemotePlanService:
             raise FileNotFoundError(f"《{project.name}》未找到视频文件")
 
         params = resolve_active_plan_params()
-        return {
+        payload = {
             "project_name": project.name,
             "drama_name": project.name,
             "steps": steps,
@@ -113,6 +113,9 @@ class RemotePlanService:
             "global_speed": params["global_speed"],
             "plan_mode": params["mode"],
         }
+        if params.get("plan_strategy"):
+            payload["plan_strategy"] = params["plan_strategy"]
+        return payload
 
     @classmethod
     def _call_with_retry(cls, fn: Callable[[], Any]) -> Any:

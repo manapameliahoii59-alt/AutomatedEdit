@@ -96,6 +96,7 @@ def create_plan_job_endpoint(
         "split_ab": body.split_ab,
         "global_speed": body.global_speed,
         "plan_mode": body.plan_mode,
+        "plan_strategy": body.plan_strategy,
     }
     try:
         job = create_plan_job(db, user.id, payload)
