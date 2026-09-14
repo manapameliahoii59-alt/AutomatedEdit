@@ -14,6 +14,7 @@ from qfluentwidgets import BodyLabel, ComboBox, SwitchButton
 
 from app.common.config import cfg
 from app.data.services.render_service import (
+    RENDER_ENGINE_CHOICES,
     RESOLUTION_CHOICES,
     RenderService,
 )
@@ -106,6 +107,21 @@ class ClipSettingsDialog(QDialog):
             "画面文字字号按 720p 基准自动同比缩放。更改后新渲染重建缓存，旧缓存不删除。"
         )
         form.addRow("成片分辨率：", self._resolution_combo)
+
+        self._render_engine_combo = ComboBox(self)
+        for value, label in RENDER_ENGINE_CHOICES:
+            self._render_engine_combo.addItem(label, userData=value)
+        cur_engine = RenderService.normalize_render_engine(
+            str(cfg.clip_render_engine.value)
+        )
+        engine_idx = self._render_engine_combo.findData(cur_engine)
+        if engine_idx >= 0:
+            self._render_engine_combo.setCurrentIndex(engine_idx)
+        self._render_engine_combo.setToolTip(
+            "“当前”使用公共前缀复用与叠字预渲，渲染更快；\n"
+            "“兼容旧版”关闭这两项优化，用于排查渲染变慢的问题。"
+        )
+        form.addRow("渲染引擎：", self._render_engine_combo)
         root.addLayout(form)
 
         buttons = QDialogButtonBox(
@@ -131,5 +147,11 @@ class ClipSettingsDialog(QDialog):
     def result_resolution(self) -> str:
         data = self._resolution_combo.currentData()
         return RenderService.normalize_render_resolution(
+            str(data) if data is not None else ""
+        )
+
+    def result_render_engine(self) -> str:
+        data = self._render_engine_combo.currentData()
+        return RenderService.normalize_render_engine(
             str(data) if data is not None else ""
         )

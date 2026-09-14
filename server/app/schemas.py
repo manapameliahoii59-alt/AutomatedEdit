@@ -95,7 +95,18 @@ class UsageReport(BaseModel):
     meta: str = ""
     # short | long | mixed；仅 plan_drama 有意义
     plan_mode: str | None = None
+    plan_model: str = Field(default="", max_length=64)
+    # 阶段计时（毫秒）：识别、策划、渲染
+    transcribe_ms: int = 0
+    plan_ms: int = 0
+    render_ms: int = 0
     client_version: str = ""
+    # 渲染遥测（仅 batch_all_render 有意义）
+    encoder: str = Field(default="", max_length=32)
+    resolution: str = Field(default="", max_length=32)
+    cache_ms: int = 0
+    compose_ms: int = 0
+    render_engine: str = Field(default="", max_length=16)
 
 
 class UsageEventOut(BaseModel):
@@ -106,7 +117,16 @@ class UsageEventOut(BaseModel):
     duration_ms: int
     meta: str
     plan_mode: str = ""
+    plan_model: str = ""
+    transcribe_ms: int = 0
+    plan_ms: int = 0
+    render_ms: int = 0
     client_version: str
+    encoder: str = ""
+    resolution: str = ""
+    cache_ms: int = 0
+    compose_ms: int = 0
+    render_engine: str = ""
     created_at: datetime
 
     model_config = {"from_attributes": True}
@@ -531,8 +551,27 @@ def _default_overlay_library() -> OverlayTextLibrarySettings:
     )
 
 
+# 编码档位合法取值（与客户端 RenderService 的 normalizer 对齐）
+_ENCODE_PRESET_SETS: dict[str, set[str]] = {
+    "encode_nvenc_preset": {f"p{i}" for i in range(1, 8)},
+    "encode_amf_preset": {"speed", "balanced", "quality"},
+    "encode_qsv_preset": {"veryfast", "faster", "fast", "medium"},
+    "encode_x264_preset": {
+        "ultrafast",
+        "superfast",
+        "veryfast",
+        "faster",
+        "fast",
+        "medium",
+    },
+}
+
+# 渲染引擎合法取值（current=新优化；legacy=兼容旧逻辑）
+_RENDER_ENGINE_VALUES = {"current", "legacy"}
+
+
 class ClipEditSettings(BaseModel):
-    """自动化剪辑页配置（文件名标识 + 画面叠字/文字组）。"""
+    """自动化剪辑页配置（文件名标识 + 画面叠字/文字组 + 编码/渲染设置）。"""
 
     export_name_tag: str = Field(default="", max_length=20)
     export_date_format: str = "md"
@@ -544,6 +583,17 @@ class ClipEditSettings(BaseModel):
         default_factory=_default_overlay_disclaimer
     )
     overlay_text_library: OverlayTextLibrarySettings | None = None
+    # 编码/渲染设置：None 表示“未配置”，不落库、不下发
+    encode_enable_gpu: bool | None = None
+    encode_nvenc_preset: str | None = None
+    encode_amf_preset: str | None = None
+    encode_qsv_preset: str | None = None
+    encode_x264_preset: str | None = None
+    clip_trim_ep1_continued: bool | None = None
+    clip_overlay_bake_png: bool | None = None
+    clip_auto_select_after_import: bool | None = None
+    clip_export_dir: str | None = None
+    clip_render_engine: str | None = None
 
     model_config = {"extra": "allow"}
 
@@ -560,6 +610,18 @@ class ClipEditSettings(BaseModel):
             if seq_fmt in {"pad2", "pad3", "plain", "paren_pad2", "paren_plain"}
             else "pad2"
         )
+        for key, allowed in _ENCODE_PRESET_SETS.items():
+            value = getattr(self, key, None)
+            if value is not None:
+                text = str(value).strip().lower()
+                setattr(self, key, text if text in allowed else None)
+        if self.clip_export_dir is not None:
+            self.clip_export_dir = str(self.clip_export_dir).strip()[:512]
+        if self.clip_render_engine is not None:
+            engine = str(self.clip_render_engine).strip().lower()
+            self.clip_render_engine = (
+                engine if engine in _RENDER_ENGINE_VALUES else None
+            )
         if isinstance(self.overlay_text_library, dict):
             self.overlay_text_library = OverlayTextLibrarySettings.model_validate(
                 self.overlay_text_library
@@ -585,11 +647,33 @@ class ClipEditSettingsPatch(BaseModel):
     overlay_title: OverlayTextStyleSettings | dict[str, Any] | None = None
     overlay_disclaimer: OverlayTextStyleSettings | dict[str, Any] | None = None
     overlay_text_library: OverlayTextLibrarySettings | dict[str, Any] | None = None
+    encode_enable_gpu: bool | None = None
+    encode_nvenc_preset: str | None = None
+    encode_amf_preset: str | None = None
+    encode_qsv_preset: str | None = None
+    encode_x264_preset: str | None = None
+    clip_trim_ep1_continued: bool | None = None
+    clip_overlay_bake_png: bool | None = None
+    clip_auto_select_after_import: bool | None = None
+    clip_export_dir: str | None = None
+    clip_render_engine: str | None = None
 
     model_config = {"extra": "allow"}
 
     @model_validator(mode="after")
     def _normalize_overlays(self) -> "ClipEditSettingsPatch":
+        for key, allowed in _ENCODE_PRESET_SETS.items():
+            value = getattr(self, key, None)
+            if value is not None:
+                text = str(value).strip().lower()
+                setattr(self, key, text if text in allowed else None)
+        if self.clip_export_dir is not None:
+            self.clip_export_dir = str(self.clip_export_dir).strip()[:512]
+        if self.clip_render_engine is not None:
+            engine = str(self.clip_render_engine).strip().lower()
+            self.clip_render_engine = (
+                engine if engine in _RENDER_ENGINE_VALUES else None
+            )
         if self.export_date_format is not None:
             date_fmt = str(self.export_date_format or "").strip()
             self.export_date_format = (
@@ -652,4 +736,19 @@ class ErrorReportCreate(BaseModel):
     friendly_msg: str = ""
     raw_error: str
     client_info: str = ""
+
+
+class MachineInfoReport(BaseModel):
+    """桌面端机器信息上报（每用户仅保留最新一条）。"""
+
+    os: str = Field(default="", max_length=255)
+    hostname: str = Field(default="", max_length=128)
+    cpu_name: str = Field(default="", max_length=255)
+    cpu_cores_logical: int = Field(default=0, ge=0, le=1024)
+    cpu_cores_physical: int = Field(default=0, ge=0, le=1024)
+    ram_total_mb: int = Field(default=0, ge=0, le=10_000_000)
+    ram_available_mb: int = Field(default=0, ge=0, le=10_000_000)
+    gpus: list[dict[str, Any]] = Field(default_factory=list, max_length=8)
+    gpu_summary: str = Field(default="", max_length=1024)
+    client_version: str = Field(default="", max_length=32)
 

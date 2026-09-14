@@ -941,6 +941,15 @@ class ClipEditPage(ScrollArea):
         resolution = dlg.result_resolution()
         qconfig.set(cfg.encode_output_resolution, resolution)
         self.vm.save_output_resolution(resolution)
+        render_engine = dlg.result_render_engine()
+        qconfig.set(cfg.clip_render_engine, render_engine)
+        self.vm.save_clip_settings(
+            encode_enable_gpu=enable_gpu,
+            clip_trim_ep1_continued=enabled,
+            clip_overlay_bake_png=bake_png,
+            clip_auto_select_after_import=auto_select,
+            clip_render_engine=render_engine,
+        )
         resolution_label = dict(RESOLUTION_CHOICES).get(resolution, resolution)
         show_toast(
             self,
@@ -1021,6 +1030,7 @@ class ClipEditPage(ScrollArea):
         if folder:
             qconfig.set(cfg.clip_export_dir, folder)
             self.export_path_label.setText(folder)
+            self.vm.save_export_dir(folder)
 
     def _open_export_dir(self):
         path = resolve_clip_export_root()

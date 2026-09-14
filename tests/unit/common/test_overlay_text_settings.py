@@ -1228,3 +1228,79 @@ def test_overlay_text_disabled_from_cfg(monkeypatch):
         _Item(json.dumps({"no_text": True, "groups": []})),
     )
     assert overlay_text_disabled_from_cfg() is True
+
+
+def test_clip_edit_settings_patch_includes_runtime_fields():
+    from app.common.overlay_text_settings import clip_edit_settings_patch
+
+    patch = clip_edit_settings_patch(
+        encode_enable_gpu=False,
+        clip_trim_ep1_continued=True,
+        clip_overlay_bake_png=False,
+        clip_auto_select_after_import=True,
+        clip_export_dir="D:/out",
+        clip_render_engine="legacy",
+    )
+    clip = patch["clip_edit"]
+    assert clip["encode_enable_gpu"] is False
+    assert clip["clip_trim_ep1_continued"] is True
+    assert clip["clip_overlay_bake_png"] is False
+    assert clip["clip_auto_select_after_import"] is True
+    assert clip["clip_export_dir"] == "D:/out"
+    assert clip["clip_render_engine"] == "legacy"
+    # 编码档位由后台控制，客户端不上传
+    assert "encode_nvenc_preset" not in clip
+    assert "encode_amf_preset" not in clip
+
+
+def test_apply_runtime_settings_from_clip_edit_dict(monkeypatch):
+    import app.common.config as config_mod
+    from qfluentwidgets import qconfig
+
+    from app.common.overlay_text_settings import (
+        apply_runtime_settings_from_clip_edit_dict,
+    )
+
+    calls: dict = {}
+    monkeypatch.setattr(
+        qconfig, "set", lambda item, value: calls.__setitem__(item, value)
+    )
+
+    changed = apply_runtime_settings_from_clip_edit_dict(
+        {
+            "encode_enable_gpu": False,
+            "encode_nvenc_preset": "p7",
+            "encode_x264_preset": "BOGUS",
+            "clip_trim_ep1_continued": True,
+            "clip_overlay_bake_png": None,
+            "clip_export_dir": "D:/should-not-apply",
+            "clip_render_engine": "legacy",
+        }
+    )
+    assert changed is True
+    assert calls[config_mod.cfg.encode_enable_gpu] is False
+    assert calls[config_mod.cfg.encode_nvenc_preset] == "p7"
+    assert calls[config_mod.cfg.encode_x264_preset] == "superfast"  # 非法值归一化
+    assert calls[config_mod.cfg.clip_render_engine] == "legacy"
+    assert calls[config_mod.cfg.clip_trim_ep1_continued] is True
+    # None（未配置）与只上传字段都不落地
+    assert config_mod.cfg.clip_overlay_bake_png not in calls
+    assert config_mod.cfg.clip_export_dir not in calls
+
+
+def test_apply_runtime_settings_returns_false_when_unset(monkeypatch):
+    from qfluentwidgets import qconfig
+
+    from app.common.overlay_text_settings import (
+        apply_runtime_settings_from_clip_edit_dict,
+    )
+
+    def _boom(*_a, **_k):
+        raise AssertionError("未配置时不应写入 cfg")
+
+    monkeypatch.setattr(qconfig, "set", _boom)
+    assert apply_runtime_settings_from_clip_edit_dict({}) is False
+    assert (
+        apply_runtime_settings_from_clip_edit_dict({"encode_nvenc_preset": None})
+        is False
+    )

@@ -144,7 +144,7 @@ def test_fail_interrupted_jobs_marks_running(monkeypatch):
         db.close()
 
 
-def test_cleanup_old_jobs_retains_24h(monkeypatch):
+def test_cleanup_old_jobs_retains_30d(monkeypatch):
     from datetime import datetime, timedelta, timezone
     from sqlalchemy.pool import StaticPool
 
@@ -168,13 +168,13 @@ def test_cleanup_old_jobs_retains_24h(monkeypatch):
             id="job_recent",
             user_id=1,
             status="done",
-            updated_at=now - timedelta(hours=10),
+            updated_at=now - timedelta(days=10),
         )
         job_old = PlanJob(
             id="job_old",
             user_id=1,
             status="done",
-            updated_at=now - timedelta(hours=25),
+            updated_at=now - timedelta(days=31),
         )
         db.add(job_recent)
         db.add(job_old)

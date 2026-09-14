@@ -20,7 +20,7 @@ from starlette.middleware.sessions import SessionMiddleware
 
 from app.config import settings
 from app.database import engine
-from app.models import ErrorReport, PlanJob, UsageEvent, User, UserDailyActivity, UserSettings
+from app.models import ErrorReport, PlanJob, UsageEvent, User, UserDailyActivity, UserMachine, UserSettings
 from app.services.plan_secrets import (
     PLAN_LLM_PRESET_CHOICES,
     PLAN_LLM_PROVIDER_DEEPSEEK,
@@ -32,6 +32,8 @@ from app.services.plan_secrets import (
     plan_llm_preset_label,
 )
 from app.services.usage_meta import PLAN_MODE_LABELS
+from app.services.user_machine import get_machine
+from app.services.user_settings import get_user_settings, patch_user_settings
 
 _DRAMA_COL_MAX_WIDTH_PX = 200
 _PAGE_SIZE = 40
@@ -123,6 +125,19 @@ def _fmt_dt(value: Any) -> str:
     return str(value)
 
 
+def _fmt_duration_ms(ms: int | None) -> str:
+    if not ms or ms <= 0:
+        return "—"
+    sec = ms / 1000.0
+    if sec < 60:
+        return f"{sec:.1f}s"
+    m, s = divmod(int(sec), 60)
+    remainder = sec - int(sec)
+    if remainder >= 0.05:
+        return f"{m}m {s + remainder:.1f}s"
+    return f"{m}m {s}s"
+
+
 def _plan_mode_label(mode: str | None) -> str:
     key = str(mode or "").strip().lower()
     return PLAN_MODE_LABELS.get(key, key or "—")
@@ -157,6 +172,7 @@ def _user_plan_fields(user: User) -> tuple[str, str, str, str, bool]:
 def _nav(active: str) -> list[dict[str, str]]:
     items = [
         ("users", "/admin/users", "用户"),
+        ("machines", "/admin/machines", "机器信息"),
         ("activity", "/admin/activity", "每日活动"),
         ("usage", "/admin/usage", "使用记录"),
         ("jobs", "/admin/jobs", "策划任务"),
@@ -242,6 +258,16 @@ def _parse_int(raw: str | None, default: int) -> int:
         return int(str(raw or "").strip())
     except (TypeError, ValueError):
         return default
+
+
+def _parse_tristate(raw: str | None) -> bool | None:
+    """三态开关解析：开→True、关→False、空/未知→None（表示不设置）。"""
+    text = str(raw or "").strip().lower()
+    if text in {"1", "true", "yes", "on", "y"}:
+        return True
+    if text in {"0", "false", "no", "off", "n"}:
+        return False
+    return None
 
 
 def _parse_valid_until(raw: str | None) -> date | None:
@@ -399,6 +425,8 @@ def user_edit_page(
             plan_thinking_enabled=thinking_enabled,
             plan_choices=list(PLAN_LLM_PRESET_CHOICES),
             saved=bool(saved),
+            machine=_machine_to_dict(get_machine(db, user.id)),
+            clip_edit=get_user_settings(db, user.id).clip_edit,
             default_preset=f"{PLAN_LLM_PROVIDER_DEEPSEEK}|deepseek-flash",
         ),
     )
@@ -426,6 +454,15 @@ def user_edit_save(
     plan_thinking_enabled: Annotated[str | None, Form()] = None,
     deepseek_keys: Annotated[str | None, Form()] = None,
     dashscope_key: Annotated[str | None, Form()] = None,
+    encode_enable_gpu: Annotated[str | None, Form()] = None,
+    encode_nvenc_preset: Annotated[str | None, Form()] = None,
+    encode_amf_preset: Annotated[str | None, Form()] = None,
+    encode_qsv_preset: Annotated[str | None, Form()] = None,
+    encode_x264_preset: Annotated[str | None, Form()] = None,
+    clip_trim_ep1_continued: Annotated[str | None, Form()] = None,
+    clip_overlay_bake_png: Annotated[str | None, Form()] = None,
+    clip_auto_select_after_import: Annotated[str | None, Form()] = None,
+    clip_render_engine: Annotated[str | None, Form()] = None,
     save: Annotated[str | None, Form()] = None,
 ):
     user = db.get(User, user_id)
@@ -484,6 +521,32 @@ def user_edit_save(
     secret.plan_llm_model = llm_model
     secret.plan_thinking_enabled = bool(plan_thinking_enabled)
     db.commit()
+
+    # 编码/渲染设置：仅提交显式选择的值；空/未设置表示“不下发、不改动”
+    clip_patch: dict[str, Any] = {}
+    for key, raw in (
+        ("encode_enable_gpu", encode_enable_gpu),
+        ("clip_trim_ep1_continued", clip_trim_ep1_continued),
+        ("clip_overlay_bake_png", clip_overlay_bake_png),
+        ("clip_auto_select_after_import", clip_auto_select_after_import),
+    ):
+        value = _parse_tristate(raw)
+        if value is not None:
+            clip_patch[key] = value
+    for key, raw in (
+        ("encode_nvenc_preset", encode_nvenc_preset),
+        ("encode_amf_preset", encode_amf_preset),
+        ("encode_qsv_preset", encode_qsv_preset),
+        ("encode_x264_preset", encode_x264_preset),
+        ("clip_render_engine", clip_render_engine),
+    ):
+        text = (raw or "").strip()
+        if text and text != "__unset__":
+            clip_patch[key] = text
+    if clip_patch:
+        patch_user_settings(db, user.id, {"clip_edit": clip_patch})
+        db.commit()
+
     return RedirectResponse(f"/admin/user/edit/{user_id}?saved=1", status_code=302)
 
 
@@ -589,7 +652,17 @@ def usage_list(
             "success": "是" if row.success else "否",
             "meta": row.meta or "—",
             "plan_mode": _plan_mode_label(row.plan_mode),
+            "plan_model": row.plan_model or "—",
+            "transcribe_time": _fmt_duration_ms(row.transcribe_ms),
+            "plan_time": _fmt_duration_ms(row.plan_ms),
+            "render_time": _fmt_duration_ms(row.render_ms),
+            "duration_time": _fmt_duration_ms(row.duration_ms),
             "duration_ms": row.duration_ms,
+            "encoder": row.encoder or "—",
+            "resolution": row.resolution or "—",
+            "cache_ms": row.cache_ms,
+            "compose_ms": row.compose_ms,
+            "render_engine": row.render_engine or "—",
             "client_version": row.client_version or "—",
             "created_at": _fmt_dt(row.created_at),
         }
@@ -601,7 +674,88 @@ def usage_list(
         template="admin/usage.html",
         model=UsageEvent,
         order_col=UsageEvent.id,
-        search_cols=[UsageEvent.event, UsageEvent.meta, UsageEvent.plan_mode],
+        search_cols=[
+            UsageEvent.event,
+            UsageEvent.meta,
+            UsageEvent.plan_mode,
+            UsageEvent.plan_model,
+            UsageEvent.encoder,
+        ],
+        q=q,
+        page=page,
+        row_mapper=mapper,
+    )
+
+
+def _cores_text(physical: int, logical: int) -> str:
+    if physical > 0 and logical > 0 and physical != logical:
+        return f"{physical} 核 / {logical} 线程"
+    if physical > 0:
+        return f"{physical} 核"
+    if logical > 0:
+        return f"{logical} 线程"
+    return "—"
+
+
+def _ram_text(total_mb: int, available_mb: int) -> str:
+    if total_mb <= 0:
+        return "—"
+    total_gb = total_mb / 1024.0
+    if available_mb > 0:
+        return f"{total_gb:.1f} GB（可用 {available_mb / 1024.0:.1f} GB）"
+    return f"{total_gb:.1f} GB"
+
+
+def _machine_to_dict(row: UserMachine | None) -> dict[str, Any] | None:
+    if row is None:
+        return None
+    return {
+        "os": row.os or "—",
+        "hostname": row.hostname or "—",
+        "cpu_name": row.cpu_name or "—",
+        "cores": _cores_text(row.cpu_cores_physical, row.cpu_cores_logical),
+        "ram": _ram_text(row.ram_total_mb, row.ram_available_mb),
+        "gpu_summary": row.gpu_summary or "—",
+        "client_version": row.client_version or "—",
+        "updated_at": _fmt_dt(row.updated_at),
+    }
+
+
+@router.get("/machines", response_class=HTMLResponse)
+def machines_list(
+    request: Request,
+    db: Db,
+    q: str = "",
+    page: int = Query(default=1, ge=1),
+):
+    def mapper(row: UserMachine) -> dict:
+        username = row.user.username if row.user else f"#{row.user_id}"
+        return {
+            "id": row.id,
+            "username": username,
+            "cpu_name": row.cpu_name or "—",
+            "cores": _cores_text(row.cpu_cores_physical, row.cpu_cores_logical),
+            "ram": _ram_text(row.ram_total_mb, row.ram_available_mb),
+            "gpu_summary": row.gpu_summary or "—",
+            "os": row.os or "—",
+            "hostname": row.hostname or "—",
+            "client_version": row.client_version or "—",
+            "updated_at": _fmt_dt(row.updated_at),
+        }
+
+    return _list_page(
+        request,
+        db,
+        active="machines",
+        template="admin/machines.html",
+        model=UserMachine,
+        order_col=UserMachine.updated_at,
+        search_cols=[
+            UserMachine.cpu_name,
+            UserMachine.gpu_summary,
+            UserMachine.os,
+            UserMachine.hostname,
+        ],
         q=q,
         page=page,
         row_mapper=mapper,

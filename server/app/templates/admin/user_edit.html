@@ -277,6 +277,146 @@
         </div>
       </section>
 
+      <!-- 编码/渲染设置（自动化剪辑） -->
+      <section class="block">
+        <h2>编码 / 渲染设置</h2>
+        <p class="hint" style="margin-top:-6px; margin-bottom:14px;">
+          编码档位由后台统一控制（客户端不可改）；显卡加速与体验项客户端也可改。选择“不设置”表示不下发、保持客户端本地值。
+        </p>
+        <div class="grid-2">
+          <div>
+            <label class="lbl" for="encode_enable_gpu">显卡加速检测（双向）</label>
+            <select class="admin-select" id="encode_enable_gpu" name="encode_enable_gpu">
+              <option value="" {% if clip_edit.encode_enable_gpu is none %}selected{% endif %}>不设置</option>
+              <option value="1" {% if clip_edit.encode_enable_gpu is sameas true %}selected{% endif %}>开</option>
+              <option value="0" {% if clip_edit.encode_enable_gpu is sameas false %}selected{% endif %}>关</option>
+            </select>
+          </div>
+          <div>
+            <label class="lbl" for="clip_trim_ep1_continued">去掉未完待续（双向）</label>
+            <select class="admin-select" id="clip_trim_ep1_continued" name="clip_trim_ep1_continued">
+              <option value="" {% if clip_edit.clip_trim_ep1_continued is none %}selected{% endif %}>不设置</option>
+              <option value="1" {% if clip_edit.clip_trim_ep1_continued is sameas true %}selected{% endif %}>开</option>
+              <option value="0" {% if clip_edit.clip_trim_ep1_continued is sameas false %}selected{% endif %}>关</option>
+            </select>
+          </div>
+          <div>
+            <label class="lbl" for="clip_overlay_bake_png">叠字预渲染提速（双向）</label>
+            <select class="admin-select" id="clip_overlay_bake_png" name="clip_overlay_bake_png">
+              <option value="" {% if clip_edit.clip_overlay_bake_png is none %}selected{% endif %}>不设置</option>
+              <option value="1" {% if clip_edit.clip_overlay_bake_png is sameas true %}selected{% endif %}>开</option>
+              <option value="0" {% if clip_edit.clip_overlay_bake_png is sameas false %}selected{% endif %}>关</option>
+            </select>
+          </div>
+          <div>
+            <label class="lbl" for="clip_auto_select_after_import">导入后自动全选（双向）</label>
+            <select class="admin-select" id="clip_auto_select_after_import" name="clip_auto_select_after_import">
+              <option value="" {% if clip_edit.clip_auto_select_after_import is none %}selected{% endif %}>不设置</option>
+              <option value="1" {% if clip_edit.clip_auto_select_after_import is sameas true %}selected{% endif %}>开</option>
+              <option value="0" {% if clip_edit.clip_auto_select_after_import is sameas false %}selected{% endif %}>关</option>
+            </select>
+          </div>
+          <div>
+            <label class="lbl" for="encode_nvenc_preset">NVIDIA NVENC 档位</label>
+            <select class="admin-select" id="encode_nvenc_preset" name="encode_nvenc_preset">
+              <option value="">不设置</option>
+              {% for value, label in [("p1","p1（最慢/画质最好）"),("p2","p2"),("p3","p3"),("p4","p4（平衡）"),("p5","p5（默认/更快）"),("p6","p6（很快）"),("p7","p7（最快）")] %}
+              <option value="{{ value }}" {% if clip_edit.encode_nvenc_preset == value %}selected{% endif %}>{{ label }}</option>
+              {% endfor %}
+            </select>
+          </div>
+          <div>
+            <label class="lbl" for="encode_amf_preset">AMD AMF 档位</label>
+            <select class="admin-select" id="encode_amf_preset" name="encode_amf_preset">
+              <option value="">不设置</option>
+              {% for value, label in [("speed","speed（默认/最快）"),("balanced","balanced（平衡）"),("quality","quality（更慢/更好）")] %}
+              <option value="{{ value }}" {% if clip_edit.encode_amf_preset == value %}selected{% endif %}>{{ label }}</option>
+              {% endfor %}
+            </select>
+          </div>
+          <div>
+            <label class="lbl" for="encode_qsv_preset">Intel QSV 档位</label>
+            <select class="admin-select" id="encode_qsv_preset" name="encode_qsv_preset">
+              <option value="">不设置</option>
+              {% for value, label in [("veryfast","veryfast（默认/最快）"),("faster","faster"),("fast","fast"),("medium","medium（更慢/更好）")] %}
+              <option value="{{ value }}" {% if clip_edit.encode_qsv_preset == value %}selected{% endif %}>{{ label }}</option>
+              {% endfor %}
+            </select>
+          </div>
+          <div>
+            <label class="lbl" for="encode_x264_preset">CPU libx264 档位</label>
+            <select class="admin-select" id="encode_x264_preset" name="encode_x264_preset">
+              <option value="">不设置</option>
+              {% for value, label in [("ultrafast","ultrafast（最快）"),("superfast","superfast（默认）"),("veryfast","veryfast"),("faster","faster"),("fast","fast"),("medium","medium（更慢/更好）")] %}
+              <option value="{{ value }}" {% if clip_edit.encode_x264_preset == value %}selected{% endif %}>{{ label }}</option>
+              {% endfor %}
+            </select>
+          </div>
+          <div>
+            <label class="lbl" for="clip_render_engine">渲染引擎（双向）</label>
+            <select class="admin-select" id="clip_render_engine" name="clip_render_engine">
+              <option value="">不设置</option>
+              {% for value, label in [("current","当前（默认/更快）"),("legacy","兼容旧版（关闭前缀复用与叠字预渲）")] %}
+              <option value="{{ value }}" {% if clip_edit.clip_render_engine == value %}selected{% endif %}>{{ label }}</option>
+              {% endfor %}
+            </select>
+          </div>
+          <div>
+            <label class="lbl" for="clip_export_dir_display">导出目录（仅上报，不下发）</label>
+            <div class="el-input">
+              <div class="el-input__wrapper">
+                <input class="el-input__inner" id="clip_export_dir_display" value="{{ clip_edit.clip_export_dir or '—' }}" readonly>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- 设备信息（桌面端上报） -->
+      <section class="block">
+        <h2>设备信息</h2>
+        {% if machine %}
+        <div class="user-overview">
+          <div class="user-meta-grid">
+            <div class="user-meta-item">
+              <span class="user-meta-label">CPU:</span>
+              <span class="user-meta-value">{{ machine.cpu_name }}</span>
+            </div>
+            <div class="user-meta-item">
+              <span class="user-meta-label">核心:</span>
+              <span class="user-meta-value">{{ machine.cores }}</span>
+            </div>
+            <div class="user-meta-item">
+              <span class="user-meta-label">内存:</span>
+              <span class="user-meta-value">{{ machine.ram }}</span>
+            </div>
+            <div class="user-meta-item">
+              <span class="user-meta-label">显卡:</span>
+              <span class="user-meta-value">{{ machine.gpu_summary }}</span>
+            </div>
+            <div class="user-meta-item">
+              <span class="user-meta-label">系统:</span>
+              <span class="user-meta-value">{{ machine.os }}</span>
+            </div>
+            <div class="user-meta-item">
+              <span class="user-meta-label">主机名:</span>
+              <span class="user-meta-value">{{ machine.hostname }}</span>
+            </div>
+            <div class="user-meta-item">
+              <span class="user-meta-label">客户端版本:</span>
+              <span class="user-meta-value">{{ machine.client_version }}</span>
+            </div>
+            <div class="user-meta-item">
+              <span class="user-meta-label">更新时间:</span>
+              <span class="user-meta-value">{{ machine.updated_at }}</span>
+            </div>
+          </div>
+        </div>
+        {% else %}
+        <p class="hint" style="margin:0;">该用户暂未上报设备信息（客户端每天最多上报一次）。</p>
+        {% endif %}
+      </section>
+
       <!-- 用户信息概览与操作栏 -->
       <section class="block">
         <h2>用户状态概览</h2>

@@ -80,6 +80,14 @@ RESOLUTION_CHOICES: tuple[tuple[str, str], ...] = (
 )
 _DEFAULT_RESOLUTION = "720p"
 _RESOLUTION_SET = {k for k, _ in RESOLUTION_CHOICES}
+
+# 渲染引擎：current=公共前缀复用+叠字预渲；legacy=兼容旧逻辑（关闭两者）
+RENDER_ENGINE_CHOICES: tuple[tuple[str, str], ...] = (
+    ("current", "当前"),
+    ("legacy", "兼容旧版"),
+)
+_DEFAULT_RENDER_ENGINE = "current"
+_RENDER_ENGINE_SET = {k for k, _ in RENDER_ENGINE_CHOICES}
 # 固定档位尺寸（宽, 高），按画幅方向取用
 _RESOLUTION_DIMS = {
     "720p": {"horizontal": (1280, 720), "vertical": (720, 1280)},
@@ -139,6 +147,9 @@ class RenderResult:
     compose_seconds: float = 0.0
     total_video_seconds: float = 0.0
     speed_ratio: float = 0.0
+    encoder: str = ""
+    resolution: str = ""
+    render_engine: str = ""
 
 
 @dataclass(frozen=True)
@@ -275,7 +286,7 @@ class RenderService:
                 use_gpu=use_gpu,
                 enc_v=best_enc.codec_name if use_gpu else "libx264",
             )
-            ctx.prefix_keys = RenderService._reusable_prefix_keys(plans)
+            ctx.prefix_keys = RenderService._prefix_keys_for(plans)
             cache_jobs = len(episodes) * len(speeds_t)
             compose_jobs = len(plans)
             total_jobs = cache_jobs + compose_jobs
@@ -522,7 +533,7 @@ class RenderService:
         total = len(plans)
         success_count = 0
         total_video_sec = 0.0
-        ctx.prefix_keys = RenderService._reusable_prefix_keys(plans)
+        ctx.prefix_keys = RenderService._prefix_keys_for(plans)
         if ctx.prefix_keys:
             _safe_print(
                 f"   ♻️ 检测到 {len(ctx.prefix_keys)} 组可复用公共前缀（完整集），将只编码一次",
@@ -614,6 +625,9 @@ class RenderService:
             compose_seconds=round(compose_sec, 2),
             total_video_seconds=round(total_video_sec, 2),
             speed_ratio=round(compose_speed, 2),
+            encoder=ctx.enc_v,
+            resolution=f"{ctx.target_w}x{ctx.target_h}",
+            render_engine=RenderService.configured_render_engine(),
         )
 
     @staticmethod
@@ -777,6 +791,13 @@ class RenderService:
             if key is not None:
                 counts[key] = counts.get(key, 0) + 1
         return {key for key, n in counts.items() if n >= 2}
+
+    @staticmethod
+    def _prefix_keys_for(plans: list) -> set:
+        """供渲染使用的前缀 key；legacy 引擎不使用公共前缀复用。"""
+        if RenderService._is_legacy_engine():
+            return set()
+        return RenderService._reusable_prefix_keys(plans)
 
     @staticmethod
     def _trim_first_episode_continued_card(
@@ -1375,6 +1396,23 @@ class RenderService:
         return v if v in _RESOLUTION_SET else _DEFAULT_RESOLUTION
 
     @staticmethod
+    def normalize_render_engine(value: str | None) -> str:
+        v = (value or _DEFAULT_RENDER_ENGINE).strip().lower()
+        return v if v in _RENDER_ENGINE_SET else _DEFAULT_RENDER_ENGINE
+
+    @staticmethod
+    def configured_render_engine() -> str:
+        from app.common.config import cfg
+
+        return RenderService.normalize_render_engine(
+            str(cfg.clip_render_engine.value)
+        )
+
+    @staticmethod
+    def _is_legacy_engine() -> bool:
+        return RenderService.configured_render_engine() == "legacy"
+
+    @staticmethod
     def configured_resolution() -> str:
         from app.common.config import cfg
 
@@ -1482,6 +1520,8 @@ class RenderService:
 
     @staticmethod
     def _overlay_bake_enabled() -> bool:
+        if RenderService._is_legacy_engine():
+            return False
         from app.common.config import cfg
 
         try:

@@ -189,6 +189,37 @@ PATCH 示例（仅更新部分字段，其余保持不变）：
 
 可在顶层增加新的命名空间（如 `clip_edit`），服务端会原样保存并在 GET 时返回。
 
+## 机器信息上报
+
+桌面端登录后每天最多上报一次本机硬件信息（CPU / 显卡 / 内存 / 系统 / 主机名），每用户仅保留最新一条，可在管理后台 **机器信息** 页查看，用户编辑页也会展示。
+
+需携带登录后的 `Authorization: Bearer <token>`。
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| POST | `/api/client/machine` | 上报机器信息（按用户覆盖更新） |
+
+请求体示例（字段均可缺省）：
+
+```json
+{
+  "os": "Windows-11-10.0.22631-SP0",
+  "hostname": "PC-001",
+  "cpu_name": "Intel(R) Core(TM) i7-9700 CPU @ 3.00GHz",
+  "cpu_cores_logical": 8,
+  "cpu_cores_physical": 8,
+  "ram_total_mb": 16384,
+  "ram_available_mb": 8192,
+  "gpus": [
+    { "name": "NVIDIA GeForce RTX 3060", "vendor": "NVIDIA", "vram_mb": 12288, "driver": "551.23" }
+  ],
+  "gpu_summary": "NVIDIA GeForce RTX 3060",
+  "client_version": "0.0.15"
+}
+```
+
+采集全部使用 Windows 原生能力（`winreg` / `ctypes` / `nvidia-smi` / PowerShell CIM），客户端不新增第三方依赖。
+
 ## 桌面端更新
 
 客户端登录后会自动检查更新；也可在「设置 → 检查更新」手动检查。接口**无需登录**：

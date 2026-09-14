@@ -102,3 +102,44 @@ class TestResolveBaseUrl:
         from app.data.api.api import _resolve_base_url
 
         assert _resolve_base_url() == 'http://config.example.com'
+
+    def test_report_usage_payload(self, mocker):
+        api = RemoteApi('https://api.test.com')
+        api._token = 'test-token'
+        mock_request = mocker.patch.object(api, '_request')
+
+        api.report_usage(
+            'batch_all_render',
+            success=True,
+            duration_ms=55000,
+            meta='测试剧',
+            plan_mode='mixed',
+            plan_model='mimo-v2.5',
+            transcribe_ms=10000,
+            plan_ms=20000,
+            render_ms=25000,
+            encoder='h264_nvenc',
+            resolution='720x1280',
+            cache_ms=1000,
+            compose_ms=2000,
+            render_engine='current',
+        )
+
+        mock_request.assert_called_once()
+        args, kwargs = mock_request.call_args
+        assert args == ('POST', '/api/client/usage')
+        payload = kwargs['json']
+        assert payload['event'] == 'batch_all_render'
+        assert payload['success'] is True
+        assert payload['duration_ms'] == 55000
+        assert payload['meta'] == '测试剧'
+        assert payload['plan_mode'] == 'mixed'
+        assert payload['plan_model'] == 'mimo-v2.5'
+        assert payload['transcribe_ms'] == 10000
+        assert payload['plan_ms'] == 20000
+        assert payload['render_ms'] == 25000
+        assert payload['encoder'] == 'h264_nvenc'
+        assert payload['resolution'] == '720x1280'
+        assert payload['cache_ms'] == 1000
+        assert payload['compose_ms'] == 2000
+        assert payload['render_engine'] == 'current'

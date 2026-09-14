@@ -11,6 +11,7 @@ from app.schemas import (
     DailyActivityOut,
     DailyQuotaOut,
     ErrorReportCreate,
+    MachineInfoReport,
     PlanJobCreateRequest,
     PlanJobCreateResponse,
     PlanJobResultOut,
@@ -33,6 +34,7 @@ from app.services.daily_quota import (
 )
 from app.services.plan_jobs import create_plan_job, get_plan_job, user_facing_plan_error
 from app.services.plan_secrets import ensure_user_secret
+from app.services.user_machine import upsert_machine
 from app.services.user_settings import get_user_settings, patch_user_settings
 
 router = APIRouter(prefix="/api/client", tags=["client"])
@@ -167,6 +169,16 @@ def report_usage(
     if body.event in {"plan_drama", "clip_drama", "download_drama"}:
         assert_can_record(db, user, body.event, activity_meta)
 
+    plan_model = (body.plan_model or "").strip()[:64]
+    if not plan_model and body.event in {"plan_drama", "plan", "batch_all_plan"}:
+        try:
+            from app.services.plan_secrets import resolve_plan_llm_config
+
+            llm = resolve_plan_llm_config(db, user.id)
+            plan_model = (llm.get("model") or "")[:64]
+        except Exception:
+            pass
+
     event = UsageEvent(
         user_id=user.id,
         event=body.event,
@@ -174,10 +186,31 @@ def report_usage(
         duration_ms=max(0, body.duration_ms),
         meta=meta,
         plan_mode=plan_mode if body.event == "plan_drama" else "",
+        plan_model=plan_model,
+        transcribe_ms=max(0, body.transcribe_ms),
+        plan_ms=max(0, body.plan_ms),
+        render_ms=max(0, body.render_ms),
         client_version=body.client_version or "",
+        encoder=(body.encoder or "")[:32],
+        resolution=(body.resolution or "")[:32],
+        cache_ms=max(0, body.cache_ms),
+        compose_ms=max(0, body.compose_ms),
+        render_engine=(body.render_engine or "")[:16],
     )
     db.add(event)
     record_daily_activity(db, user.id, body.event, activity_meta)
+    db.commit()
+    return {"ok": True}
+
+
+@router.post("/machine", status_code=201)
+def report_machine_info(
+    body: MachineInfoReport,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """接收桌面端上报的机器信息（CPU/显卡/内存），每用户仅保留最新一条。"""
+    upsert_machine(db, user.id, body.model_dump())
     db.commit()
     return {"ok": True}
 

@@ -1792,6 +1792,56 @@ def apply_overlay_from_clip_edit_dict(data: dict | None) -> None:
             qconfig.set(cfg.encode_output_resolution, raw)
 
 
+def apply_runtime_settings_from_clip_edit_dict(data: dict | None) -> bool:
+    """应用编码/渲染设置到本地 cfg。
+
+    仅当服务端显式提供值（非 None）时才写回，避免默认值覆盖本地。
+    ``clip_export_dir`` 只上传不下载，不在此应用。
+    返回是否发生变更（供调用方清理编码器探测缓存）。
+    """
+    if not data:
+        return False
+    from qfluentwidgets import qconfig
+
+    from app.common.config import cfg
+
+    changed = False
+
+    def _set(item, value) -> None:
+        nonlocal changed
+        qconfig.set(item, value)
+        changed = True
+
+    for key, item in (
+        ("encode_enable_gpu", cfg.encode_enable_gpu),
+        ("clip_trim_ep1_continued", cfg.clip_trim_ep1_continued),
+        ("clip_overlay_bake_png", cfg.clip_overlay_bake_png),
+        ("clip_auto_select_after_import", cfg.clip_auto_select_after_import),
+    ):
+        value = data.get(key)
+        if value is not None:
+            _set(item, bool(value))
+
+    preset_map = (
+        ("encode_nvenc_preset", cfg.encode_nvenc_preset, "normalize_nvenc_preset"),
+        ("encode_amf_preset", cfg.encode_amf_preset, "normalize_amf_preset"),
+        ("encode_qsv_preset", cfg.encode_qsv_preset, "normalize_qsv_preset"),
+        ("encode_x264_preset", cfg.encode_x264_preset, "normalize_x264_preset"),
+        ("clip_render_engine", cfg.clip_render_engine, "normalize_render_engine"),
+    )
+    if any(data.get(key) is not None for key, _, _ in preset_map):
+        from app.data.services.render_service import RenderService
+
+        for key, item, normalizer_name in preset_map:
+            raw = data.get(key)
+            if raw is None:
+                continue
+            normalizer = getattr(RenderService, normalizer_name)
+            _set(item, normalizer(str(raw)))
+
+    return changed
+
+
 def clip_edit_settings_patch(
     *,
     export_name_tag: str | None = None,
@@ -1801,6 +1851,12 @@ def clip_edit_settings_patch(
     overlay_disclaimer: dict | None = None,
     overlay_text_library: dict | None = None,
     output_resolution: str | None = None,
+    encode_enable_gpu: bool | None = None,
+    clip_trim_ep1_continued: bool | None = None,
+    clip_overlay_bake_png: bool | None = None,
+    clip_auto_select_after_import: bool | None = None,
+    clip_export_dir: str | None = None,
+    clip_render_engine: str | None = None,
 ) -> dict:
     clip: dict[str, Any] = {}
     if export_name_tag is not None:
@@ -1818,6 +1874,25 @@ def clip_edit_settings_patch(
 
         clip["output_resolution"] = RenderService.normalize_render_resolution(
             output_resolution
+        )
+    # 双向字段（客户端可改）：仅提交显式提供的值
+    if encode_enable_gpu is not None:
+        clip["encode_enable_gpu"] = bool(encode_enable_gpu)
+    if clip_trim_ep1_continued is not None:
+        clip["clip_trim_ep1_continued"] = bool(clip_trim_ep1_continued)
+    if clip_overlay_bake_png is not None:
+        clip["clip_overlay_bake_png"] = bool(clip_overlay_bake_png)
+    if clip_auto_select_after_import is not None:
+        clip["clip_auto_select_after_import"] = bool(clip_auto_select_after_import)
+    # 导出目录：只上传不下载
+    if clip_export_dir is not None:
+        clip["clip_export_dir"] = str(clip_export_dir).strip()[:512]
+    # 渲染引擎：双向可切（current / legacy）
+    if clip_render_engine is not None:
+        from app.data.services.render_service import RenderService
+
+        clip["clip_render_engine"] = RenderService.normalize_render_engine(
+            clip_render_engine
         )
     if overlay_text_library is not None:
         lib = clamp_overlay_library(overlay_text_library)

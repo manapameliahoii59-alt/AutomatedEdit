@@ -10,6 +10,7 @@ from app.common.my_logger import my_logger as logger
 from app.common.plan_settings import apply_plan_settings_dict, plan_settings_patch
 from app.common.overlay_text_settings import (
     apply_overlay_from_clip_edit_dict,
+    apply_runtime_settings_from_clip_edit_dict,
     clip_edit_settings_patch,
 )
 from app.common.error_sanitizer import (
@@ -90,6 +91,8 @@ class ClipEditViewModel(ViewModel):
             apply_plan_settings_dict(data.get("plan"))
             clip_edit = data.get("clip_edit") or {}
             apply_overlay_from_clip_edit_dict(clip_edit)
+            if apply_runtime_settings_from_clip_edit_dict(clip_edit):
+                RenderService.clear_encoder_cache()
             self.settingsLoaded.emit(clip_edit)
 
         task_manager.submit_task(_do, on_success=_on_success, on_error=lambda _m: None)
@@ -154,6 +157,64 @@ class ClipEditViewModel(ViewModel):
             self.errorOccurred.emit(
                 sanitize_ui_error(
                     msg, stage="settings_sync", friendly="成片分辨率同步失败，请检查网络后重试"
+                )
+            )
+
+        task_manager.submit_task(_do, on_success=lambda _ok: None, on_error=_on_error)
+
+    def save_clip_settings(
+        self,
+        *,
+        encode_enable_gpu: bool | None = None,
+        clip_trim_ep1_continued: bool | None = None,
+        clip_overlay_bake_png: bool | None = None,
+        clip_auto_select_after_import: bool | None = None,
+        clip_render_engine: str | None = None,
+    ) -> None:
+        """本地已写入 cfg 后，后台同步双向设置到服务端（不含编码档位）。"""
+        api = get_api()
+        if not api._token:
+            return
+        patch = clip_edit_settings_patch(
+            encode_enable_gpu=encode_enable_gpu,
+            clip_trim_ep1_continued=clip_trim_ep1_continued,
+            clip_overlay_bake_png=clip_overlay_bake_png,
+            clip_auto_select_after_import=clip_auto_select_after_import,
+            clip_render_engine=clip_render_engine,
+        )
+        if not patch.get("clip_edit"):
+            return
+
+        def _do():
+            get_api().update_settings(patch)
+            return True
+
+        def _on_error(msg: str):
+            self.errorOccurred.emit(
+                sanitize_ui_error(
+                    msg, stage="settings_sync", friendly="剪辑设置同步失败，请检查网络后重试"
+                )
+            )
+
+        task_manager.submit_task(_do, on_success=lambda _ok: None, on_error=_on_error)
+
+    def save_export_dir(self, folder: str) -> None:
+        """导出目录只上传不下载；本地已写入 cfg 后同步到服务端。"""
+        api = get_api()
+        if not api._token:
+            return
+        patch = clip_edit_settings_patch(clip_export_dir=folder)
+        if not patch.get("clip_edit"):
+            return
+
+        def _do():
+            get_api().update_settings(patch)
+            return True
+
+        def _on_error(msg: str):
+            self.errorOccurred.emit(
+                sanitize_ui_error(
+                    msg, stage="settings_sync", friendly="导出目录同步失败，请检查网络后重试"
                 )
             )
 
@@ -448,16 +509,39 @@ class ClipEditViewModel(ViewModel):
             f"（失败 {failed} 条）{cost_str}，已保存至：{result.output_dir}"
         )
 
-    def _report_clip_done(self, project_name: str) -> None:
+    def _report_clip_done(
+        self,
+        project_name: str,
+        *,
+        duration_ms: int = 0,
+        render_ms: int = 0,
+    ) -> None:
         if project_name:
-            UsageService.report_clip_drama(project_name)
+            UsageService.report_clip_drama(
+                project_name,
+                duration_ms=duration_ms,
+                render_ms=render_ms,
+            )
 
-    def _report_plan_done(self, project_name: str) -> None:
+    def _report_plan_done(
+        self,
+        project_name: str,
+        *,
+        duration_ms: int = 0,
+        plan_ms: int = 0,
+        plan_model: str = "",
+    ) -> None:
         if project_name:
             from app.common.plan_settings import resolve_active_plan_params
 
             mode = resolve_active_plan_params().get("mode")
-            UsageService.report_plan_drama(project_name, plan_mode=mode)
+            UsageService.report_plan_drama(
+                project_name,
+                plan_mode=mode,
+                duration_ms=duration_ms,
+                plan_ms=plan_ms,
+                plan_model=plan_model,
+            )
 
     def _ensure_can_plan(self, project_name: str) -> bool:
         allowed, message = QuotaService.instance().check_remote("plan", project_name)
@@ -548,6 +632,7 @@ class ClipEditViewModel(ViewModel):
         self._update_status(project_id, "transcribe", DramaStatus.IN_PROGRESS)
         self._show_progress("正在识别", project.name)
         self._add_task()
+        t_trans_start = time.perf_counter()
 
         def _do():
             TranscriptionService.transcribe(project)
@@ -555,8 +640,14 @@ class ClipEditViewModel(ViewModel):
 
         def _on_success(_ok):
             self._remove_task()
+            elapsed_ms = int((time.perf_counter() - t_trans_start) * 1000)
             self._update_status(project_id, "transcribe", DramaStatus.DONE)
-            UsageService.report("transcribe")
+            UsageService.report(
+                "transcribe",
+                meta=project.name,
+                duration_ms=elapsed_ms,
+                transcribe_ms=elapsed_ms,
+            )
             self.messageReceived.emit(f"《{project.name}》识别完成")
 
         def _on_error(msg):
@@ -586,6 +677,7 @@ class ClipEditViewModel(ViewModel):
         self._update_status(project_id, "plan", DramaStatus.IN_PROGRESS)
         self._show_progress("正在策划", project.name, project_id=project_id)
         self._add_task()
+        t_plan_start = time.perf_counter()
 
         plan_handler = self._make_plan_progress_handler(project_id)
 
@@ -594,9 +686,23 @@ class ClipEditViewModel(ViewModel):
 
         def _on_success(result):
             self._remove_task()
+            elapsed_ms = int((time.perf_counter() - t_plan_start) * 1000)
             self._update_status(project_id, "plan", DramaStatus.DONE)
-            UsageService.report("plan")
-            self._report_plan_done(project.name)
+            from app.common.plan_settings import resolve_active_plan_params
+
+            mode = resolve_active_plan_params().get("mode")
+            UsageService.report(
+                "plan",
+                meta=project.name,
+                duration_ms=elapsed_ms,
+                plan_ms=elapsed_ms,
+                plan_mode=mode,
+            )
+            self._report_plan_done(
+                project.name,
+                duration_ms=elapsed_ms,
+                plan_ms=elapsed_ms,
+            )
             self.messageReceived.emit(_format_plan_result_message(project.name, result))
 
         def _on_error(msg):
@@ -625,12 +731,34 @@ class ClipEditViewModel(ViewModel):
 
         self._show_progress("正在渲染", project.name, project_id=project_id)
         self._add_task()
+        t_render_start = time.perf_counter()
 
         def _on_success(result: RenderResult):
             self._remove_task()
+            elapsed = (
+                result.total_seconds
+                if getattr(result, "total_seconds", 0) > 0
+                else (time.perf_counter() - t_render_start)
+            )
+            elapsed_ms = int(elapsed * 1000)
             self._update_status(project_id, "render", DramaStatus.DONE)
-            UsageService.report("render", success=result.success_count > 0)
-            self._report_clip_done(project.name)
+            UsageService.report(
+                "render",
+                success=result.success_count > 0,
+                duration_ms=elapsed_ms,
+                render_ms=elapsed_ms,
+                meta=project.name,
+                encoder=str(getattr(result, "encoder", "") or ""),
+                resolution=str(getattr(result, "resolution", "") or ""),
+                cache_ms=int(getattr(result, "cache_seconds", 0.0) * 1000),
+                compose_ms=int(getattr(result, "compose_seconds", 0.0) * 1000),
+                render_engine=str(getattr(result, "render_engine", "") or ""),
+            )
+            self._report_clip_done(
+                project.name,
+                duration_ms=elapsed_ms,
+                render_ms=elapsed_ms,
+            )
             self.messageReceived.emit(self._format_render_message(project.name, result))
             self._finish_loading_if_idle()
 
@@ -755,6 +883,12 @@ class ClipEditViewModel(ViewModel):
                 rec.transcribe_status = "done"
                 self._update_status(pid, "transcribe", DramaStatus.DONE)
                 results["success"] += 1
+                UsageService.report(
+                    "transcribe",
+                    meta=rec.project_name,
+                    duration_ms=int(elapsed * 1000),
+                    transcribe_ms=int(elapsed * 1000),
+                )
                 self.batchExecutionUpdated.emit(
                     rec,
                     f"《{rec.project_name}》识别完成（耗时 {elapsed:.1f}s）",
@@ -887,11 +1021,21 @@ class ClipEditViewModel(ViewModel):
             def _on_success(result, pid=pid, pname=pname, index=index, rec=rec, t0=item_started_at):
                 self._remove_task()
                 elapsed = time.perf_counter() - t0
+                elapsed_ms = int(elapsed * 1000)
                 rec.plan_time = elapsed
                 rec.plan_status = "done"
                 self._update_status(pid, "plan", DramaStatus.DONE)
-                UsageService.report("plan")
-                self._report_plan_done(pname)
+                from app.common.plan_settings import resolve_active_plan_params
+
+                mode = resolve_active_plan_params().get("mode")
+                UsageService.report(
+                    "plan",
+                    meta=rec.project_name,
+                    duration_ms=elapsed_ms,
+                    plan_ms=elapsed_ms,
+                    plan_mode=mode,
+                )
+                self._report_plan_done(pname, duration_ms=elapsed_ms, plan_ms=elapsed_ms)
                 results["success"] += 1
                 self.messageReceived.emit(_format_plan_result_message(pname, result))
                 self.batchExecutionUpdated.emit(
@@ -1032,11 +1176,24 @@ class ClipEditViewModel(ViewModel):
                     if getattr(result, "total_seconds", 0) > 0
                     else (time.perf_counter() - t0)
                 )
+                elapsed_ms = int(elapsed * 1000)
                 rec.render_time = elapsed
                 rec.render_status = "done"
                 self._update_status(pid, "render", DramaStatus.DONE)
                 results["success"] += 1
-                self._report_clip_done(pname)
+                UsageService.report(
+                    "render",
+                    success=result.success_count > 0,
+                    meta=rec.project_name,
+                    duration_ms=elapsed_ms,
+                    render_ms=elapsed_ms,
+                    encoder=str(getattr(result, "encoder", "") or ""),
+                    resolution=str(getattr(result, "resolution", "") or ""),
+                    cache_ms=int(getattr(result, "cache_seconds", 0.0) * 1000),
+                    compose_ms=int(getattr(result, "compose_seconds", 0.0) * 1000),
+                    render_engine=str(getattr(result, "render_engine", "") or ""),
+                )
+                self._report_clip_done(pname, duration_ms=elapsed_ms, render_ms=elapsed_ms)
                 self.batchExecutionUpdated.emit(
                     rec,
                     f"《{rec.project_name}》渲染完成（耗时 {elapsed:.1f}s）",
@@ -1170,7 +1327,13 @@ class ClipEditViewModel(ViewModel):
                 rec.transcribe_time = time.perf_counter() - t_trans_start
                 rec.transcribe_status = "done"
                 self._update_status(pid, "transcribe", DramaStatus.DONE)
-                UsageService.report("batch_all_transcribe")
+                t_trans_ms = int(rec.transcribe_time * 1000)
+                UsageService.report(
+                    "batch_all_transcribe",
+                    meta=pname,
+                    duration_ms=t_trans_ms,
+                    transcribe_ms=t_trans_ms,
+                )
                 self.batchExecutionUpdated.emit(
                     rec,
                     f"《{pname}》识别完成（{rec.transcribe_time:.1f}s）",
@@ -1214,8 +1377,18 @@ class ClipEditViewModel(ViewModel):
                     rec.plan_time = time.perf_counter() - t_plan_start
                     rec.plan_status = "done"
                     self._update_status(pid, "plan", DramaStatus.DONE)
-                    UsageService.report("batch_all_plan")
-                    self._report_plan_done(pname)
+                    t_plan_ms = int(rec.plan_time * 1000)
+                    from app.common.plan_settings import resolve_active_plan_params
+
+                    mode = resolve_active_plan_params().get("mode")
+                    UsageService.report(
+                        "batch_all_plan",
+                        meta=pname,
+                        duration_ms=t_plan_ms,
+                        plan_ms=t_plan_ms,
+                        plan_mode=mode,
+                    )
+                    self._report_plan_done(pname, duration_ms=t_plan_ms, plan_ms=t_plan_ms)
                     self.batchExecutionUpdated.emit(
                         rec,
                         f"《{pname}》策划完成（{rec.plan_time:.1f}s）",
@@ -1267,8 +1440,17 @@ class ClipEditViewModel(ViewModel):
                         )
                         rec.render_status = "done"
                         self._update_status(pid, "render", DramaStatus.DONE)
-                        UsageService.report("batch_all_render", success=render_res.success_count > 0)
-                        self._report_clip_done(pname)
+                        trans_ms = int(rec.transcribe_time * 1000)
+                        plan_ms = int(rec.plan_time * 1000)
+                        render_ms = int(rec.render_time * 1000)
+                        UsageService.report_render(
+                            render_res,
+                            meta=pname,
+                            transcribe_ms=trans_ms,
+                            plan_ms=plan_ms,
+                            render_ms=render_ms,
+                        )
+                        self._report_clip_done(pname, duration_ms=render_ms, render_ms=render_ms)
                         self.batchExecutionUpdated.emit(
                             rec,
                             f"《{pname}》一键执行完成（总耗时 {rec.total_time:.1f}s）",
@@ -1440,6 +1622,8 @@ class ClipEditViewModel(ViewModel):
         if not self._ensure_can_plan(pname):
             return
 
+        t_plan_start = time.perf_counter()
+
         def step2():
             return AIDirectorService.plan(
                 project,
@@ -1447,9 +1631,19 @@ class ClipEditViewModel(ViewModel):
             )
 
         def step2_done(result):
+            plan_ms = int((time.perf_counter() - t_plan_start) * 1000)
             self._update_status(pid, "plan", DramaStatus.DONE)
-            UsageService.report("batch_all_plan")
-            self._report_plan_done(pname)
+            from app.common.plan_settings import resolve_active_plan_params
+
+            mode = resolve_active_plan_params().get("mode")
+            UsageService.report(
+                "batch_all_plan",
+                meta=pname,
+                duration_ms=plan_ms,
+                plan_ms=plan_ms,
+                plan_mode=mode,
+            )
+            self._report_plan_done(pname, duration_ms=plan_ms, plan_ms=plan_ms)
             if not run_render:
                 self._remove_task()
                 self.messageReceived.emit(_format_plan_result_message(pname, result))
@@ -1458,11 +1652,26 @@ class ClipEditViewModel(ViewModel):
                 self._remove_task()
                 return
 
+            t_render_start = time.perf_counter()
+
             def step3_done(result: RenderResult):
                 self._remove_task()
+                render_ms = int(
+                    (
+                        result.total_seconds
+                        if getattr(result, "total_seconds", 0) > 0
+                        else (time.perf_counter() - t_render_start)
+                    )
+                    * 1000
+                )
                 self._update_status(pid, "render", DramaStatus.DONE)
-                UsageService.report("batch_all_render", success=result.success_count > 0)
-                self._report_clip_done(pname)
+                UsageService.report_render(
+                    result,
+                    meta=pname,
+                    plan_ms=plan_ms,
+                    render_ms=render_ms,
+                )
+                self._report_clip_done(pname, duration_ms=render_ms, render_ms=render_ms)
                 self.messageReceived.emit(
                     f"《{pname}》自动剪辑完成。\n"
                     f"{self._format_render_message(pname, result)}"
@@ -1523,11 +1732,21 @@ class ClipEditViewModel(ViewModel):
             self._update_status(pid, "render", DramaStatus.PENDING)
             return
 
+        t_render_start = time.perf_counter()
+
         def step3_done(result: RenderResult):
             self._remove_task()
+            render_ms = int(
+                (
+                    result.total_seconds
+                    if getattr(result, "total_seconds", 0) > 0
+                    else (time.perf_counter() - t_render_start)
+                )
+                * 1000
+            )
             self._update_status(pid, "render", DramaStatus.DONE)
-            UsageService.report("batch_all_render", success=result.success_count > 0)
-            self._report_clip_done(pname)
+            UsageService.report_render(result, meta=pname, render_ms=render_ms)
+            self._report_clip_done(pname, duration_ms=render_ms, render_ms=render_ms)
             self.messageReceived.emit(
                 f"《{pname}》自动剪辑完成。\n"
                 f"{self._format_render_message(pname, result)}"
@@ -1568,14 +1787,22 @@ class ClipEditViewModel(ViewModel):
     ):
         pid = project.id
         pname = project.name
+        t_trans_start = time.perf_counter()
 
         def step1():
             TranscriptionService.transcribe(project)
             return True
 
         def step1_done(_ok):
+            trans_ms = int((time.perf_counter() - t_trans_start) * 1000)
             self._update_status(pid, "transcribe", DramaStatus.DONE)
-            UsageService.report("batch_all_transcribe")
+            UsageService.report(
+                "batch_all_transcribe",
+                meta=pname,
+                duration_ms=trans_ms,
+                transcribe_ms=trans_ms,
+            )
+            t_plan_start = time.perf_counter()
 
             def step2():
                 return AIDirectorService.plan(
@@ -1584,19 +1811,45 @@ class ClipEditViewModel(ViewModel):
                 )
 
             def step2_done(result):
+                plan_ms = int((time.perf_counter() - t_plan_start) * 1000)
                 self._update_status(pid, "plan", DramaStatus.DONE)
-                UsageService.report("batch_all_plan")
-                self._report_plan_done(pname)
+                from app.common.plan_settings import resolve_active_plan_params
+
+                mode = resolve_active_plan_params().get("mode")
+                UsageService.report(
+                    "batch_all_plan",
+                    meta=pname,
+                    duration_ms=plan_ms,
+                    plan_ms=plan_ms,
+                    plan_mode=mode,
+                )
+                self._report_plan_done(pname, duration_ms=plan_ms, plan_ms=plan_ms)
                 if not self._ensure_can_clip(pname):
                     self._remove_task()
                     self.messageReceived.emit(_format_plan_result_message(pname, result))
                     return
 
+                t_render_start = time.perf_counter()
+
                 def step3_done(result: RenderResult):
                     self._remove_task()
+                    render_ms = int(
+                        (
+                            result.total_seconds
+                            if getattr(result, "total_seconds", 0) > 0
+                            else (time.perf_counter() - t_render_start)
+                        )
+                        * 1000
+                    )
                     self._update_status(pid, "render", DramaStatus.DONE)
-                    UsageService.report("batch_all_render", success=result.success_count > 0)
-                    self._report_clip_done(pname)
+                    UsageService.report_render(
+                        result,
+                        meta=pname,
+                        transcribe_ms=trans_ms,
+                        plan_ms=plan_ms,
+                        render_ms=render_ms,
+                    )
+                    self._report_clip_done(pname, duration_ms=render_ms, render_ms=render_ms)
                     self.messageReceived.emit(
                         f"《{pname}》一键执行完成。\n"
                         f"{self._format_render_message(pname, result)}"

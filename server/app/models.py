@@ -27,6 +27,7 @@ class User(Base):
 
     secrets: Mapped["UserSecret | None"] = relationship(back_populates="user", uselist=False)
     settings: Mapped["UserSettings | None"] = relationship(back_populates="user", uselist=False)
+    machine: Mapped["UserMachine | None"] = relationship(back_populates="user", uselist=False)
     usage_events: Mapped[list["UsageEvent"]] = relationship(back_populates="user")
     daily_activities: Mapped[list["UserDailyActivity"]] = relationship(back_populates="user")
     plan_jobs: Mapped[list["PlanJob"]] = relationship(back_populates="user")
@@ -69,6 +70,30 @@ class UserSettings(Base):
     user: Mapped["User"] = relationship(back_populates="settings")
 
 
+class UserMachine(Base):
+    """用户桌面端机器信息（每用户仅保留最新一条）。"""
+
+    __tablename__ = "user_machines"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), unique=True, index=True)
+    cpu_name: Mapped[str] = mapped_column(String(255), default="")
+    cpu_cores_logical: Mapped[int] = mapped_column(Integer, default=0)
+    cpu_cores_physical: Mapped[int] = mapped_column(Integer, default=0)
+    ram_total_mb: Mapped[int] = mapped_column(Integer, default=0)
+    ram_available_mb: Mapped[int] = mapped_column(Integer, default=0)
+    gpus: Mapped[str] = mapped_column(Text, default="[]")
+    gpu_summary: Mapped[str] = mapped_column(String(512), default="")
+    os: Mapped[str] = mapped_column(String(255), default="")
+    hostname: Mapped[str] = mapped_column(String(128), default="")
+    client_version: Mapped[str] = mapped_column(String(32), default="")
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, server_default=func.now(), onupdate=func.now()
+    )
+
+    user: Mapped["User"] = relationship(back_populates="machine")
+
+
 class UsageEvent(Base):
     __tablename__ = "usage_events"
 
@@ -79,7 +104,18 @@ class UsageEvent(Base):
     duration_ms: Mapped[int] = mapped_column(Integer, default=0)
     meta: Mapped[str] = mapped_column(Text, default="")
     plan_mode: Mapped[str] = mapped_column(String(16), default="")
+    plan_model: Mapped[str] = mapped_column(String(64), default="")
+    # 阶段计时（毫秒）：识别、策划、渲染
+    transcribe_ms: Mapped[int] = mapped_column(Integer, default=0)
+    plan_ms: Mapped[int] = mapped_column(Integer, default=0)
+    render_ms: Mapped[int] = mapped_column(Integer, default=0)
     client_version: Mapped[str] = mapped_column(String(32), default="")
+    # 渲染遥测：实际生效编码器 + 分辨率 + 缓存/合成耗时（毫秒）
+    encoder: Mapped[str] = mapped_column(String(32), default="")
+    resolution: Mapped[str] = mapped_column(String(32), default="")
+    cache_ms: Mapped[int] = mapped_column(Integer, default=0)
+    compose_ms: Mapped[int] = mapped_column(Integer, default=0)
+    render_engine: Mapped[str] = mapped_column(String(16), default="")
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), index=True)
 
     user: Mapped["User"] = relationship(back_populates="usage_events")

@@ -892,3 +892,75 @@ class TestOverlayBake:
             is None
         )
 
+
+def test_render_result_carries_telemetry_fields():
+    from app.data.services.render_service import RenderResult
+
+    result = RenderResult(
+        output_dir="x",
+        success_count=1,
+        total=1,
+        encoder="h264_nvenc",
+        resolution="720x1280",
+        render_engine="current",
+    )
+    assert result.encoder == "h264_nvenc"
+    assert result.resolution == "720x1280"
+    assert result.render_engine == "current"
+    # 默认值保证旧调用兼容
+    legacy = RenderResult(output_dir="x", success_count=0, total=0)
+    assert legacy.encoder == ""
+    assert legacy.resolution == ""
+    assert legacy.render_engine == ""
+
+
+class _CfgItem:
+    def __init__(self, value):
+        self.value = value
+
+
+def _two_reusable_plans():
+    return [
+        {
+            "global_speed": 1.0,
+            "files_config": {"full_episodes": ["1.mp4"], "first_episode_cut_start": 5},
+        },
+        {
+            "global_speed": 1.0,
+            "files_config": {"full_episodes": ["1.mp4"], "first_episode_cut_start": 5},
+        },
+    ]
+
+
+def test_normalize_render_engine():
+    from app.data.services.render_service import RenderService
+
+    assert RenderService.normalize_render_engine("legacy") == "legacy"
+    assert RenderService.normalize_render_engine("CURRENT") == "current"
+    assert RenderService.normalize_render_engine("bogus") == "current"
+    assert RenderService.normalize_render_engine(None) == "current"
+
+
+def test_legacy_engine_disables_prefix_and_bake(monkeypatch):
+    import app.common.config as config_mod
+    from app.data.services.render_service import RenderService
+
+    monkeypatch.setattr(config_mod.cfg, "clip_render_engine", _CfgItem("legacy"))
+    monkeypatch.setattr(config_mod.cfg, "clip_overlay_bake_png", _CfgItem(True))
+
+    assert RenderService._is_legacy_engine() is True
+    assert RenderService._overlay_bake_enabled() is False
+    assert RenderService._prefix_keys_for(_two_reusable_plans()) == set()
+
+
+def test_current_engine_keeps_prefix_and_bake(monkeypatch):
+    import app.common.config as config_mod
+    from app.data.services.render_service import RenderService
+
+    monkeypatch.setattr(config_mod.cfg, "clip_render_engine", _CfgItem("current"))
+    monkeypatch.setattr(config_mod.cfg, "clip_overlay_bake_png", _CfgItem(True))
+
+    assert RenderService._is_legacy_engine() is False
+    assert RenderService._overlay_bake_enabled() is True
+    assert len(RenderService._prefix_keys_for(_two_reusable_plans())) == 1
+

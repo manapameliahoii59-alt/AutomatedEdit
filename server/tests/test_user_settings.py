@@ -146,3 +146,68 @@ def test_patch_clip_edit_overlay_persists_and_export_only_keeps_it(monkeypatch):
     stored = json.loads(db.rows[1].data)
     assert stored["clip_edit"]["overlay_title"]["fontsize"] == 40
     assert "overlay_disclaimer" not in stored["clip_edit"]
+
+
+def _install_fake_row(monkeypatch, db: _FakeSession) -> None:
+    def _fake_get_or_create(_db, user_id):
+        row = db.rows.get(user_id)
+        if row is None:
+            row = _FakeRow(user_id)
+            db.rows[user_id] = row
+            db.added.append(row)
+        return row
+
+    monkeypatch.setattr(
+        "app.services.user_settings._get_or_create_row", _fake_get_or_create
+    )
+
+
+def test_build_settings_out_encode_defaults_none():
+    out = build_settings_out({}, None)
+    assert out.clip_edit.encode_enable_gpu is None
+    assert out.clip_edit.encode_nvenc_preset is None
+    assert out.clip_edit.encode_amf_preset is None
+    assert out.clip_edit.clip_trim_ep1_continued is None
+    assert out.clip_edit.clip_export_dir is None
+    assert out.clip_edit.clip_render_engine is None
+
+
+def test_patch_clip_edit_encode_settings(monkeypatch):
+    db = _FakeSession()
+    _install_fake_row(monkeypatch, db)
+    result = patch_user_settings(
+        db,
+        1,
+        {
+            "clip_edit": {
+                "encode_enable_gpu": False,
+                "encode_nvenc_preset": "p7",
+                "encode_x264_preset": "BOGUS",
+                "clip_trim_ep1_continued": True,
+                "clip_export_dir": "D:/out",
+                "clip_render_engine": "legacy",
+            }
+        },
+    )
+    ce = result.clip_edit
+    assert ce.encode_enable_gpu is False
+    assert ce.encode_nvenc_preset == "p7"
+    assert ce.encode_x264_preset is None  # 非法值被丢弃
+    assert ce.clip_trim_ep1_continued is True
+    assert ce.clip_export_dir == "D:/out"
+    assert ce.clip_render_engine == "legacy"
+    stored = json.loads(db.rows[1].data)
+    assert stored["clip_edit"]["encode_nvenc_preset"] == "p7"
+    assert stored["clip_edit"]["clip_render_engine"] == "legacy"
+    assert "encode_x264_preset" not in stored["clip_edit"]
+
+
+def test_patch_clip_edit_invalid_render_engine_dropped(monkeypatch):
+    db = _FakeSession()
+    _install_fake_row(monkeypatch, db)
+    result = patch_user_settings(
+        db, 1, {"clip_edit": {"clip_render_engine": "super-fast"}}
+    )
+    assert result.clip_edit.clip_render_engine is None
+    stored = json.loads(db.rows[1].data)
+    assert "clip_render_engine" not in stored["clip_edit"]

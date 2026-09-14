@@ -171,12 +171,75 @@ def _ensure_daily_quota_columns() -> None:
 
     if "usage_events" in table_names:
         usage_cols = {col["name"] for col in inspector.get_columns("usage_events")}
-        if "plan_mode" not in usage_cols:
-            with engine.begin() as conn:
+        with engine.begin() as conn:
+            if "plan_mode" not in usage_cols:
                 conn.execute(
                     text(
                         "ALTER TABLE usage_events ADD COLUMN plan_mode "
                         "VARCHAR(16) NOT NULL DEFAULT ''"
+                    )
+                )
+            if "encoder" not in usage_cols:
+                conn.execute(
+                    text(
+                        "ALTER TABLE usage_events ADD COLUMN encoder "
+                        "VARCHAR(32) NOT NULL DEFAULT ''"
+                    )
+                )
+            if "resolution" not in usage_cols:
+                conn.execute(
+                    text(
+                        "ALTER TABLE usage_events ADD COLUMN resolution "
+                        "VARCHAR(32) NOT NULL DEFAULT ''"
+                    )
+                )
+            if "cache_ms" not in usage_cols:
+                conn.execute(
+                    text(
+                        "ALTER TABLE usage_events ADD COLUMN cache_ms "
+                        "INT NOT NULL DEFAULT 0"
+                    )
+                )
+            if "compose_ms" not in usage_cols:
+                conn.execute(
+                    text(
+                        "ALTER TABLE usage_events ADD COLUMN compose_ms "
+                        "INT NOT NULL DEFAULT 0"
+                    )
+                )
+            if "render_engine" not in usage_cols:
+                conn.execute(
+                    text(
+                        "ALTER TABLE usage_events ADD COLUMN render_engine "
+                        "VARCHAR(16) NOT NULL DEFAULT ''"
+                    )
+                )
+            if "plan_model" not in usage_cols:
+                conn.execute(
+                    text(
+                        "ALTER TABLE usage_events ADD COLUMN plan_model "
+                        "VARCHAR(64) NOT NULL DEFAULT ''"
+                    )
+                )
+            if "transcribe_ms" not in usage_cols:
+                conn.execute(
+                    text(
+                        "ALTER TABLE usage_events ADD COLUMN transcribe_ms "
+                        "INT NOT NULL DEFAULT 0"
+                    )
+                )
+            if "plan_ms" not in usage_cols:
+                conn.execute(
+                    text(
+                        "ALTER TABLE usage_events ADD COLUMN plan_ms "
+                        "INT NOT NULL DEFAULT 0"
+                    )
+                )
+            if "render_ms" not in usage_cols:
+                conn.execute(
+                    text(
+                        "ALTER TABLE usage_events ADD COLUMN render_ms "
+                        "INT NOT NULL DEFAULT 0"
                     )
                 )
 

@@ -359,6 +359,48 @@ def test_unconfigured_keys_modal_and_api(admin_client):
     assert api_resp2.json().get("users") == []
 
 
+def test_user_edit_renders_encode_settings(admin_client):
+    resp = admin_client.get("/admin/user/edit/1")
+    assert resp.status_code == 200, resp.text[:2000]
+    assert "编码 / 渲染设置" in resp.text
+    assert 'id="encode_nvenc_preset"' in resp.text
+    assert 'id="encode_amf_preset"' in resp.text
+    assert 'id="encode_qsv_preset"' in resp.text
+    assert 'id="encode_x264_preset"' in resp.text
+    assert 'id="encode_enable_gpu"' in resp.text
+    assert 'id="clip_render_engine"' in resp.text
+    assert 'id="clip_export_dir_display"' in resp.text
+
+
+def test_user_edit_saves_encode_settings(admin_client):
+    save_resp = admin_client.post(
+        "/admin/user/edit/1",
+        data={
+            "username": "a@b.com",
+            "role": "user",
+            "encode_enable_gpu": "1",
+            "encode_nvenc_preset": "p7",
+            "encode_x264_preset": "BOGUS",
+            "clip_trim_ep1_continued": "0",
+            "clip_overlay_bake_png": "1",
+            "clip_render_engine": "legacy",
+            "save": "Save",
+        },
+        follow_redirects=False,
+    )
+    assert save_resp.status_code == 302
+
+    check = admin_client.get("/admin/user/edit/1")
+    assert check.status_code == 200, check.text[:2000]
+    assert 'id="encode_nvenc_preset"' in check.text
+    assert '<option value="p7" selected>' in check.text
+    assert '<option value="legacy" selected>' in check.text
+    # 非法档位被丢弃，退回“不设置”
+    assert '<option value="BOGUS" selected>' not in check.text
+    # 三态布尔：显卡加速开
+    assert '<option value="1" selected>' in check.text
+
+
 def test_unconfigured_keys_skips_demo_user(admin_client):
     import app.admin_panel as ap
     from sqlalchemy.orm import sessionmaker
@@ -399,6 +441,16 @@ def test_unconfigured_keys_skips_demo_user(admin_client):
     api_resp = admin_client.get("/admin/api/unconfigured-users")
     assert api_resp.status_code == 200
     assert api_resp.json().get("users") == []
+
+
+def test_admin_usage_page_renders_model_and_timing_columns(admin_client):
+    resp = admin_client.get("/admin/usage")
+    assert resp.status_code == 200
+    assert "模型" in resp.text
+    assert "识别耗时" in resp.text
+    assert "策划耗时" in resp.text
+    assert "渲染耗时" in resp.text
+    assert "总耗时" in resp.text
 
 
 

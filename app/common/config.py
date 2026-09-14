@@ -60,6 +60,8 @@ class Config(MyQConfig):
     clip_overlay_bake_png = ConfigItem(
         "Tools", "clip_overlay_bake_png", True, BoolValidator()
     )
+    # 渲染引擎：current=前缀复用+叠字预渲；legacy=兼容旧逻辑（关闭两者）
+    clip_render_engine = ConfigItem("Tools", "clip_render_engine", "current")
     # 自动化剪辑：导入剧目后自动全选导入数据
     clip_auto_select_after_import = ConfigItem(
         "Tools", "clip_auto_select_after_import", True, BoolValidator()
@@ -105,6 +107,8 @@ class Config(MyQConfig):
     plan_decrypt_key = ConfigItem("API", "plan_decrypt_key", "")
 
     update_dismissed_version = ConfigItem("Update", "dismissed_version", "")
+    # 机器信息上次上报日期（YYYY-MM-DD），每天最多上报一次
+    machine_info_reported_date = ConfigItem("Update", "machine_info_reported_date", "")
 
 
 # 客户端 config.json 未配置 base_url 时的默认服务端地址
@@ -116,7 +120,7 @@ DEV_API_BASE_URL = "http://127.0.0.1:8000"
 YEAR = datetime.datetime.now().year
 AUTHOR = "dragon"
 AUTHOR_EMAIL = "857134647@qq.com"
-VERSION = '0.0.15'
+VERSION = '0.0.16'
 APP_NAME = "剪辑助手"
 FEEDBACK_URL = f"mailto:{AUTHOR_EMAIL}"
 

@@ -26,7 +26,16 @@
         <th>成功</th>
         <th>详情</th>
         <th>模式</th>
-        <th>耗时</th>
+        <th>模型</th>
+        <th>识别耗时</th>
+        <th>策划耗时</th>
+        <th>渲染耗时</th>
+        <th>编码器</th>
+        <th>分辨率</th>
+        <th>引擎</th>
+        <th>缓存ms</th>
+        <th>合成ms</th>
+        <th>总耗时</th>
         <th>版本</th>
         <th>时间</th>
       </tr>
@@ -46,12 +55,21 @@
         </td>
         <td class="ellipsis" title="{{ row.meta }}">{{ row.meta }}</td>
         <td>{{ row.plan_mode }}</td>
-        <td>{{ row.duration_ms }}</td>
+        <td class="ellipsis" title="{{ row.plan_model }}">{{ row.plan_model }}</td>
+        <td>{{ row.transcribe_time }}</td>
+        <td>{{ row.plan_time }}</td>
+        <td>{{ row.render_time }}</td>
+        <td>{{ row.encoder }}</td>
+        <td>{{ row.resolution }}</td>
+        <td>{{ row.render_engine }}</td>
+        <td>{{ row.cache_ms }}</td>
+        <td>{{ row.compose_ms }}</td>
+        <td title="{{ row.duration_ms }} ms">{{ row.duration_time }}</td>
         <td>{{ row.client_version }}</td>
         <td>{{ row.created_at }}</td>
       </tr>
       {% else %}
-      <tr><td class="empty" colspan="9">暂无数据</td></tr>
+      <tr><td class="empty" colspan="18">暂无数据</td></tr>
       {% endfor %}
     </tbody>
   </table>
@@ -69,11 +87,20 @@
         { field: "id", title: "ID", width: 80 },
         { field: "username", title: "账号", minWidth: 140 },
         { field: "event", title: "事件", width: 120 },
-        { field: "success", title: "成功", width: 90 },
+        { field: "success", title: "成功", width: 80 },
         { field: "meta", title: "详情", minWidth: 180, showOverflow: true },
-        { field: "plan_mode", title: "模式", width: 90 },
-        { field: "duration_ms", title: "耗时", width: 90 },
-        { field: "client_version", title: "版本", width: 100 },
+        { field: "plan_mode", title: "模式", width: 80 },
+        { field: "plan_model", title: "模型", minWidth: 140, showOverflow: true },
+        { field: "transcribe_time", title: "识别耗时", width: 95 },
+        { field: "plan_time", title: "策划耗时", width: 95 },
+        { field: "render_time", title: "渲染耗时", width: 95 },
+        { field: "encoder", title: "编码器", width: 120 },
+        { field: "resolution", title: "分辨率", width: 100 },
+        { field: "render_engine", title: "引擎", width: 80 },
+        { field: "cache_ms", title: "缓存ms", width: 85 },
+        { field: "compose_ms", title: "合成ms", width: 85 },
+        { field: "duration_time", title: "总耗时", width: 95 },
+        { field: "client_version", title: "版本", width: 90 },
         { field: "created_at", title: "时间", width: 160 },
       ],
     });

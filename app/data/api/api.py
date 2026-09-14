@@ -206,18 +206,45 @@ class RemoteApi:
         duration_ms: int = 0,
         meta: str = '',
         plan_mode: str | None = None,
+        plan_model: str = '',
+        transcribe_ms: int = 0,
+        plan_ms: int = 0,
+        render_ms: int = 0,
+        encoder: str = '',
+        resolution: str = '',
+        cache_ms: int = 0,
+        compose_ms: int = 0,
+        render_engine: str = '',
     ):
         if not self._token:
             return
         payload = {
             'event': event,
             'success': success,
-            'duration_ms': duration_ms,
+            'duration_ms': max(0, int(duration_ms)),
             'meta': meta,
             'client_version': VERSION,
         }
         if plan_mode:
             payload['plan_mode'] = plan_mode
+        if plan_model:
+            payload['plan_model'] = plan_model
+        if transcribe_ms:
+            payload['transcribe_ms'] = max(0, int(transcribe_ms))
+        if plan_ms:
+            payload['plan_ms'] = max(0, int(plan_ms))
+        if render_ms:
+            payload['render_ms'] = max(0, int(render_ms))
+        if encoder:
+            payload['encoder'] = encoder
+        if resolution:
+            payload['resolution'] = resolution
+        if cache_ms:
+            payload['cache_ms'] = max(0, int(cache_ms))
+        if compose_ms:
+            payload['compose_ms'] = max(0, int(compose_ms))
+        if render_engine:
+            payload['render_engine'] = render_engine
         self._request(
             'POST',
             '/api/client/usage',
@@ -259,6 +286,11 @@ class RemoteApi:
 
     def post_error_report(self, payload: dict) -> dict:
         return self._request('POST', '/api/client/error-reports', json=payload) or {}
+
+    def report_machine_info(self, payload: dict) -> dict:
+        if not self._token:
+            return {}
+        return self._request('POST', '/api/client/machine', json=payload) or {}
 
 
 def _resolve_base_url() -> str:
