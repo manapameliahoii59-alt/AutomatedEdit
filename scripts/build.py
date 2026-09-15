@@ -3,6 +3,7 @@ import os
 import shutil
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 # Add project root to path
@@ -38,6 +39,15 @@ NUITKA_NOFOLLOW_MODULES = (
     # torch 子包中使用 walrus 操作符等语法，Nuitka 无法稳定编译
     "torch._dynamo",
     "torch._inductor",
+    # 纯 Python 庞大库及网络依赖：改为源码拷贝，消除 2000+ 个 C 模块编译开销
+    "openai",
+    "sympy",
+    "pydantic",
+    "pydantic_core",
+    "annotated_types",
+    "anyio",
+    "httpx",
+    "httpcore",
 )
 
 # Nuitka 自带的 MSVC 运行库与 torch 的 c10.dll 不兼容（WinError 1114），需替换为系统版本
@@ -57,6 +67,14 @@ NOFOLLOW_COPY_PACKAGES = (
     "funasr",
     "torch._dynamo",
     "torch._inductor",
+    "openai",
+    "sympy",
+    "pydantic",
+    "pydantic_core",
+    "annotated_types",
+    "anyio",
+    "httpx",
+    "httpcore",
 )
 
 # FunASR 为 nofollow 源码包，其传递依赖未必被 Nuitka 跟踪，需一并拷贝
@@ -117,6 +135,11 @@ FUNASR_RUNTIME_COPY_PACKAGES = (
     "six.py",
     # Paraformer / BiCifParaformer -> funasr.utils.load_utils 强依赖
     "torchaudio",
+    # openai 与 sympy 运行时传递依赖
+    "distro",
+    "sniffio",
+    "mpmath",
+    "typing_inspection",
 )
 
 # FunASR / ModelScope / torchaudio 动态 import 的标准库（Nuitka 静态分析常漏掉）
@@ -264,12 +287,25 @@ def bundle_playwright_browsers() -> None:
     local_browsers = Path(os.environ["USERPROFILE"]) / "AppData" / "Local" / "ms-playwright"
     dst_base = DIST_DIR / "playwright" / "driver" / "package" / ".local-browsers"
 
-    # 只打包当前 Playwright 版本所需的 Chromium（含 headless shell）
-    keep = {"chromium-1228", "chromium_headless_shell-1228", "ffmpeg-1011", "winldd-1007"}
+    # 清理之前可能遗留的冗余 headless shell（节省 270MB+ 空间和打包耗时）
+    redundant_headless = dst_base / "chromium_headless_shell-1228"
+    if redundant_headless.is_dir():
+        try:
+            shutil.rmtree(redundant_headless)
+            print("Removed obsolete chromium_headless_shell from dist")
+        except Exception as exc:
+            print(f"Warning: failed to remove {redundant_headless}: {exc}")
+
+    # 只打包全功能版 Chromium（支持有头与无头模式）以及辅助工具，移除无用 headless shell
+    keep = {"chromium-1228", "ffmpeg-1011", "winldd-1007"}
     for browser_dir in local_browsers.iterdir():
         if not browser_dir.is_dir() or browser_dir.name not in keep:
             continue
         dst = dst_base / browser_dir.name
+        # 增量判断：若目标已存在且包含内容，跳过无谓的删除与重新全量拷贝（节省几百 MB 磁盘 IO）
+        if dst.is_dir() and any(dst.iterdir()):
+            print(f"Bundled Playwright browser already exists, skipping copy: {browser_dir.name}")
+            continue
         if dst.exists():
             shutil.rmtree(dst)
         try:
@@ -313,7 +349,7 @@ def bundle_config() -> None:
             "overlay_title_json": "",
             "overlay_disclaimer_json": "",
             "overlay_text_library_json": "",
-            "encode_nvenc_preset": "p5",
+            "encode_nvenc_preset": "p3",
             "encode_x264_preset": "superfast",
             "plan_mode": "long",
             "plan_clip_count": 15,
@@ -322,6 +358,7 @@ def bundle_config() -> None:
             "plan_short_max_duration_sec": 300,
             "plan_mixed_clip_count": 15,
             "plan_mixed_max_duration_sec": 720,
+            "plan_mixed_strategy": "v1",
             "plan_global_speed": 1.15,
             "deepseek_api_keys": "",
             "ffmpeg_path": "",
@@ -377,6 +414,11 @@ def bundle_outro() -> None:
     for src in src_dir.glob("*.mp4"):
         dst = dst_dir / src.name
         try:
+            if dst.is_file():
+                try:
+                    os.chmod(dst, 0o666)
+                except Exception:
+                    pass
             shutil.copy2(src, dst)
             print(f"Bundled outro {src.name}")
             found = True
@@ -468,7 +510,11 @@ def _copy_site_package(name: str, *, label: str) -> None:
     if dst.exists():
         shutil.rmtree(dst)
     dst.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copytree(src, dst)
+    shutil.copytree(
+        src,
+        dst,
+        ignore=shutil.ignore_patterns("__pycache__", "*.pyc", "*.pyo", "test", "tests"),
+    )
     print(f"Copied {label}: {name}")
 
 
@@ -488,6 +534,36 @@ def bundle_funasr_runtime_packages() -> None:
         return
     for name in FUNASR_RUNTIME_COPY_PACKAGES:
         _copy_site_package(name, label="ff runtime dep")
+
+
+def sync_app_layer() -> None:
+    """将最新的资源与 app 业务代码增量同步到 dist。"""
+    print("\n>>> [1/3] 编译最新的 UI 与 QRC 资源文件...")
+    build_resources()
+
+    print(">>> [2/3] 同步 app/ 业务代码与资源至 dist...")
+    src_app = PROJECT_ROOT / "app"
+    dst_app = DIST_DIR / "app"
+    if dst_app.exists():
+        shutil.rmtree(dst_app)
+    shutil.copytree(
+        src_app,
+        dst_app,
+        ignore=shutil.ignore_patterns("__pycache__", "*.pyc", "*.pyo"),
+    )
+    print("  -> 已同步: app/")
+
+    rc_file = PROJECT_ROOT / "resource_rc.py"
+    if rc_file.is_file():
+        shutil.copy2(rc_file, DIST_DIR / "resource_rc.py")
+        print("  -> 已同步: resource_rc.py")
+
+    print(">>> [3/3] 同步配置与静态资源...")
+    bundle_overlay_fonts()
+    bundle_outro()
+    bundle_ffmpeg()
+    bundle_config()
+    print("业务层装配完成！\n")
 
 
 def _stdlib_lib_dir() -> Path:
@@ -638,6 +714,12 @@ def verify_bundled_dependencies() -> None:
         "import sentencepiece\n"
         "assert hasattr(sentencepiece, 'SentencePieceProcessor'), 'SentencePieceProcessor missing'\n"
         "print('sentencepiece isolated import OK')\n"
+        "import openai\n"
+        "assert hasattr(openai, 'OpenAI'), 'openai.OpenAI missing'\n"
+        "print('openai isolated import OK')\n"
+        "import sympy\n"
+        "assert hasattr(sympy, 'Symbol'), 'sympy.Symbol missing'\n"
+        "print('sympy isolated import OK')\n"
         "sys.path[:] = _orig_path\n"
         "os.chdir(_orig_cwd)\n"
         "import importlib\n"
@@ -670,15 +752,85 @@ def verify_bundled_dependencies() -> None:
     if res.returncode != 0:
         print(f"Dependency verification FAILED:\nSTDOUT: {res.stdout}\nSTDERR: {res.stderr}")
         sys.exit(f"Bundled dependencies verification failed: {res.stderr.strip()}")
-    print("Bundled dependencies verification passed: requests + sentencepiece + ASR components OK.")
+    print("Bundled dependencies verification passed: requests + sentencepiece + openai + sympy + ASR components OK.")
+
+
+def find_iscc() -> Path | None:
+    """查找 Inno Setup 编译器 ISCC.exe"""
+    which_iscc = shutil.which("iscc")
+    if which_iscc:
+        return Path(which_iscc)
+
+    candidates = [
+        Path(os.environ.get("LOCALAPPDATA", "")) / "Programs" / "Inno Setup 6" / "ISCC.exe",
+        Path(os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)")) / "Inno Setup 6" / "ISCC.exe",
+        Path(os.environ.get("ProgramFiles", r"C:\Program Files")) / "Inno Setup 6" / "ISCC.exe",
+    ]
+    for candidate in candidates:
+        if candidate.is_file():
+            return candidate
+    return None
+
+
+def build_installer(*, fast_pack: bool = False) -> None:
+    """调用 Inno Setup 生成安装包，并写入 release/version.json。"""
+    iscc_exe = find_iscc()
+    if not iscc_exe:
+        print("Warning: ISCC.exe not found. Please install Inno Setup 6 or add it to PATH.")
+        return
+
+    iss_file = PROJECT_ROOT / "scripts" / "pack_installer.iss"
+    if not iss_file.is_file():
+        print(f"Warning: {iss_file} not found, skip installer build")
+        return
+
+    level = "fast" if fast_pack else "max"
+    print(f"\nBuilding installer with Inno Setup (compression level: {level})...")
+    cmd = f'"{iscc_exe}" /DCompressionLevel={level} "{iss_file}"'
+    if run_cmd(cmd) != 0:
+        sys.exit("Failed to build installer with Inno Setup")
+
+    # 写入 release/version.json
+    version_script = PROJECT_ROOT / "scripts" / "write_release_version.py"
+    if version_script.is_file():
+        run_cmd(f'"{sys.executable}" "{version_script}"')
 
 
 def main():
     parser = argparse.ArgumentParser(description="Build script for Windows")
     parser.add_argument("--quick-test", action="store_true", help="Skip Nuitka build and use dummy files")
+    parser.add_argument("--installer", action="store_true", help="Build Inno Setup installer after build")
+    parser.add_argument(
+        "--fast-pack",
+        action="store_true",
+        help="Use lzma2/fast for fast packaging (implies --installer; saves time during testing)",
+    )
+    parser.add_argument(
+        "--app-only",
+        "--patch",
+        action="store_true",
+        help="快速打包：跳过 Nuitka 编译，直接复用已有底座，同步 app/ 业务代码和资源到 dist 并生成安装包（16秒极速出包）",
+    )
     args = parser.parse_args()
 
     _warn_if_non_ascii_path()
+
+    if args.app_only:
+        exe_path = DIST_DIR / "entry.exe"
+        if not exe_path.is_file():
+            sys.exit(
+                "错误：未找到 out/entry.dist/entry.exe 底座！\n"
+                "首次构建必须先生成底座：uv run python scripts/build.py --installer"
+            )
+        t0 = time.perf_counter()
+        print("\n>>> 正在以 --app-only 极速模式装配业务层 (app/ + 资源)...")
+        sync_app_layer()
+        if args.installer or args.fast_pack:
+            build_installer(fast_pack=args.fast_pack)
+        elapsed = time.perf_counter() - t0
+        print(f"\n[OK] 极速打包完成！全流程总用时: {elapsed:.2f} 秒")
+        return
+
     build_resources()
 
     if not args.quick_test:
@@ -692,6 +844,17 @@ def main():
         build_command += "--follow-import-to=app "
         build_command += "--module-parameter=torch-disable-jit=yes "
         build_command += "--noinclude-numba-mode=nofollow "
+        # 提速配置：
+        # 1. 禁用 MinGW LTO 链接优化，避免全程序跨模块重分析导致链接卡顿 5~10 分钟
+        build_command += "--lto=no "
+        # 2. 跑满系统所有 CPU 核心
+        cpu_jobs = os.cpu_count() or 8
+        build_command += f"--jobs={cpu_jobs} "
+        # 3. 跳过第三方依赖内部大量无用测试模块的代码生成与编译
+        build_command += "--nofollow-import-to=*.tests "
+        build_command += "--nofollow-import-to=*.test "
+        # 4. 跳过第三方库中的 .pyi 类型存根文件扫描
+        build_command += "--no-pyi-file "
         for module in NUITKA_NOFOLLOW_MODULES:
             build_command += f"--nofollow-import-to={module} "
         for module in STDLIB_INCLUDE_MODULES:
@@ -727,8 +890,12 @@ def main():
     bundle_playwright_browsers()
     bundle_config()
     cleanup_dist()
+    sync_app_layer()
     verify_bundled_dependencies()
     print("Build success")
+
+    if args.installer or args.fast_pack:
+        build_installer(fast_pack=args.fast_pack)
 
 
 if __name__ == "__main__":

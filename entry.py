@@ -17,6 +17,14 @@ if hasattr(os, "add_dll_directory") and os.path.isdir(_APP_DIR):
     except Exception:
         pass
 
+# 尽早安装 dist 文件系统导入器，确保所有 app 业务代码与外部依赖优先从磁盘读取最新文件
+try:
+    from app.common.nuitka_stdlib_fallback import install_dist_stdlib_importer
+
+    install_dist_stdlib_importer()
+except Exception:
+    pass
+
 
 def _startup_log(msg: str) -> None:
     """写入启动步骤轨迹，供客户机秒退时排查。失败时静默。"""
@@ -32,10 +40,15 @@ def _startup_log(msg: str) -> None:
 def _write_crash_log(exc_type, exc_value, exc_tb):
     try:
         _startup_log(f"FATAL {exc_type.__name__}: {exc_value}")
-        with open(_CRASH_LOG, "a", encoding="utf-8") as f:
-            f.write(f"FATAL: {exc_type.__name__}: {exc_value}\n")
-            traceback.print_tb(exc_tb, file=f)
-            f.write("\n")
+        # 未捕获致命崩溃自动保存为加密快照 logs/crash.aedump
+        from app.common.diagnostic_collector import save_encrypted_error_dump
+
+        save_encrypted_error_dump(
+            raw_error=exc_value,
+            stage="fatal_crash",
+            friendly_msg=f"FATAL {exc_type.__name__}: {exc_value}",
+            target_filename="crash.aedump",
+        )
     except Exception:
         pass  # 不能再出错了
 
@@ -55,7 +68,7 @@ _startup_log(f"python={sys.version.split()[0]} platform={sys.platform}")
 
 sys.excepthook = _write_crash_log
 
-# 清理膨胀的本地日志（每日一次），必须在重定向 stderr 之前执行
+# 清理膨胀的本地日志（每日一次）
 _startup_log("log housekeeping begin")
 try:
     from app.common.log_housekeeping import run_daily_log_cleanup  # noqa: E402
@@ -64,13 +77,6 @@ try:
 except Exception:
     pass
 _startup_log("log housekeeping done")
-
-# 未处理的异常也通过 stderr 写入文件
-try:
-    stderr_fd = open(_CRASH_LOG, "a", encoding="utf-8")
-    sys.stderr = stderr_fd
-except Exception:
-    pass
 
 # 须在 QApplication / QMediaPlayer 之前设置，减轻 FFmpeg 探测类警告刷屏
 os.environ.setdefault("AV_LOG_LEVEL", "quiet")
@@ -199,8 +205,14 @@ except Exception as e:
     close_startup_splash()
     logger.exception(e)
     try:
-        with open(_CRASH_LOG, "a", encoding="utf-8") as f:
-            traceback.print_exc(file=f)
+        from app.common.diagnostic_collector import save_encrypted_error_dump
+
+        save_encrypted_error_dump(
+            raw_error=e,
+            stage="main_exception",
+            friendly_msg="程序出现异常，请尝试重新运行！",
+            target_filename="crash.aedump",
+        )
     except Exception:
         pass
     show_dialog(parent=None, content='程序出现异常，请尝试重新运行！')

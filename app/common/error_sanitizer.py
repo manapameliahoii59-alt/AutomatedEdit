@@ -46,6 +46,20 @@ def _format_error_message(
     """按运行环境格式化错误输出，并自动记录至错误反馈服务。"""
     raw_lower = raw.lower()
     if "已取消" not in raw and "cancel" not in raw_lower:
+        # 静默自动写入加密排查文件 logs/error.aedump
+        try:
+            from app.common.diagnostic_collector import save_encrypted_error_dump
+
+            save_encrypted_error_dump(
+                raw_error=original_error if original_error is not None else raw,
+                stage=stage,
+                drama_name=drama_name,
+                friendly_msg=friendly,
+                target_filename="error.aedump",
+            )
+        except Exception:
+            pass
+
         try:
             from app.data.services.error_feedback_service import error_feedback_service
 

@@ -16,8 +16,9 @@ uv run pytest                              # all tests (coverage on by default)
 - **Server run**: `cd server; uvicorn app.main:app --port 8000` — `Settings` loads `env_file=".env"` relative to CWD, so it must be started from `server/` (copy `server/.env.example` → `server/.env` first).
 - **Single test**: `uv run pytest tests/unit/core/test_navigation.py -k test_lazy_loading --no-cov` — coverage is forced on by `addopts`, so use `--no-cov` to skip it.
 - **No lint/typecheck config** exists in the repo.
-- **Build**: `uv run python scripts/build.py` (Nuitka → `out/entry.dist/`; `--quick-test` skips Nuitka but still exercises the bundle/copy steps)
-- **Release**: `iscc scripts/pack_installer.iss` then `uv run python scripts/write_release_version.py --changelog "..."` (writes `release/version.json`; upload whole `release/` dir to server, no API restart needed)
+- **Build**: `uv run python scripts/build.py` (Nuitka → `out/entry.dist/`; `--quick-test` skips Nuitka; `--installer` compiles Inno Setup installer; `--fast-pack` uses lzma2/fast for fast packaging; `--app-only` skips Nuitka and syncs app layer in ~16s)
+- **Fast Build**: `uv run python scripts/build.py --app-only --fast-pack` (16s daily turnaround: syncs app/ + resources and packs installer)
+- **Release**: `uv run python scripts/build.py --installer` (or manual `iscc scripts/pack_installer.iss` then `uv run python scripts/write_release_version.py --changelog "..."`; writes `release/version.json`)
 
 ## Architecture
 - **Desktop app** (`app/`): PySide6 6.7.0 + `pyside6-fluent-widgets`

@@ -2,11 +2,15 @@
 ; SEE THE DOCUMENTATION FOR DETAILS ON CREATING INNO SETUP SCRIPT FILES!
 
 #define MyAppName "剪辑助手"
-#define MyAppVersion "0.0.16"
+#define MyAppVersion "0.0.17"
 #define MyAppPublisher "dragon"
 #define MyAppURL "mailto:857134647@qq.com"
 #define MyAppExeName "entry.exe"
 #define P "..\"
+
+#ifndef CompressionLevel
+  #define CompressionLevel "max"
+#endif
 
 [Setup]
 ; NOTE: The value of AppId uniquely identifies this application. Do not use the same AppId value in installers for other applications.
@@ -28,8 +32,10 @@ OutputBaseFilename="{#MyAppName}-v{#MyAppVersion}-installer"
 SetupIconFile={#P}\resource\images\logo.ico
 UninstallDisplayName=卸载 {#MyAppName}
 UninstallDisplayIcon={#P}\resource\images\logo.ico
-Compression=lzma
+Compression=lzma2/{#CompressionLevel}
 SolidCompression=yes
+LZMAUseSeparateProcess=yes
+LZMANumBlockThreads=6
 WizardStyle=modern
 ; 升级时自动沿用上次安装路径，并跳过目录选择页
 DisableDirPage=auto
@@ -46,8 +52,8 @@ Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{
 
 [Files]
 Source: "{#P}\out\entry.dist\{#MyAppExeName}"; DestDir: "{app}"; Flags: ignoreversion
-; 排除 config.json：升级时保留用户本地配置，首次安装单独写入干净默认文件
-Source: "{#P}\out\entry.dist\*"; DestDir: "{app}"; Excludes: "config.json"; Flags: ignoreversion recursesubdirs createallsubdirs
+; 排除 config.json 及 Python 字节码缓存：升级时保留用户本地配置，首次安装单独写入干净默认文件
+Source: "{#P}\out\entry.dist\*"; DestDir: "{app}"; Excludes: "config.json,*.pyc,__pycache__"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "{#P}\out\entry.dist\config.json"; DestDir: "{app}"; Flags: onlyifdoesntexist
 
 [Icons]

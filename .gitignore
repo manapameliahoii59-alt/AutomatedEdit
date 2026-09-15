@@ -105,4 +105,6 @@ changdu_data/
 *.tar.gz
 *.log
 .log_housekeeping
-
+*.pem
+*.aedump
+tools/keys/
