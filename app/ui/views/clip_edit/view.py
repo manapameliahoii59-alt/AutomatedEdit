@@ -95,6 +95,7 @@ from app.data.services.render_service import (
     AMF_PRESET_CHOICES,
     NVENC_PRESET_CHOICES,
     QSV_PRESET_CHOICES,
+    RENDER_ENGINE_CHOICES,
     RESOLUTION_CHOICES,
     X264_PRESET_CHOICES,
     RenderService,
@@ -975,9 +976,10 @@ class ClipEditPage(ScrollArea):
             clip_render_engine=render_engine,
         )
         resolution_label = dict(RESOLUTION_CHOICES).get(resolution, resolution)
+        engine_label = dict(RENDER_ENGINE_CHOICES).get(render_engine, render_engine)
         show_toast(
             self,
-            f"显卡加速检测：{'开' if enable_gpu else '关'} · 导入后自动全选：{'开' if auto_select else '关'} · 去掉未完待续：{'开' if enabled else '关'} · 叠字预渲染：{'开' if bake_png else '关'} · 成片分辨率：{resolution_label}",
+            f"显卡加速检测：{'开' if enable_gpu else '关'} · 导入后自动全选：{'开' if auto_select else '关'} · 去掉未完待续：{'开' if enabled else '关'} · 成片分辨率：{resolution_label} · 渲染引擎：{engine_label}",
             title="设置",
         )
 

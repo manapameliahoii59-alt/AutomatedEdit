@@ -37,8 +37,8 @@ class Config(MyQConfig):
     overlay_disclaimer_json = ConfigItem("Tools", "overlay_disclaimer_json", "")
     # 画面文字组库：{selected_id, no_text, groups:[{id,name,title,disclaimer}]}
     overlay_text_library_json = ConfigItem("Tools", "overlay_text_library_json", "")
-    # 渲染编码档位（默认：NVENC p5 / x264 superfast）
-    encode_nvenc_preset = ConfigItem("Tools", "encode_nvenc_preset", "p5")
+    # 渲染编码档位（默认：NVENC p3 / x264 superfast）
+    encode_nvenc_preset = ConfigItem("Tools", "encode_nvenc_preset", "p3")
     encode_x264_preset = ConfigItem("Tools", "encode_x264_preset", "superfast")
     # AMD AMF 编码档位：speed / balanced / quality（默认 speed）
     encode_amf_preset = ConfigItem("Tools", "encode_amf_preset", "speed")
@@ -122,10 +122,13 @@ DEV_API_BASE_URL = "http://127.0.0.1:8000"
 YEAR = datetime.datetime.now().year
 AUTHOR = "dragon"
 AUTHOR_EMAIL = "857134647@qq.com"
-VERSION = '0.0.16'
+VERSION = '0.0.17'
 APP_NAME = "剪辑助手"
 FEEDBACK_URL = f"mailto:{AUTHOR_EMAIL}"
 
 cfg = Config()
 # qconfig.themeColor = ColorConfigItem("QFluentWidgets", "ThemeColor", '#70d5f3')
 qconfig.load('config.json', cfg)
+# 历史版本错误把 p5 认作更快，现修正默认档位为 p3；若现有配置仍为旧默认值 p5，自动平滑升级为 p3
+if getattr(cfg.encode_nvenc_preset, "value", None) == "p5":
+    qconfig.set(cfg.encode_nvenc_preset, "p3")

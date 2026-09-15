@@ -66,19 +66,6 @@ class ClipSettingsDialog(QDialog):
         row.addStretch(1)
         form.addRow("去掉未完待续：", row)
 
-        row_bake = QHBoxLayout()
-        self._bake_switch = SwitchButton(self)
-        self._bake_switch.setOnText("开")
-        self._bake_switch.setOffText("关")
-        self._bake_switch.setChecked(bool(cfg.clip_overlay_bake_png.value))
-        self._bake_switch.setToolTip(
-            "开启后把剧名/提示叠字（含辉光）预渲成一张透明 PNG，渲染时只叠加一次，\n"
-            "减少逐帧 drawtext 开销、加快渲染；画质与直接叠字一致。"
-        )
-        row_bake.addWidget(self._bake_switch)
-        row_bake.addStretch(1)
-        form.addRow("叠字预渲染提速：", row_bake)
-
         row_auto_select = QHBoxLayout()
         self._auto_select_switch = SwitchButton(self)
         self._auto_select_switch.setOnText("开")
@@ -118,8 +105,8 @@ class ClipSettingsDialog(QDialog):
         if engine_idx >= 0:
             self._render_engine_combo.setCurrentIndex(engine_idx)
         self._render_engine_combo.setToolTip(
-            "“当前”使用公共前缀复用与叠字预渲，渲染更快；\n"
-            "“兼容旧版”关闭这两项优化，用于排查渲染变慢的问题。"
+            "“v2”启用动态最长公共前缀复用与叠字预渲，渲染更快（推荐）；\n"
+            "“v1”关闭前缀复用与叠字预渲，每条成片全量独立重编。"
         )
         form.addRow("渲染引擎：", self._render_engine_combo)
         root.addLayout(form)
@@ -139,7 +126,7 @@ class ClipSettingsDialog(QDialog):
         return bool(self._trim_switch.isChecked())
 
     def result_overlay_bake_png(self) -> bool:
-        return bool(self._bake_switch.isChecked())
+        return bool(getattr(cfg.clip_overlay_bake_png, "value", True))
 
     def result_auto_select_after_import(self) -> bool:
         return bool(self._auto_select_switch.isChecked())

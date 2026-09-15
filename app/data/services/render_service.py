@@ -30,15 +30,15 @@ CUT_SPEECH_PAD_SECONDS = 0.3
 # 阶段C：drawtext 层数超过该阈值（辉光类）才预渲为 PNG；纯文字保持 drawtext 原样
 OVERLAY_BAKE_MIN_LAYERS = 4
 
-# NVENC: p1 最慢最好 → p7 最快；默认 p5
+# NVENC: p1 最快/最高性能 → p7 最慢最好；默认 p3
 NVENC_PRESET_CHOICES: tuple[tuple[str, str], ...] = (
-    ("p1", "p1（最慢/画质最好）"),
-    ("p2", "p2"),
-    ("p3", "p3"),
+    ("p1", "p1（最快/推荐性能）"),
+    ("p2", "p2（更快）"),
+    ("p3", "p3（默认/快）"),
     ("p4", "p4（平衡）"),
-    ("p5", "p5（默认/更快）"),
-    ("p6", "p6（很快）"),
-    ("p7", "p7（最快）"),
+    ("p5", "p5（慢/高画质）"),
+    ("p6", "p6（更慢）"),
+    ("p7", "p7（最慢/极高质量）"),
 )
 # libx264: ultrafast 最快 → medium 更慢更好；默认 superfast
 X264_PRESET_CHOICES: tuple[tuple[str, str], ...] = (
@@ -49,7 +49,7 @@ X264_PRESET_CHOICES: tuple[tuple[str, str], ...] = (
     ("fast", "fast"),
     ("medium", "medium（更慢/更好）"),
 )
-_DEFAULT_NVENC_PRESET = "p5"
+_DEFAULT_NVENC_PRESET = "p3"
 _DEFAULT_X264_PRESET = "superfast"
 _NVENC_PRESET_SET = {k for k, _ in NVENC_PRESET_CHOICES}
 _X264_PRESET_SET = {k for k, _ in X264_PRESET_CHOICES}
@@ -81,10 +81,10 @@ RESOLUTION_CHOICES: tuple[tuple[str, str], ...] = (
 _DEFAULT_RESOLUTION = "720p"
 _RESOLUTION_SET = {k for k, _ in RESOLUTION_CHOICES}
 
-# 渲染引擎：current=公共前缀复用+叠字预渲；legacy=兼容旧逻辑（关闭两者）
+# 渲染引擎：current=动态公共前缀复用+叠字预渲(v2)；legacy=兼容旧逻辑全量重编(v1)
 RENDER_ENGINE_CHOICES: tuple[tuple[str, str], ...] = (
-    ("current", "当前"),
-    ("legacy", "兼容旧版"),
+    ("current", "v2"),
+    ("legacy", "v1"),
 )
 _DEFAULT_RENDER_ENGINE = "current"
 _RENDER_ENGINE_SET = {k for k, _ in RENDER_ENGINE_CHOICES}
@@ -768,29 +768,77 @@ class RenderService:
         return segments
 
     @staticmethod
-    def _prefix_key(config: dict, speed: float) -> tuple | None:
-        """公共前缀标识：完整集列表 + 首集入点 + 倍速。无完整集则无前缀。"""
+    def _prefix_key(
+        config: dict, speed: float, prefix_keys: set | None = None
+    ) -> tuple | None:
+        """公共前缀标识：完整集列表 + 首集入点 + 倍速。
+
+        若指定 prefix_keys，则返回当前方案能命中的最长公共子前缀；
+        若未指定 prefix_keys，则返回全集完整前缀 key（保持向后兼容）。
+        """
         full = tuple(config.get("full_episodes") or [])
         if not full:
             return None
-        return (
-            full,
-            float(config.get("first_episode_cut_start", 0) or 0),
-            float(speed),
-        )
+        cut_start = float(config.get("first_episode_cut_start", 0) or 0)
+        sp = float(speed)
+        if prefix_keys:
+            for k in range(len(full), 0, -1):
+                candidate = (full[:k], cut_start, sp)
+                if candidate in prefix_keys:
+                    return candidate
+            return None
+        return (full, cut_start, sp)
 
     @staticmethod
     def _reusable_prefix_keys(plans: list) -> set:
-        """统计各公共前缀使用次数，返回使用 >= 2 次的前缀 key（值得只编一次）。"""
-        counts: dict[tuple, int] = {}
+        """统计各公共前缀使用次数，动态挑选收益最高、使用次数 >= 2 的公共前缀集合。"""
+        if not plans:
+            return set()
+
+        groups: dict[tuple[float, float], list[tuple[str, ...]]] = {}
         for plan in plans:
             config = plan.get("files_config") or {}
-            key = RenderService._prefix_key(
-                config, float(plan.get("global_speed", 1.0))
+            full = tuple(config.get("full_episodes") or [])
+            if not full:
+                continue
+            cut_start = float(config.get("first_episode_cut_start", 0) or 0)
+            speed = float(plan.get("global_speed", 1.0))
+            groups.setdefault((cut_start, speed), []).append(full)
+
+        chosen_keys: set[tuple] = set()
+
+        for (cut_start, speed), full_list in groups.items():
+            if len(full_list) < 2:
+                continue
+
+            # 统计所有连续子前缀出现次数
+            counts: dict[tuple[str, ...], int] = {}
+            for full in full_list:
+                for k in range(1, len(full) + 1):
+                    sub = full[:k]
+                    counts[sub] = counts.get(sub, 0) + 1
+
+            candidates = [sub for sub, cnt in counts.items() if cnt >= 2]
+            if not candidates:
+                continue
+
+            # 优先选节约集数最多 (cnt - 1) * len(sub)、前缀更长的候选
+            candidates.sort(
+                key=lambda s: ((counts[s] - 1) * len(s), len(s)), reverse=True
             )
-            if key is not None:
-                counts[key] = counts.get(key, 0) + 1
-        return {key for key, n in counts.items() if n >= 2}
+
+            assigned_plans: set[int] = set()
+            for cand in candidates:
+                covered = {
+                    i
+                    for i, full in enumerate(full_list)
+                    if i not in assigned_plans and full[: len(cand)] == cand
+                }
+                if len(covered) >= 2:
+                    chosen_keys.add((cand, cut_start, speed))
+                    assigned_plans.update(covered)
+
+        return chosen_keys
 
     @staticmethod
     def _prefix_keys_for(plans: list) -> set:
@@ -1398,6 +1446,10 @@ class RenderService:
     @staticmethod
     def normalize_render_engine(value: str | None) -> str:
         v = (value or _DEFAULT_RENDER_ENGINE).strip().lower()
+        if v == "v2":
+            return "current"
+        if v == "v1":
+            return "legacy"
         return v if v in _RENDER_ENGINE_SET else _DEFAULT_RENDER_ENGINE
 
     @staticmethod
@@ -1924,13 +1976,14 @@ class RenderService:
             _safe_print("⚠️ 无效片段配置，跳过", flush=True)
             return False, 0.0
 
-        # 拆分「完整集公共前缀」与「末集尾部」，分别做未完待续裁剪
-        n_full = len(config.get("full_episodes") or [])
+        # 拆分「公共前缀」与「后续尾部」，分别做未完待续裁剪
+        prefix_key = RenderService._prefix_key(config, speed, ctx.prefix_keys)
+        n_prefix = len(prefix_key[0]) if prefix_key is not None else len(config.get("full_episodes") or [])
         prefix_segments = RenderService._trim_first_episode_continued_card(
-            ffmpeg, ffprobe, ctx, all_segments[:n_full]
+            ffmpeg, ffprobe, ctx, all_segments[:n_prefix]
         )
         tail_segments = RenderService._trim_first_episode_continued_card(
-            ffmpeg, ffprobe, ctx, all_segments[n_full:]
+            ffmpeg, ffprobe, ctx, all_segments[n_prefix:]
         )
         segments = prefix_segments + tail_segments
         if not segments:
@@ -1995,8 +2048,7 @@ class RenderService:
                 )
                 overlay_filters = []
 
-        # 阶段B：完整集公共前缀复用——前缀只编一次，各方案仅编「尾部+片尾」再流拷贝拼接
-        prefix_key = RenderService._prefix_key(config, speed)
+        # 阶段B：公共前缀复用——前缀只编一次，各方案仅编「尾部+片尾」再流拷贝拼接
         if (
             ctx.prefix_dir
             and prefix_key is not None

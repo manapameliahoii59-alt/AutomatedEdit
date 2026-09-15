@@ -98,9 +98,9 @@ class TestPreferGpuEnv:
 
 class TestEncodePresets:
     def test_normalize_defaults_and_invalid(self):
-        assert RenderService.normalize_nvenc_preset(None) == "p5"
+        assert RenderService.normalize_nvenc_preset(None) == "p3"
         assert RenderService.normalize_nvenc_preset("P7") == "p7"
-        assert RenderService.normalize_nvenc_preset("nope") == "p5"
+        assert RenderService.normalize_nvenc_preset("nope") == "p3"
         assert RenderService.normalize_x264_preset("") == "superfast"
         assert RenderService.normalize_x264_preset("ultrafast") == "ultrafast"
         assert RenderService.normalize_x264_preset("slow") == "superfast"
@@ -933,12 +933,17 @@ def _two_reusable_plans():
 
 
 def test_normalize_render_engine():
-    from app.data.services.render_service import RenderService
+    from app.data.services.render_service import RENDER_ENGINE_CHOICES, RenderService
 
     assert RenderService.normalize_render_engine("legacy") == "legacy"
     assert RenderService.normalize_render_engine("CURRENT") == "current"
     assert RenderService.normalize_render_engine("bogus") == "current"
     assert RenderService.normalize_render_engine(None) == "current"
+    # 支持 v2 / v1 别名
+    assert RenderService.normalize_render_engine("v2") == "current"
+    assert RenderService.normalize_render_engine("v1") == "legacy"
+    assert dict(RENDER_ENGINE_CHOICES).get("current") == "v2"
+    assert dict(RENDER_ENGINE_CHOICES).get("legacy") == "v1"
 
 
 def test_legacy_engine_disables_prefix_and_bake(monkeypatch):
@@ -963,4 +968,25 @@ def test_current_engine_keeps_prefix_and_bake(monkeypatch):
     assert RenderService._is_legacy_engine() is False
     assert RenderService._overlay_bake_enabled() is True
     assert len(RenderService._prefix_keys_for(_two_reusable_plans())) == 1
+
+
+def test_dynamic_sub_prefix_mining_different_lengths():
+    """不同长度的成片方案，能自动挖掘并提取出最大公共子前缀。"""
+    from app.data.services.render_service import RenderService
+
+    plans = [
+        {"files_config": {"full_episodes": ["1.mp4", "2.mp4", "3.mp4", "4.mp4", "5.mp4"], "first_episode_cut_start": 0}, "global_speed": 1.6},
+        {"files_config": {"full_episodes": ["1.mp4", "2.mp4", "3.mp4", "4.mp4", "5.mp4", "6.mp4"], "first_episode_cut_start": 0}, "global_speed": 1.6},
+        {"files_config": {"full_episodes": ["1.mp4", "2.mp4", "3.mp4", "4.mp4", "5.mp4", "6.mp4", "7.mp4"], "first_episode_cut_start": 0}, "global_speed": 1.6},
+    ]
+    keys = RenderService._reusable_prefix_keys(plans)
+    # 3 条方案均包含 1~5 集，应提取 ("1.mp4", "2.mp4", "3.mp4", "4.mp4", "5.mp4") 为公共前缀
+    expected_tuple = ("1.mp4", "2.mp4", "3.mp4", "4.mp4", "5.mp4")
+    assert (expected_tuple, 0.0, 1.6) in keys
+
+    # 每条方案通过 _prefix_key 均能正确匹配到该最长子前缀
+    for p in plans:
+        matched = RenderService._prefix_key(p["files_config"], 1.6, keys)
+        assert matched == (expected_tuple, 0.0, 1.6)
+
 

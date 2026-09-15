@@ -329,7 +329,7 @@
             <label class="lbl" for="encode_nvenc_preset">NVIDIA NVENC 档位</label>
             <select class="admin-select" id="encode_nvenc_preset" name="encode_nvenc_preset">
               <option value="">不设置</option>
-              {% for value, label in [("p1","p1（最慢/画质最好）"),("p2","p2"),("p3","p3"),("p4","p4（平衡）"),("p5","p5（默认/更快）"),("p6","p6（很快）"),("p7","p7（最快）")] %}
+              {% for value, label in [("p1","p1（最快/推荐性能）"),("p2","p2（更快）"),("p3","p3（默认/快）"),("p4","p4（平衡）"),("p5","p5（慢/高画质）"),("p6","p6（更慢）"),("p7","p7（最慢/极高质量）")] %}
               <option value="{{ value }}" {% if clip_edit.encode_nvenc_preset == value %}selected{% endif %}>{{ label }}</option>
               {% endfor %}
             </select>
@@ -365,7 +365,7 @@
             <label class="lbl" for="clip_render_engine">渲染引擎（双向）</label>
             <select class="admin-select" id="clip_render_engine" name="clip_render_engine">
               <option value="">不设置</option>
-              {% for value, label in [("current","当前（默认/更快）"),("legacy","兼容旧版（关闭前缀复用与叠字预渲）")] %}
+              {% for value, label in [("current","v2（推荐/动态前缀复用与叠字预渲）"),("legacy","v1（全量独立重编/关闭前缀复用）")] %}
               <option value="{{ value }}" {% if clip_edit.clip_render_engine == value %}selected{% endif %}>{{ label }}</option>
               {% endfor %}
             </select>
