@@ -740,7 +740,31 @@
   <script src="/static/admin/xe-utils.umd.min.js"></script>
   <script src="/static/admin/vxe-table.umd.min.js"></script>
   <script>
+    // 补丁：防范 PJAX 路由切换时重复执行 hooks.add 触发 coverProp 重复定义警告
+    (function () {
+      const tableLib = window.VXETable;
+      if (tableLib && tableLib.hooks && !tableLib._hooksCoverPatched) {
+        tableLib._hooksCoverPatched = true;
+        const originalAdd = tableLib.hooks.add;
+        tableLib.hooks.add = function (name, options) {
+          const store = this.store || {};
+          const existing = store[name];
+          if (existing) {
+            Object.assign(existing, options);
+            return this;
+          }
+          return originalAdd.call(this, name, options);
+        };
+      }
+    })();
+
     window.mountAdminGrid = function (selector, options) {
+      if (window._currentAdminGridApp) {
+        try {
+          window._currentAdminGridApp.unmount();
+        } catch (e) {}
+        window._currentAdminGridApp = null;
+      }
       const el = document.querySelector(selector);
       const fallback = options.fallback ? document.querySelector(options.fallback) : null;
       const showFallback = function () {
@@ -824,6 +848,7 @@
         });
         app.use(tableLib);
         app.mount(el);
+        window._currentAdminGridApp = app;
         const ok = el.querySelector(".vxe-table") || el.querySelector("table");
         if (!ok) {
           showFallback();
@@ -1819,6 +1844,12 @@
         });
 
         // 仅置换内容区域，保留播放器及母版
+        if (window._currentAdminGridApp) {
+          try {
+            window._currentAdminGridApp.unmount();
+          } catch (e) {}
+          window._currentAdminGridApp = null;
+        }
         const currentMain = document.querySelector(".admin-main");
         currentMain.innerHTML = newMain.innerHTML;
         currentMain.scrollTop = 0;
