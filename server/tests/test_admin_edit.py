@@ -40,7 +40,17 @@ def admin_client(monkeypatch, tmp_path):
 
     monkeypatch.setattr("app.admin_panel.engine", engine)
 
+    from app.deps import get_db
+
+    def override_get_db():
+        session = Session()
+        try:
+            yield session
+        finally:
+            session.close()
+
     app = FastAPI()
+    app.dependency_overrides[get_db] = override_get_db
     setup_admin(app)
 
     with TestClient(app, raise_server_exceptions=True) as client:
@@ -541,6 +551,84 @@ def test_admin_errors_page_batch_resolve_modal(admin_client):
     # 含有现代化确认模态框
     assert 'id="batch-resolve-modal"' in resp.text
     assert "确认一键处理" in resp.text
+
+
+def test_admin_user_edit_session_revocation(admin_client):
+    import app.admin_panel as ap
+    from app.auth import create_access_token
+    from app.routers.auth import router as auth_router
+    from sqlalchemy.orm import sessionmaker
+
+    admin_client.app.include_router(auth_router)
+
+    Session = sessionmaker(bind=ap.engine)
+    db = Session()
+    user = db.get(User, 1)
+    initial_ver = user.token_version
+    assert initial_ver >= 1
+
+    # 1. 验证编辑页渲染登录状态控制项与强制下线按钮、模态框
+    resp = admin_client.get("/admin/user/edit/1")
+    assert resp.status_code == 200
+    assert "登录状态控制" in resp.text
+    assert "⚡ 强制下线" in resp.text
+    assert 'id="session_action"' in resp.text
+    assert 'id="revoke-session-modal"' in resp.text
+    assert "确认强制下线" in resp.text
+
+    # 2. 为该用户签发当前有效版本的 Token 与旧版本 Token
+    valid_token = create_access_token(user.id, user.username, user.role, token_version=user.token_version)
+    old_token = create_access_token(user.id, user.username, user.role, token_version=user.token_version - 1)
+
+    # 3. 验证使用当前有效 Token 请求 /api/auth/me 成功
+    me_resp = admin_client.get("/api/auth/me", headers={"Authorization": f"Bearer {valid_token}"})
+    assert me_resp.status_code == 200
+    assert me_resp.json().get("username") == "a@b.com"
+
+    # 4. 验证使用旧版本 Token 请求 /api/auth/me 得到 401
+    bad_resp = admin_client.get("/api/auth/me", headers={"Authorization": f"Bearer {old_token}"})
+    assert bad_resp.status_code == 401
+    assert "过期" in bad_resp.text
+
+    # 5. 管理员调用 revoke-session 路由强制使会话失效
+    revoke_resp = admin_client.post("/admin/users/1/revoke-session", follow_redirects=False)
+    assert revoke_resp.status_code == 302
+    assert "msg=session_revoked" in revoke_resp.headers.get("location", "")
+
+    # 6. 验证数据库中 token_version 递增
+    db.expire_all()
+    user = db.get(User, 1)
+    assert user.token_version == initial_ver + 1
+
+    # 7. 此前原本有效的 valid_token 立即失效，返回 401
+    revoked_me_resp = admin_client.get("/api/auth/me", headers={"Authorization": f"Bearer {valid_token}"})
+    assert revoked_me_resp.status_code == 401
+    assert "过期" in revoked_me_resp.text
+
+    # 8. 重新用最新版本签发 Token，恢复可用
+    new_token = create_access_token(user.id, user.username, user.role, token_version=user.token_version)
+    new_me_resp = admin_client.get("/api/auth/me", headers={"Authorization": f"Bearer {new_token}"})
+    assert new_me_resp.status_code == 200
+
+    # 9. 测试通过常规编辑页表单选择 session_action="revoke" 保存
+    save_resp = admin_client.post(
+        "/admin/user/edit/1",
+        data={
+            "username": "a@b.com",
+            "role": "user",
+            "is_active": "y",
+            "session_action": "revoke",
+            "save": "Save",
+        },
+        follow_redirects=False,
+    )
+    assert save_resp.status_code == 302
+
+    db.expire_all()
+    user = db.get(User, 1)
+    assert user.token_version == initial_ver + 2
+    db.close()
+
 
 
 

@@ -168,6 +168,10 @@ def _ensure_daily_quota_columns() -> None:
                 conn.execute(
                     text("ALTER TABLE users ADD COLUMN valid_until DATE NULL")
                 )
+            if "token_version" not in user_cols:
+                conn.execute(
+                    text("ALTER TABLE users ADD COLUMN token_version INT NOT NULL DEFAULT 1")
+                )
 
     if "usage_events" in table_names:
         usage_cols = {col["name"] for col in inspector.get_columns("usage_events")}

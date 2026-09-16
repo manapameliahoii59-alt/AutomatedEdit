@@ -57,7 +57,12 @@ def login(body: LoginRequest, db: Session = Depends(get_db)):
 
     assert_user_allowed(user)
 
-    token = create_access_token(user.id, user.username, user.role)
+    token = create_access_token(
+        user.id,
+        user.username,
+        user.role,
+        token_version=getattr(user, "token_version", 1),
+    )
     return TokenResponse(
         access_token=token,
         user=UserOut.model_validate(user),

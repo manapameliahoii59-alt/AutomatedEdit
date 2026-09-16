@@ -1,6 +1,6 @@
 import sys
 import threading
-from PySide6.QtCore import QRect, QTimer
+from PySide6.QtCore import QRect, QTimer, Signal
 from PySide6.QtGui import QIcon
 from qfluentwidgets import FluentWindow, NavigationItemPosition, FluentIcon as FIF, qconfig
 
@@ -19,11 +19,15 @@ from app.ui.views.video_download.view import VideoDownloadPage
 class MainWindow(FluentWindow):
     """ 主界面 (Refactored) """
 
+    session_expired_signal = Signal(str)
+
     def __init__(self):
         super().__init__()
         self.is_logout = False
         self.init_window()
         self.init_navigation()
+        self.session_expired_signal.connect(self._handle_session_expired)
+        access_control.register_session_expired_callback(self._on_session_expired_cb)
         threading.Thread(target=access_control.refresh, daemon=True).start()
 
     def init_window(self):
@@ -129,6 +133,21 @@ class MainWindow(FluentWindow):
         self.switchTo(self.clipEditPage)
         page.vm.import_drama_folders(folder_paths)
 
+    def _on_session_expired_cb(self, reason: str) -> None:
+        self.session_expired_signal.emit(reason)
+
+    def _handle_session_expired(self, reason: str) -> None:
+        if getattr(self, "is_logout", False):
+            return
+        if hasattr(self, "_access_timer"):
+            self._access_timer.stop()
+        try:
+            from app.common.utils import show_dialog
+            show_dialog(parent=self, content="您的登录状态已过期或已被管理员设为失效，请重新登录！")
+        except Exception:
+            pass
+        self.logout()
+
     def logout(self):
         qconfig.set(cfg.auto_login, False)
         Container.auth_service().logout()
@@ -136,6 +155,7 @@ class MainWindow(FluentWindow):
         self.close()
 
     def closeEvent(self, event):
+        access_control.unregister_session_expired_callback(self._on_session_expired_cb)
         UsageService.report_app_close()
         super().closeEvent(event)
 

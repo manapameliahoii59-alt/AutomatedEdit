@@ -172,7 +172,8 @@ class RemoteApi:
 
         Returns:
             "valid" — 会话有效
-            "invalid" — 明确无效（无 token / 401 / 403 / is_active=False）
+            "expired" — 登录态失效 / 401（Token 过期或被管理员设为已过期）
+            "invalid" — 明确无效（无 token / 403 / is_active=False）
             "unreachable" — 网络或服务端暂时不可达（不应因此封禁客户端）
         """
         if not self._token:
@@ -188,7 +189,9 @@ class RemoteApi:
             )
             return 'valid'
         except ApiError as exc:
-            if exc.status_code in (401, 403):
+            if exc.status_code == 401:
+                return 'expired'
+            if exc.status_code == 403:
                 return 'invalid'
             return 'unreachable'
 

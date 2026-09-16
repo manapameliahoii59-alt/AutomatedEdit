@@ -27,6 +27,16 @@ def get_current_user(
     user = db.get(User, user_id)
     if user is None:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="未登录或令牌无效")
+
+    token_ver = payload.get("ver")
+    expected_ver = getattr(user, "token_version", 1) or 1
+    if token_ver is not None:
+        if token_ver != expected_ver:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="登录会话已过期，请重新登录")
+    else:
+        if expected_ver > 1:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="登录会话已过期，请重新登录")
+
     assert_user_allowed(user)
     return user
 
@@ -48,6 +58,12 @@ def get_optional_current_user(
         user_id = int(payload.get("sub", 0))
         user = db.get(User, user_id)
         if user is not None and user.is_active:
+            token_ver = payload.get("ver")
+            expected_ver = getattr(user, "token_version", 1) or 1
+            if token_ver is not None and token_ver != expected_ver:
+                return None
+            if token_ver is None and expected_ver > 1:
+                return None
             return user
     except Exception:
         pass

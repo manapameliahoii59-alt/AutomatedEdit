@@ -23,6 +23,7 @@ class User(Base):
     daily_clip_limit: Mapped[int] = mapped_column(Integer, default=30)
     daily_download_limit: Mapped[int] = mapped_column(Integer, default=30)
     valid_until: Mapped[date | None] = mapped_column(Date, nullable=True, default=None)
+    token_version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
     secrets: Mapped["UserSecret | None"] = relationship(back_populates="user", uselist=False)

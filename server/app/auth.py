@@ -17,12 +17,13 @@ def verify_password(plain: str, hashed: str) -> bool:
     return pwd_context.verify(plain, hashed)
 
 
-def create_access_token(user_id: int, username: str, role: str) -> str:
+def create_access_token(user_id: int, username: str, role: str, token_version: int = 1) -> str:
     expire = datetime.now(timezone.utc) + timedelta(minutes=settings.jwt_expire_minutes)
     payload = {
         "sub": str(user_id),
         "username": username,
         "role": role,
+        "ver": int(token_version) if token_version is not None else 1,
         "exp": expire,
     }
     return jwt.encode(payload, settings.jwt_secret, algorithm=ALGORITHM)

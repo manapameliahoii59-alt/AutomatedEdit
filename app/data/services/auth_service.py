@@ -37,7 +37,7 @@ class AuthService:
             access_control.unblock()
             self._apply_secrets(api)
             return True
-        if status == "invalid":
+        if status in ("invalid", "expired"):
             access_control.block()
             return False
         # 服务暂时不可达：不封禁，也不当作自动登录成功

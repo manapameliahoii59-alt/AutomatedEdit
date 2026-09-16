@@ -507,6 +507,7 @@ def user_edit_page(
     user_id: int,
     db: Db,
     saved: int = 0,
+    msg: str = "",
 ):
     user = db.scalar(
         select(User).options(joinedload(User.secrets)).where(User.id == user_id)
@@ -537,6 +538,7 @@ def user_edit_page(
             plan_thinking_enabled=thinking_enabled,
             plan_choices=list(PLAN_LLM_PRESET_CHOICES),
             saved=bool(saved),
+            msg=msg,
             machine=_machine_to_dict(get_machine(db, user.id)),
             clip_edit=get_user_settings(db, user.id).clip_edit,
             plan=get_user_settings(db, user.id).plan,
@@ -577,6 +579,7 @@ def user_edit_save(
     clip_auto_select_after_import: Annotated[str | None, Form()] = None,
     clip_render_engine: Annotated[str | None, Form()] = None,
     plan_mixed_strategy: Annotated[str | None, Form()] = None,
+    session_action: Annotated[str | None, Form()] = None,
     save: Annotated[str | None, Form()] = None,
 ):
     user = db.get(User, user_id)
@@ -587,6 +590,8 @@ def user_edit_save(
     user.role = (role or "user").strip() or "user"
     user.is_active = bool(is_active)
     user.valid_until = _parse_valid_until(valid_until)
+    if session_action == "revoke":
+        user.token_version = (getattr(user, "token_version", 1) or 1) + 1
     if daily_plan_limit is not None and str(daily_plan_limit).strip() != "":
         user.daily_plan_limit = _parse_int(daily_plan_limit, user.daily_plan_limit)
     if daily_clip_limit is not None and str(daily_clip_limit).strip() != "":
@@ -668,6 +673,25 @@ def user_edit_save(
         db.commit()
 
     return RedirectResponse(f"/admin/user/edit/{user_id}?saved=1", status_code=302)
+
+
+@router.post("/users/{user_id}/revoke-session")
+@router.post("/user/edit/{user_id}/revoke-session")
+def user_revoke_session(
+    request: Request,
+    user_id: int,
+    db: Db,
+):
+    if not _is_logged_in(request):
+        return RedirectResponse("/admin/login", status_code=302)
+    user = db.get(User, user_id)
+    if user is None:
+        return HTMLResponse("用户不存在", status_code=404)
+    user.token_version = (getattr(user, "token_version", 1) or 1) + 1
+    db.commit()
+    referer = request.headers.get("referer") or f"/admin/user/edit/{user_id}"
+    sep = "&" if "?" in referer else "?"
+    return RedirectResponse(f"{referer}{sep}msg=session_revoked", status_code=302)
 
 
 def _list_page(

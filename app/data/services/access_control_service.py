@@ -29,12 +29,28 @@ class AccessControlService:
 
     def __init__(self) -> None:
         self._blocked = False
+        self._session_expired_callbacks: list[callable] = []
 
     @classmethod
     def instance(cls) -> "AccessControlService":
         if cls._instance is None:
             cls._instance = AccessControlService()
         return cls._instance
+
+    def register_session_expired_callback(self, cb: callable) -> None:
+        if cb not in self._session_expired_callbacks:
+            self._session_expired_callbacks.append(cb)
+
+    def unregister_session_expired_callback(self, cb: callable) -> None:
+        if cb in self._session_expired_callbacks:
+            self._session_expired_callbacks.remove(cb)
+
+    def notify_session_expired(self, reason: str = "登录状态已过期，请重新登录") -> None:
+        for cb in list(self._session_expired_callbacks):
+            try:
+                cb(reason)
+            except Exception as e:
+                logger.debug("Session expired callback error: {}", e)
 
     def is_remote_mode(self) -> bool:
         return True
@@ -59,7 +75,7 @@ class AccessControlService:
         """刷新封禁状态。
 
         - 会话有效 → 解封
-        - 明确无效 → 封禁
+        - 明确无效/过期 → 封禁（若为过期则通知监听器）
         - 网络/服务不可达 → 保持原状态（避免把连不上 API 误判成封禁）
         """
         if not self.is_remote_mode():
@@ -76,8 +92,10 @@ class AccessControlService:
         if status == "valid":
             self.unblock()
             return True
-        if status == "invalid":
+        if status in ("invalid", "expired"):
             self.block()
+            if status == "expired":
+                self.notify_session_expired("登录状态已过期，请重新登录")
             return False
         # 不可达：不误封；并解除可能由超时造成的误封，避免业务全卡死
         logger.debug("会话校验暂时不可达，保持可用（不因网络误封禁）")

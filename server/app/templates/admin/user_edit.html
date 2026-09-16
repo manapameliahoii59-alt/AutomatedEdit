@@ -92,7 +92,7 @@
   /* 顶部用户核心档案 */
   .profile-grid {
     display: grid;
-    grid-template-columns: 1.2fr 1fr 1fr 1fr 1fr 1fr;
+    grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
     gap: 16px;
     align-items: flex-end;
   }
@@ -316,6 +316,13 @@
     </div>
   </div>
   {% endif %}
+  {% if msg == "session_revoked" %}
+  <div class="flash" style="margin: 0;">
+    <div class="el-alert el-alert--warning is-light" role="alert" style="background: #fdf6ec; border: 1px solid #faecd8; color: #e6a23c;">
+      <div class="el-alert__content"><span class="el-alert__title">⚡ 该用户的登录状态已强制设为已过期！其所有现有桌面端会话已失效。</span></div>
+    </div>
+  </div>
+  {% endif %}
 
   <!-- 表单主体 -->
   <form id="userEditForm" method="post" action="/admin/user/edit/{{ user.id }}">
@@ -345,7 +352,7 @@
               <div class="pwd-display-box">
                 <span id="plainPwdText" style="flex:1; overflow:hidden; text-overflow:ellipsis;">{{ user.plain_password or '（已加密存储）' }}</span>
                 {% if user.plain_password %}
-                <button type="button" class="btn-copy-pwd" onclick="copyPassword('{{ user.plain_password }}')">复制</button>
+                <button type="button" class="btn-copy-pwd" onclick="copyPassword('{{ user.plain_password }}', this)">复制</button>
                 {% endif %}
               </div>
             </div>
@@ -377,6 +384,19 @@
                   {% if user.is_active %}正常授权{% else %}已暂停授权{% endif %}
                 </span>
               </div>
+            </div>
+
+            <div>
+              <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
+                <label class="lbl-strong" for="session_action" style="margin: 0;">登录状态控制</label>
+                <button type="button" class="el-button" onclick="openRevokeSessionModal()" style="height: 20px; font-size: 11px; padding: 0 6px; background: #fdf6ec; border-color: #f5dab1; color: #e6a23c; border-radius: 3px; cursor: pointer; white-space: nowrap;" title="立即强制下线该用户">
+                  ⚡ 强制下线
+                </button>
+              </div>
+              <select class="admin-select" id="session_action" name="session_action">
+                <option value="keep" selected>正常有效 (v{{ user.token_version or 1 }})</option>
+                <option value="revoke">设为过期 (保存后下线)</option>
+              </select>
             </div>
 
             <div style="text-align: right;">
@@ -722,13 +742,58 @@
   </form>
 </div>
 
+<!-- 强制下线现代确认模态框 -->
+<div class="missing-keys-dialog-mask" id="revoke-session-modal" style="display: none; align-items: center; justify-content: center; z-index: 2100;">
+  <div class="missing-keys-dialog" style="max-width: 440px; border-radius: 8px; box-shadow: 0 16px 36px rgba(0,0,0,0.18); overflow: hidden;">
+    <div class="missing-keys-dialog__head" style="padding: 16px 20px; background: #fff; border-bottom: 1px solid #ebeef5;">
+      <h3 class="missing-keys-dialog__title" style="font-size: 16px; margin: 0; display: flex; align-items: center; gap: 10px;">
+        <span style="display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 26px; border-radius: 50%; background: #fdf6ec; color: #e6a23c; font-size: 14px; font-weight: bold;">⚡</span>
+        确认强制下线
+      </h3>
+      <button type="button" class="missing-keys-dialog__close" onclick="closeRevokeSessionModal()">&times;</button>
+    </div>
+    <div class="missing-keys-dialog__body" style="padding: 20px; font-size: 14px; color: #606266; line-height: 1.6;">
+      <p style="margin: 0;">确定要将用户 <strong>{{ user.username }}</strong> 的登录状态设为<strong>已过期（强制下线）</strong>吗？</p>
+      <p style="margin: 8px 0 0; font-size: 12px; color: #909399;">操作后该用户在所有桌面端设备的现有登录凭据将立即失效，下次网络交互或探活时将自动退回登录界面。</p>
+    </div>
+    <div class="missing-keys-dialog__foot" style="padding: 12px 20px; background: #fafbfc; border-top: 1px solid #ebeef5; display: flex; justify-content: flex-end; gap: 10px;">
+      <button type="button" class="el-button" onclick="closeRevokeSessionModal()">取消</button>
+      <button type="button" class="el-button el-button--primary" style="background: #e6a23c; border-color: #e6a23c;" onclick="submitRevokeSession()">确认设为已过期</button>
+    </div>
+  </div>
+</div>
+<form id="revokeSessionForm" method="post" action="/admin/users/{{ user.id }}/revoke-session" style="display: none;"></form>
+
 <script>
-function copyPassword(pwd) {
+function openRevokeSessionModal() {
+  const m = document.getElementById("revoke-session-modal");
+  if (m) m.style.display = "flex";
+}
+
+function closeRevokeSessionModal() {
+  const m = document.getElementById("revoke-session-modal");
+  if (m) m.style.display = "none";
+}
+
+function submitRevokeSession() {
+  const form = document.getElementById("revokeSessionForm");
+  if (form) form.submit();
+}
+
+function copyPassword(pwd, btn) {
   if (!pwd) return;
   navigator.clipboard.writeText(pwd).then(function() {
-    alert("密码已成功复制到剪贴板: " + pwd);
+    if (btn) {
+      const orig = btn.innerText;
+      btn.innerText = "已复制 ✓";
+      setTimeout(function() { btn.innerText = orig; }, 1800);
+    }
   }).catch(function() {
-    prompt("请手动复制密码:", pwd);
+    if (btn) {
+      const orig = btn.innerText;
+      btn.innerText = "复制失败 ❌";
+      setTimeout(function() { btn.innerText = orig; }, 1800);
+    }
   });
 }
 </script>
