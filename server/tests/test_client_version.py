@@ -157,3 +157,67 @@ def test_login_enforces_version(monkeypatch, tmp_path):
         assert resp.status_code == 426
         assert "已停用" in resp.json()["detail"]
 
+
+def test_admin_version_page(monkeypatch, tmp_path):
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+    from app.database import Base
+    from app.admin_panel import setup_admin
+    from app.deps import get_db
+
+    db_path = tmp_path / "test_admin.db"
+    engine = create_engine(f"sqlite:///{db_path.as_posix()}")
+    Base.metadata.create_all(engine)
+    Session = sessionmaker(bind=engine)
+
+    monkeypatch.setattr("app.admin_panel.engine", engine)
+    monkeypatch.setattr(settings, "client_releases_dir", str(tmp_path))
+
+    def override_get_db():
+        session = Session()
+        try:
+            yield session
+        finally:
+            session.close()
+
+    app = FastAPI()
+    app.dependency_overrides[get_db] = override_get_db
+    setup_admin(app)
+
+    with TestClient(app, raise_server_exceptions=True) as client:
+        # 登录
+        login = client.post(
+            "/admin/login",
+            data={
+                "username": settings.admin_username,
+                "password": settings.admin_password,
+            },
+            follow_redirects=False,
+        )
+        assert login.status_code == 302
+        resp = client.get("/admin/version")
+        assert resp.status_code == 200
+        assert "版本更新" in resp.text
+
+        # 测试保存 API
+        save_resp = client.post(
+            "/admin/api/version/save",
+            json={
+                "latest": "3.0.0",
+                "min_supported": "3.0.0",
+                "download_url": "https://example.com/3.0.0.exe",
+                "changelog": "测试全员强制更新",
+                "installer": "app-3.0.0.exe",
+            },
+        )
+        assert save_resp.status_code == 200
+        assert save_resp.json()["ok"] is True
+
+        # 保存后再次渲染页面，展示新版本与强更状态
+        resp2 = client.get("/admin/version")
+        assert resp2.status_code == 200
+        assert "v3.0.0" in resp2.text
+        assert "全员强制更新" in resp2.text
+
+
+

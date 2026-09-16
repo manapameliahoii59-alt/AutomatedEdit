@@ -1608,7 +1608,11 @@ def admin_version_page(request: Request, db: Db):
         installer_name=installer_name,
         version_stats=version_stats,
     )
-    return templates.TemplateResponse("admin/version.html", ctx)
+    return templates.TemplateResponse(
+        request,
+        "admin/version.html",
+        ctx,
+    )
 
 
 @router.post("/api/version/save")
