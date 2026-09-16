@@ -42,7 +42,7 @@
       letter-spacing: 0.12em;
       color: #909399;
     }
-    .el-menu { flex: 1; padding: 8px 0; }
+    .el-menu { flex: 1; min-height: 0; overflow-y: auto; padding: 8px 0; }
     .el-menu-item {
       display: block;
       color: #4e4e4e;
@@ -448,6 +448,165 @@
       border-color: #e6a23c;
       color: #fff;
     }
+    /* 全局微型音乐电台 Dock & PJAX 样式 */
+    .admin-radio-dock {
+      margin: 8px 10px 4px;
+      padding: 10px;
+      background: #f8fafc;
+      border: 1px solid #e4e7ed;
+      border-radius: 8px;
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      user-select: none;
+    }
+    .radio-dock-top {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .radio-dock-cover-wrap {
+      width: 38px;
+      height: 38px;
+      border-radius: 50%;
+      overflow: hidden;
+      flex: 0 0 38px;
+      background: #1e222d;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      position: relative;
+      cursor: pointer;
+      box-shadow: 0 2px 6px rgba(0, 0, 0, 0.18);
+      border: 2px solid #363b49;
+    }
+    .admin-radio-dock.is-playing .radio-dock-cover-wrap {
+      animation: radioRotate 12s linear infinite;
+    }
+    .admin-radio-dock.is-paused .radio-dock-cover-wrap {
+      animation-play-state: paused;
+    }
+    @keyframes radioRotate {
+      from { transform: rotate(0deg); }
+      to { transform: rotate(360deg); }
+    }
+    .radio-dock-cover {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+    }
+    .radio-dock-cover-placeholder {
+      font-size: 18px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .radio-dock-info {
+      flex: 1;
+      min-width: 0;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      gap: 2px;
+    }
+    .radio-dock-title {
+      font-size: 12px;
+      font-weight: 600;
+      color: #303133;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .radio-dock-artist {
+      font-size: 11px;
+      color: #909399;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .radio-dock-bar-wrap {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+      cursor: pointer;
+      padding: 2px 0;
+    }
+    .radio-dock-bar-bg {
+      width: 100%;
+      height: 4px;
+      background: #e4e7ed;
+      border-radius: 2px;
+      overflow: hidden;
+    }
+    .radio-dock-bar-fill {
+      height: 100%;
+      background: #409eff;
+      width: 0%;
+      border-radius: 2px;
+      transition: width 0.1s linear;
+    }
+    .radio-dock-time {
+      display: flex;
+      justify-content: space-between;
+      font-size: 10px;
+      color: #909399;
+      font-family: monospace;
+    }
+    .radio-dock-ctrls {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding-top: 2px;
+    }
+    .radio-btn-ctrl {
+      background: none;
+      border: none;
+      cursor: pointer;
+      font-size: 13px;
+      color: #606266;
+      padding: 2px 5px;
+      border-radius: 4px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      transition: all 0.15s;
+    }
+    .radio-btn-ctrl:hover {
+      color: #409eff;
+      background: #ecf5ff;
+    }
+    .radio-btn-play {
+      width: 28px;
+      height: 28px;
+      border-radius: 50%;
+      background: #409eff;
+      border: none;
+      color: #fff;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 11px;
+      box-shadow: 0 2px 6px rgba(64, 158, 255, 0.35);
+      transition: all 0.15s;
+    }
+    .radio-btn-play:hover {
+      background: #79bbff;
+      transform: scale(1.06);
+    }
+    .radio-btn-link {
+      color: #909399;
+      font-size: 13px;
+      text-decoration: none;
+      padding: 2px 5px;
+      border-radius: 4px;
+      transition: all 0.15s;
+    }
+    .radio-btn-link:hover {
+      color: #409eff;
+      background: #ecf5ff;
+    }
     @media (max-width: 900px) {
       .admin-shell { flex-direction: column; }
       .admin-aside { width: 100%; flex: none; }
@@ -475,6 +634,35 @@
         </a>
         {% endfor %}
       </nav>
+      <!-- 全局微型音乐电台 Dock -->
+      <div class="admin-radio-dock" id="adminRadioDock">
+        <div class="radio-dock-top">
+          <div class="radio-dock-cover-wrap" id="radioDockCoverWrap" title="打开音乐电台">
+            <img class="radio-dock-cover" id="radioDockCover" src="/static/radio/default_cover.svg" alt="Cover" style="display:none;" onerror="this.src='/static/radio/default_cover.svg'">
+            <div class="radio-dock-cover-placeholder" id="radioDockCoverPlaceholder">🎵</div>
+          </div>
+          <div class="radio-dock-info">
+            <div class="radio-dock-title" id="radioDockTitle" title="未播放音乐">未播放音乐</div>
+            <div class="radio-dock-artist" id="radioDockArtist">点击电台开始点歌</div>
+          </div>
+        </div>
+        <div class="radio-dock-bar-wrap" id="radioDockBarWrap" title="点击跳转进度">
+          <div class="radio-dock-bar-bg">
+            <div class="radio-dock-bar-fill" id="radioDockBarFill" style="width: 0%;"></div>
+          </div>
+          <div class="radio-dock-time">
+            <span id="radioDockCurrentTime">00:00</span>
+            <span id="radioDockDuration">00:00</span>
+          </div>
+        </div>
+        <div class="radio-dock-ctrls">
+          <button type="button" class="radio-btn-ctrl" id="radioDockPrev" title="上一首">⏮</button>
+          <button type="button" class="radio-btn-play" id="radioDockToggle" title="播放 / 暂停">▶</button>
+          <button type="button" class="radio-btn-ctrl" id="radioDockNext" title="下一首">⏭</button>
+          <button type="button" class="radio-btn-ctrl" id="radioDockMode" title="列表循环">🔁</button>
+          <a href="/admin/radio" class="radio-btn-link" title="进入音乐电台工作台">📻</a>
+        </div>
+      </div>
       <div class="admin-foot"><a href="/admin/logout">退出登录</a></div>
     </aside>
     <main class="admin-main">
@@ -771,6 +959,619 @@
     })();
   </script>
   {% endif %}
+
+  <!-- 全局后台音频播放器（永不销毁，保证切页不断播） -->
+  <audio id="globalAudioPlayer" preload="auto" style="display:none;"></audio>
+
+  <!-- 全局电台控制器与 PJAX 无缝导航引擎 -->
+  <script id="admin-base-script">
+    // 1. 全局弱提示 Toast
+    window.showAdminToast = function (message, type = "success") {
+      let container = document.getElementById("admin-toast-container");
+      if (!container) {
+        container = document.createElement("div");
+        container.id = "admin-toast-container";
+        container.style.cssText = "position:fixed;top:24px;left:50%;transform:translateX(-50%);z-index:999999;display:flex;flex-direction:column;gap:10px;pointer-events:none;";
+        document.body.appendChild(container);
+      }
+      const bgMap = { success: "#f0f9eb", error: "#fef0f0", warning: "#fdf6ec", info: "#f4f4f5" };
+      const colorMap = { success: "#67c23a", error: "#f56c6c", warning: "#e6a23c", info: "#909399" };
+      const iconMap = { success: "✓", error: "✕", warning: "!", info: "ℹ" };
+
+      const bg = bgMap[type] || bgMap.info;
+      const color = colorMap[type] || colorMap.info;
+      const icon = iconMap[type] || "ℹ";
+
+      const toast = document.createElement("div");
+      toast.style.cssText = `
+        display:inline-flex;align-items:center;gap:8px;padding:9px 18px;border-radius:6px;
+        background:${bg};color:${color};border:1px solid ${color}33;
+        box-shadow:0 4px 14px rgba(0,0,0,0.08);font-size:13px;font-weight:500;
+        pointer-events:auto;opacity:0;transform:translateY(-8px);
+        transition:opacity 0.22s ease, transform 0.22s ease;
+      `;
+      toast.innerHTML = `<span style="font-weight:bold;font-size:14px;">${icon}</span><span>${message}</span>`;
+      container.appendChild(toast);
+
+      requestAnimationFrame(() => {
+        toast.style.opacity = "1";
+        toast.style.transform = "translateY(0)";
+      });
+      setTimeout(() => {
+        toast.style.opacity = "0";
+        toast.style.transform = "translateY(-8px)";
+        setTimeout(() => toast.remove(), 250);
+      }, 2600);
+    };
+
+    // 2. 全局音乐电台播放器控制器 (RadioPlayer)
+    window.RadioPlayer = {
+      audio: null,
+      playlist: [],
+      currentIndex: -1,
+      currentTrack: null,
+      mode: "sequence", // "sequence" | "loop" | "random"
+      isPlaying: false,
+      hasReportedCurrentPlay: false,
+
+      init() {
+        if (this._initialized) return;
+        this._initialized = true;
+        this.audio = document.getElementById("globalAudioPlayer");
+        if (!this.audio) return;
+
+        this.audio.addEventListener("play", () => {
+          this.isPlaying = true;
+          this.updateUI();
+          this.broadcast("play");
+        });
+        this.audio.addEventListener("pause", () => {
+          this.isPlaying = false;
+          this.updateUI();
+          this.broadcast("pause");
+        });
+        this.audio.addEventListener("timeupdate", () => {
+          this.updateProgress();
+          this.broadcast("timeupdate");
+          if (this.currentTrack && !this.hasReportedCurrentPlay && this.audio.currentTime >= 5) {
+            this.hasReportedCurrentPlay = true;
+            this.reportPlay(this.currentTrack.id);
+          }
+          this.throttleSaveState();
+        });
+        this.audio.addEventListener("ended", () => {
+          this.onTrackEnded();
+        });
+        this.audio.addEventListener("error", (e) => {
+          console.warn("音频播放异常:", e);
+          this.isPlaying = false;
+          this.updateUI();
+          this.broadcast("error");
+        });
+
+        this.bindDockEvents();
+        this.restoreState();
+
+        // 尝试加载远程曲库列表补全播放列表
+        this.fetchPlaylistIfEmpty();
+      },
+
+      bindDockEvents() {
+        const toggleBtn = document.getElementById("radioDockToggle");
+        const prevBtn = document.getElementById("radioDockPrev");
+        const nextBtn = document.getElementById("radioDockNext");
+        const modeBtn = document.getElementById("radioDockMode");
+        const barWrap = document.getElementById("radioDockBarWrap");
+        const coverWrap = document.getElementById("radioDockCoverWrap");
+
+        if (toggleBtn) toggleBtn.onclick = () => this.togglePlay();
+        if (prevBtn) prevBtn.onclick = () => this.prev();
+        if (nextBtn) nextBtn.onclick = () => this.next();
+        if (modeBtn) modeBtn.onclick = () => this.toggleMode();
+        if (coverWrap) {
+          coverWrap.onclick = () => {
+            if (window.pjaxNavigate) {
+              window.pjaxNavigate("/admin/radio");
+            } else {
+              window.location.href = "/admin/radio";
+            }
+          };
+        }
+        if (barWrap) {
+          barWrap.onclick = (e) => {
+            if (!this.audio || !this.audio.duration) return;
+            const rect = barWrap.getBoundingClientRect();
+            const ratio = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+            this.audio.currentTime = ratio * this.audio.duration;
+          };
+        }
+      },
+
+      async fetchPlaylistIfEmpty() {
+        if (this.playlist && this.playlist.length > 0) return;
+        try {
+          const resp = await fetch("/admin/api/radio/tracks");
+          if (resp.ok) {
+            const data = await resp.json();
+            if (data.tracks && Array.isArray(data.tracks)) {
+              this.playlist = data.tracks;
+              if (!this.currentTrack && this.playlist.length > 0) {
+                this.currentTrack = this.playlist[0];
+                this.currentIndex = 0;
+                this.updateUI();
+              }
+            }
+          }
+        } catch (e) {}
+      },
+
+      loadPlaylist(tracks) {
+        if (Array.isArray(tracks)) {
+          this.playlist = tracks;
+          this.saveState();
+          this.broadcast("playlistchange");
+        }
+      },
+
+      playTrack(track, newPlaylist) {
+        if (newPlaylist && Array.isArray(newPlaylist)) {
+          this.playlist = newPlaylist;
+        }
+        if (!track) return;
+        this.currentTrack = track;
+        this.currentIndex = this.playlist.findIndex((t) => t.id === track.id);
+        this.hasReportedCurrentPlay = false;
+
+        if (!this.audio) return;
+        this.audio.src = track.audio_url;
+        this.audio.play().then(() => {
+          this.isPlaying = true;
+          this.updateUI();
+          this.broadcast("trackchange");
+          this.saveState();
+        }).catch((err) => {
+          console.warn("自动播放受限或发生错误:", err);
+          this.isPlaying = false;
+          this.updateUI();
+          this.broadcast("trackchange");
+        });
+      },
+
+      playIndex(index) {
+        if (index >= 0 && index < this.playlist.length) {
+          this.playTrack(this.playlist[index]);
+        }
+      },
+
+      togglePlay() {
+        if (!this.audio) return;
+        if (!this.currentTrack && this.playlist.length > 0) {
+          this.playTrack(this.playlist[0]);
+          return;
+        }
+        if (!this.audio.src && this.currentTrack) {
+          this.audio.src = this.currentTrack.audio_url;
+        }
+        if (this.audio.paused) {
+          this.audio.play().catch((e) => console.warn(e));
+        } else {
+          this.audio.pause();
+        }
+      },
+
+      play() {
+        if (this.audio && this.audio.paused) {
+          if (!this.audio.src && this.currentTrack) {
+            this.audio.src = this.currentTrack.audio_url;
+          }
+          this.audio.play().catch((e) => console.warn(e));
+        }
+      },
+
+      pause() {
+        if (this.audio && !this.audio.paused) {
+          this.audio.pause();
+        }
+      },
+
+      next() {
+        if (!this.playlist.length) return;
+        if (this.mode === "random") {
+          let nextIdx = Math.floor(Math.random() * this.playlist.length);
+          if (this.playlist.length > 1 && nextIdx === this.currentIndex) {
+            nextIdx = (nextIdx + 1) % this.playlist.length;
+          }
+          this.playIndex(nextIdx);
+        } else {
+          let nextIdx = this.currentIndex + 1;
+          if (nextIdx >= this.playlist.length) nextIdx = 0;
+          this.playIndex(nextIdx);
+        }
+      },
+
+      prev() {
+        if (!this.playlist.length) return;
+        if (this.mode === "random") {
+          let prevIdx = Math.floor(Math.random() * this.playlist.length);
+          if (this.playlist.length > 1 && prevIdx === this.currentIndex) {
+            prevIdx = (prevIdx - 1 + this.playlist.length) % this.playlist.length;
+          }
+          this.playIndex(prevIdx);
+        } else {
+          let prevIdx = this.currentIndex - 1;
+          if (prevIdx < 0) prevIdx = this.playlist.length - 1;
+          this.playIndex(prevIdx);
+        }
+      },
+
+      toggleMode() {
+        const modes = ["sequence", "loop", "random"];
+        const nextIdx = (modes.indexOf(this.mode) + 1) % modes.length;
+        this.setMode(modes[nextIdx]);
+      },
+
+      setMode(mode) {
+        this.mode = mode;
+        this.updateUI();
+        this.broadcast("modechange");
+        this.saveState();
+      },
+
+      onTrackEnded() {
+        if (this.mode === "loop") {
+          if (this.audio) {
+            this.audio.currentTime = 0;
+            this.audio.play().catch((e) => console.warn(e));
+          }
+        } else {
+          this.next();
+        }
+      },
+
+      seekTo(seconds) {
+        if (this.audio) {
+          this.audio.currentTime = Math.max(0, Math.min(this.audio.duration || 0, seconds));
+        }
+      },
+
+      setVolume(val) {
+        if (!this.audio) return;
+        const v = Math.max(0, Math.min(1, val));
+        this.audio.volume = v;
+        this.saveState();
+        this.broadcast("volumechange");
+      },
+
+      formatTime(sec) {
+        if (isNaN(sec) || sec < 0) return "00:00";
+        const m = Math.floor(sec / 60);
+        const s = Math.floor(sec % 60);
+        return `${m < 10 ? "0" + m : m}:${s < 10 ? "0" + s : s}`;
+      },
+
+      updateUI() {
+        const dock = document.getElementById("adminRadioDock");
+        if (!dock) return;
+
+        if (this.isPlaying) {
+          dock.classList.add("is-playing");
+          dock.classList.remove("is-paused");
+        } else {
+          dock.classList.remove("is-playing");
+          dock.classList.add("is-paused");
+        }
+
+        const titleEl = document.getElementById("radioDockTitle");
+        const artistEl = document.getElementById("radioDockArtist");
+        const coverEl = document.getElementById("radioDockCover");
+        const placeholderEl = document.getElementById("radioDockCoverPlaceholder");
+        const toggleBtn = document.getElementById("radioDockToggle");
+        const modeBtn = document.getElementById("radioDockMode");
+
+        if (this.currentTrack) {
+          if (titleEl) {
+            titleEl.textContent = this.currentTrack.title;
+            titleEl.title = this.currentTrack.title;
+          }
+          if (artistEl) {
+            artistEl.textContent = this.currentTrack.artist || "电台音乐";
+            artistEl.title = this.currentTrack.artist || "电台音乐";
+          }
+          if (this.currentTrack.cover_url) {
+            if (coverEl) {
+              coverEl.src = this.currentTrack.cover_url;
+              coverEl.style.display = "block";
+            }
+            if (placeholderEl) placeholderEl.style.display = "none";
+          } else {
+            if (coverEl) coverEl.style.display = "none";
+            if (placeholderEl) placeholderEl.style.display = "flex";
+          }
+        } else {
+          if (titleEl) {
+            titleEl.textContent = "未播放音乐";
+            titleEl.title = "暂无歌曲";
+          }
+          if (artistEl) {
+            artistEl.textContent = "点击电台开始点歌";
+            artistEl.title = "";
+          }
+          if (coverEl) coverEl.style.display = "none";
+          if (placeholderEl) placeholderEl.style.display = "flex";
+        }
+
+        if (toggleBtn) {
+          toggleBtn.innerHTML = this.isPlaying ? "❚❚" : "▶";
+          toggleBtn.title = this.isPlaying ? "暂停" : "播放";
+        }
+
+        if (modeBtn) {
+          if (this.mode === "loop") {
+            modeBtn.textContent = "🔂";
+            modeBtn.title = "单曲循环";
+          } else if (this.mode === "random") {
+            modeBtn.textContent = "🔀";
+            modeBtn.title = "随机播放";
+          } else {
+            modeBtn.textContent = "🔁";
+            modeBtn.title = "列表循环";
+          }
+        }
+      },
+
+      updateProgress() {
+        if (!this.audio) return;
+        const cur = this.audio.currentTime || 0;
+        const dur = this.audio.duration || (this.currentTrack ? this.currentTrack.duration : 0) || 0;
+        const pct = dur > 0 ? Math.min(100, (cur / dur) * 100) : 0;
+
+        const fillEl = document.getElementById("radioDockBarFill");
+        const curEl = document.getElementById("radioDockCurrentTime");
+        const durEl = document.getElementById("radioDockDuration");
+
+        if (fillEl) fillEl.style.width = pct + "%";
+        if (curEl) curEl.textContent = this.formatTime(cur);
+        if (durEl) durEl.textContent = this.formatTime(dur);
+      },
+
+      broadcast(eventType = "statechange") {
+        window.dispatchEvent(
+          new CustomEvent("radio:update", {
+            detail: {
+              type: eventType,
+              track: this.currentTrack,
+              isPlaying: this.isPlaying,
+              currentIndex: this.currentIndex,
+              playlist: this.playlist,
+              mode: this.mode,
+              currentTime: this.audio ? this.audio.currentTime : 0,
+              duration: this.audio ? this.audio.duration : 0,
+              volume: this.audio ? this.audio.volume : 0.7,
+            },
+          })
+        );
+      },
+
+      reportPlay(trackId) {
+        if (!trackId) return;
+        fetch(`/admin/api/radio/tracks/${trackId}/play`, { method: "POST" }).catch(() => {});
+      },
+
+      saveState() {
+        try {
+          localStorage.setItem(
+            "admin_radio_state",
+            JSON.stringify({
+              track: this.currentTrack,
+              playlist: this.playlist,
+              currentIndex: this.currentIndex,
+              mode: this.mode,
+              currentTime: this.audio ? this.audio.currentTime : 0,
+              volume: this.audio ? this.audio.volume : 0.7,
+            })
+          );
+        } catch (e) {}
+      },
+
+      _saveTimer: null,
+      throttleSaveState() {
+        if (this._saveTimer) return;
+        this._saveTimer = setTimeout(() => {
+          this._saveTimer = null;
+          this.saveState();
+        }, 2000);
+      },
+
+      restoreState() {
+        try {
+          const raw = localStorage.getItem("admin_radio_state");
+          if (!raw) return;
+          const data = JSON.parse(raw);
+          if (data) {
+            if (Array.isArray(data.playlist)) this.playlist = data.playlist;
+            if (data.mode) this.mode = data.mode;
+            if (data.track) {
+              this.currentTrack = data.track;
+              this.currentIndex = data.currentIndex >= 0 ? data.currentIndex : 0;
+              if (this.audio) {
+                this.audio.src = data.track.audio_url;
+                if (data.currentTime) this.audio.currentTime = data.currentTime;
+                if (typeof data.volume === "number") this.audio.volume = data.volume;
+              }
+            }
+            this.updateUI();
+            this.updateProgress();
+          }
+        } catch (e) {
+          console.warn("恢复电台状态异常:", e);
+        }
+      },
+    };
+
+    // 3. 全局 PJAX 无缝切页拦截器（确保全页面切换时底层音频永不断播）
+    window.initPjaxNavigation = function () {
+      if (window._pjaxInitialized) return;
+      window._pjaxInitialized = true;
+
+      document.addEventListener("click", function (e) {
+        const link = e.target.closest("a");
+        if (!link) return;
+        const href = link.getAttribute("href");
+        if (!href) return;
+
+        if (
+          link.target === "_blank" ||
+          link.hasAttribute("download") ||
+          link.getAttribute("data-no-pjax") === "1" ||
+          href.startsWith("#") ||
+          href.startsWith("javascript:")
+        ) {
+          return;
+        }
+
+        // 仅拦截后台内链，排除登出接口
+        if (href.startsWith("/admin") && !href.startsWith("/admin/logout")) {
+          e.preventDefault();
+          window.pjaxNavigate(href);
+        }
+      });
+
+      // 拦截 GET 类型的搜索/过滤表单
+      document.addEventListener("submit", function (e) {
+        const form = e.target;
+        if (form.method && form.method.toLowerCase() === "get") {
+          const action = form.getAttribute("action") || window.location.pathname;
+          if (action.startsWith("/admin") && !form.getAttribute("data-no-pjax")) {
+            e.preventDefault();
+            const formData = new FormData(form);
+            const params = new URLSearchParams(formData);
+            const targetUrl = action.split("?")[0] + (params.toString() ? "?" + params.toString() : "");
+            window.pjaxNavigate(targetUrl);
+          }
+        }
+      });
+
+      window.addEventListener("popstate", function () {
+        window.pjaxNavigate(window.location.href, false);
+      });
+    };
+
+    window.pjaxNavigate = async function (url, push = true) {
+      let pjaxBar = document.getElementById("pjax-bar");
+      if (!pjaxBar) {
+        pjaxBar = document.createElement("div");
+        pjaxBar.id = "pjax-bar";
+        pjaxBar.style.cssText = "position:fixed;top:0;left:0;height:2px;background:#409eff;z-index:999999;transition:width 0.2s ease, opacity 0.3s ease;width:0%;box-shadow:0 0 8px rgba(64,158,255,0.6);";
+        document.body.appendChild(pjaxBar);
+      }
+      pjaxBar.style.opacity = "1";
+      pjaxBar.style.width = "35%";
+
+      try {
+        const response = await fetch(url, { headers: { "X-Requested-With": "Pjax" } });
+        if (response.redirected && response.url.includes("/login")) {
+          window.location.href = response.url;
+          return;
+        }
+        if (!response.ok) {
+          window.location.href = url;
+          return;
+        }
+
+        const html = await response.text();
+        const parser = new DOMParser();
+        const newDoc = parser.parseFromString(html, "text/html");
+
+        const newMain = newDoc.querySelector(".admin-main");
+        if (!newMain) {
+          window.location.href = url;
+          return;
+        }
+
+        // 更新页面标题
+        if (newDoc.title) {
+          document.title = newDoc.title;
+        }
+
+        // 更新路由历史
+        if (push) {
+          history.pushState({ pjax: true, url }, newDoc.title, url);
+        }
+
+        // 更新侧边栏高亮项
+        const currentPath = new URL(url, window.location.origin).pathname;
+        document.querySelectorAll(".admin-aside .el-menu-item").forEach((item) => {
+          const href = item.getAttribute("href") || "";
+          const itemPath = href.split("?")[0];
+          if (itemPath === currentPath || (itemPath !== "/admin" && currentPath.startsWith(itemPath))) {
+            item.classList.add("is-active");
+          } else {
+            item.classList.remove("is-active");
+          }
+        });
+
+        // 仅置换内容区域，保留播放器及母版
+        const currentMain = document.querySelector(".admin-main");
+        currentMain.innerHTML = newMain.innerHTML;
+        currentMain.scrollTop = 0;
+
+        // 执行新页面的专属脚本
+        const newScripts = [];
+        newMain.querySelectorAll("script").forEach((s) => newScripts.push(s));
+        newDoc.querySelectorAll("body > script").forEach((s) => {
+          const src = s.getAttribute("src") || "";
+          const id = s.id || "";
+          if (
+            id !== "admin-base-script" &&
+            !src.includes("vue.global") &&
+            !src.includes("xe-utils") &&
+            !src.includes("vxe-table")
+          ) {
+            newScripts.push(s);
+          }
+        });
+
+        for (const oldScript of newScripts) {
+          const script = document.createElement("script");
+          Array.from(oldScript.attributes).forEach((attr) => {
+            script.setAttribute(attr.name, attr.value);
+          });
+          script.textContent = oldScript.textContent;
+          document.body.appendChild(script);
+          if (!script.src) {
+            script.remove();
+          }
+        }
+
+        // 完成进度条
+        pjaxBar.style.width = "100%";
+        setTimeout(() => {
+          pjaxBar.style.opacity = "0";
+          setTimeout(() => {
+            pjaxBar.style.width = "0%";
+          }, 300);
+        }, 200);
+
+        // 派发页面加载完成事件
+        window.dispatchEvent(new CustomEvent("pjax:complete", { detail: { url } }));
+      } catch (err) {
+        console.error("PJAX 导航失败，退回普通加载:", err);
+        window.location.href = url;
+      }
+    };
+
+    // 启动控制器
+    if (document.readyState === "loading") {
+      document.addEventListener("DOMContentLoaded", () => {
+        window.RadioPlayer.init();
+        window.initPjaxNavigation();
+      });
+    } else {
+      window.RadioPlayer.init();
+      window.initPjaxNavigation();
+    }
+  </script>
+
   {% block scripts %}{% endblock %}
 </body>
 </html>

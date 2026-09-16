@@ -10,6 +10,7 @@ from sqlalchemy.exc import OperationalError
 
 from app.admin_panel import setup_admin
 from app.database import Base, engine
+import app.models  # noqa: F401
 from app.routers import admin, auth, client
 from app.services.client_version import get_releases_dir, STATIC_MOUNT_PATH
 from app.services.plan_jobs import fail_interrupted_jobs

@@ -277,6 +277,7 @@ def _nav(active: str) -> list[dict[str, str]]:
         ("jobs", "/admin/jobs", "策划任务"),
         ("settings", "/admin/settings", "用户配置"),
         ("errors", "/admin/errors", "错误反馈"),
+        ("radio", "/admin/radio", "音乐电台"),
         ("profile", "/admin/profile", "个人中心"),
     ]
     return [
@@ -1215,6 +1216,221 @@ def profile_theme_reset_upload(request: Request):
     return RedirectResponse("/admin/profile?msg=upload_deleted", status_code=302)
 
 
+# ---------------------------------------------------------------------------
+# 音乐电台与 B 站音源管理
+# ---------------------------------------------------------------------------
+from app.services.radio_service import (
+    parse_bilibili_video,
+    download_bilibili_track,
+    save_uploaded_track,
+    list_radio_tracks,
+    get_radio_track,
+    update_radio_track,
+    delete_radio_track,
+    increment_track_play_count,
+    get_radio_stats,
+    _STATIC_RADIO_DIR,
+)
+
+
+@router.get("/radio", response_class=HTMLResponse)
+def radio_page(
+    request: Request,
+    db: Db,
+    q: str = "",
+    msg: str = "",
+    error: str = "",
+):
+    if not _is_logged_in(request):
+        return RedirectResponse("/admin/login", status_code=302)
+    tracks = list_radio_tracks(db, q=q)
+    stats = get_radio_stats(db)
+    return templates.TemplateResponse(
+        request,
+        "admin/radio.html",
+        _ctx(
+            request,
+            active="radio",
+            db=db,
+            tracks=tracks,
+            stats=stats,
+            q=q,
+            msg=msg,
+            error=error,
+        ),
+    )
+
+
+@router.get("/api/radio/tracks")
+def api_radio_tracks(request: Request, db: Db):
+    if not _is_logged_in(request):
+        return JSONResponse({"detail": "未登录"}, status_code=401)
+    tracks = list_radio_tracks(db)
+    return {
+        "tracks": [
+            {
+                "id": t.id,
+                "title": t.title,
+                "artist": t.artist,
+                "duration": t.duration,
+                "cover_url": t.cover_url,
+                "audio_url": t.audio_url,
+                "source_type": t.source_type,
+                "source_url": t.source_url,
+                "source_id": t.source_id,
+                "file_size": t.file_size,
+                "play_count": t.play_count,
+                "created_at": t.created_at.strftime("%Y-%m-%d %H:%M") if t.created_at else "",
+            }
+            for t in tracks
+        ]
+    }
+
+
+@router.post("/api/radio/bilibili/parse")
+async def api_radio_bilibili_parse(request: Request):
+    if not _is_logged_in(request):
+        return JSONResponse({"ok": False, "error": "未登录"}, status_code=401)
+    try:
+        data = await request.json()
+    except Exception:
+        data = {}
+    url = (data.get("url") or "").strip()
+    if not url:
+        return JSONResponse({"ok": False, "error": "请输入有效的 B 站视频链接或 BV 号！"})
+    try:
+        info = await parse_bilibili_video(url)
+        return {"ok": True, "data": info}
+    except Exception as e:
+        logger.warning("B站链接解析失败: %s", e)
+        return JSONResponse({"ok": False, "error": str(e)})
+
+
+@router.post("/api/radio/bilibili/download")
+async def api_radio_bilibili_download(request: Request, db: Db):
+    if not _is_logged_in(request):
+        return JSONResponse({"ok": False, "error": "未登录"}, status_code=401)
+    try:
+        data = await request.json()
+    except Exception:
+        data = {}
+    url = (data.get("url") or "").strip()
+    custom_title = (data.get("title") or "").strip() or None
+    custom_artist = (data.get("artist") or "").strip() or None
+    cid = data.get("cid")
+    if cid:
+        try:
+            cid = int(cid)
+        except (TypeError, ValueError):
+            cid = None
+
+    if not url:
+        return JSONResponse({"ok": False, "error": "缺少 B 站链接参数！"})
+    try:
+        track = await download_bilibili_track(
+            url,
+            db,
+            custom_title=custom_title,
+            custom_artist=custom_artist,
+            cid_override=cid,
+        )
+        return {
+            "ok": True,
+            "track": {
+                "id": track.id,
+                "title": track.title,
+                "artist": track.artist,
+                "duration": track.duration,
+                "cover_url": track.cover_url,
+                "audio_url": track.audio_url,
+                "source_type": track.source_type,
+                "source_url": track.source_url,
+                "source_id": track.source_id,
+                "file_size": track.file_size,
+                "play_count": track.play_count,
+            },
+        }
+    except Exception as e:
+        logger.exception("B站音频下载入库失败: %s", e)
+        return JSONResponse({"ok": False, "error": str(e)})
+
+
+@router.post("/api/radio/upload")
+async def api_radio_upload(
+    request: Request,
+    db: Db,
+    file: UploadFile = File(...),
+    title: Annotated[str, Form()] = "",
+    artist: Annotated[str, Form()] = "",
+):
+    if not _is_logged_in(request):
+        return JSONResponse({"ok": False, "error": "未登录"}, status_code=401)
+    try:
+        content = await file.read()
+        if not content:
+            return JSONResponse({"ok": False, "error": "上传的文件内容为空！"})
+        if len(content) > 50 * 1024 * 1024:
+            return JSONResponse({"ok": False, "error": "文件过大，单首音频请控制在 50MB 以内！"})
+        track = await save_uploaded_track(
+            content,
+            file.filename or "unknown.mp3",
+            db,
+            custom_title=title or None,
+            custom_artist=artist or None,
+        )
+        return {
+            "ok": True,
+            "track": {
+                "id": track.id,
+                "title": track.title,
+                "artist": track.artist,
+                "duration": track.duration,
+                "cover_url": track.cover_url,
+                "audio_url": track.audio_url,
+                "source_type": track.source_type,
+                "source_id": track.source_id,
+                "file_size": track.file_size,
+            },
+        }
+    except Exception as e:
+        logger.exception("本地音频上传入库失败: %s", e)
+        return JSONResponse({"ok": False, "error": str(e)})
+
+
+@router.post("/api/radio/tracks/{track_id}/update")
+async def api_radio_track_update(request: Request, track_id: int, db: Db):
+    if not _is_logged_in(request):
+        return JSONResponse({"ok": False, "error": "未登录"}, status_code=401)
+    try:
+        data = await request.json()
+    except Exception:
+        data = {}
+    title = (data.get("title") or "").strip()
+    artist = (data.get("artist") or "").strip()
+    track = update_radio_track(track_id, title, artist, db)
+    if not track:
+        return JSONResponse({"ok": False, "error": "曲目不存在"}, status_code=404)
+    return {"ok": True}
+
+
+@router.post("/api/radio/tracks/{track_id}/delete")
+def api_radio_track_delete(request: Request, track_id: int, db: Db):
+    if not _is_logged_in(request):
+        return JSONResponse({"ok": False, "error": "未登录"}, status_code=401)
+    success = delete_radio_track(track_id, db)
+    if not success:
+        return JSONResponse({"ok": False, "error": "曲目不存在或删除失败"}, status_code=404)
+    return {"ok": True}
+
+
+@router.post("/api/radio/tracks/{track_id}/play")
+def api_radio_track_play(request: Request, track_id: int, db: Db):
+    if not _is_logged_in(request):
+        return JSONResponse({"ok": False}, status_code=401)
+    increment_track_play_count(track_id, db)
+    return {"ok": True}
+
+
 def setup_admin(app: Starlette):
     """挂载手写后台，并处理未登录跳转。"""
 
@@ -1234,4 +1450,13 @@ def setup_admin(app: Starlette):
             StaticFiles(directory=str(_STATIC_DIR)),
             name="admin-static",
         )
+    _STATIC_RADIO_DIR.mkdir(parents=True, exist_ok=True)
+    (_STATIC_RADIO_DIR / "tracks").mkdir(parents=True, exist_ok=True)
+    (_STATIC_RADIO_DIR / "covers").mkdir(parents=True, exist_ok=True)
+    app.mount(
+        "/static/radio",
+        StaticFiles(directory=str(_STATIC_RADIO_DIR)),
+        name="radio-static",
+    )
     return router
+

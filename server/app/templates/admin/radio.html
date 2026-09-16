@@ -1,0 +1,1450 @@
+{% extends "admin/base.html" %}
+{% block title %}音乐电台 · {{ app_name }}{% endblock %}
+
+{% block body %}
+<style>
+  .radio-page-wrap {
+    max-width: 1400px;
+    width: 100%;
+    margin: 0 auto;
+    display: flex;
+    flex-direction: column;
+    gap: 18px;
+    padding-bottom: 30px;
+  }
+  /* 顶部状态统计条 */
+  .radio-stats-row {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 16px;
+  }
+  .radio-stat-card {
+    background: #fff;
+    border: 1px solid #ebeef5;
+    border-radius: 8px;
+    padding: 16px 20px;
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.03);
+    transition: transform 0.2s, box-shadow 0.2s;
+  }
+  .radio-stat-card:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.06);
+  }
+  .stat-icon {
+    width: 44px;
+    height: 44px;
+    border-radius: 10px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 22px;
+  }
+  .stat-val {
+    font-size: 22px;
+    font-weight: 700;
+    color: #303133;
+    line-height: 1.2;
+  }
+  .stat-lbl {
+    font-size: 12px;
+    color: #909399;
+    margin-top: 3px;
+  }
+
+  /* 核心分栏区域 */
+  .radio-stage-grid {
+    display: grid;
+    grid-template-columns: 1.15fr 0.85fr;
+    gap: 18px;
+  }
+  .radio-card {
+    background: #fff;
+    border: 1px solid #ebeef5;
+    border-radius: 8px;
+    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.03);
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+  }
+  .radio-card-head {
+    padding: 14px 20px;
+    border-bottom: 1px solid #f0f2f5;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    background: #fafbfc;
+  }
+  .radio-card-title {
+    font-size: 15px;
+    font-weight: 650;
+    color: #303133;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin: 0;
+  }
+  .radio-card-body {
+    padding: 20px;
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+  }
+
+  /* B站扒取模块 */
+  .extractor-input-box {
+    display: flex;
+    gap: 10px;
+  }
+  .extractor-input-box .el-input {
+    flex: 1;
+  }
+  .bili-tip {
+    font-size: 12px;
+    color: #909399;
+    line-height: 1.5;
+    background: #f8fafc;
+    border: 1px dashed #dcdfe6;
+    padding: 10px 14px;
+    border-radius: 6px;
+  }
+  .bili-tip strong {
+    color: #409eff;
+  }
+
+  /* 解析结果预览卡片 */
+  .preview-card {
+    display: none;
+    border: 1px solid #e4e7ed;
+    border-radius: 8px;
+    background: #fafcff;
+    padding: 16px;
+    gap: 16px;
+    animation: fadeIn 0.25s ease-out;
+  }
+  .preview-card.is-visible {
+    display: flex;
+  }
+  .preview-cover-box {
+    width: 120px;
+    height: 80px;
+    border-radius: 6px;
+    overflow: hidden;
+    background: #252830;
+    flex: 0 0 120px;
+    position: relative;
+    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.1);
+  }
+  .preview-cover-box img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+  }
+  .preview-duration-badge {
+    position: absolute;
+    bottom: 4px;
+    right: 4px;
+    background: rgba(0, 0, 0, 0.7);
+    color: #fff;
+    font-size: 10px;
+    padding: 1px 4px;
+    border-radius: 3px;
+    font-family: monospace;
+  }
+  .preview-form {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+  .preview-form-row {
+    display: flex;
+    gap: 12px;
+  }
+  .preview-form-row .lbl {
+    font-size: 12px;
+    color: #606266;
+    width: 44px;
+    line-height: 32px;
+    flex: 0 0 44px;
+  }
+  .preview-actions {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-top: 4px;
+  }
+
+  /* 黑胶唱机播放台 */
+  .turntable-container {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 10px 0;
+    position: relative;
+  }
+  .turntable-wrapper {
+    position: relative;
+    width: 180px;
+    height: 180px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .vinyl-disc {
+    width: 170px;
+    height: 170px;
+    border-radius: 50%;
+    background: radial-gradient(circle, #2a2d36 0%, #15171c 65%, #0d0e12 100%);
+    box-shadow: 0 6px 18px rgba(0, 0, 0, 0.25), inset 0 0 0 2px #383c48, inset 0 0 0 8px #1f2127, inset 0 0 0 16px #292d37;
+    position: relative;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: transform 0.4s ease;
+  }
+  .stage-playing .vinyl-disc {
+    animation: radioRotate 10s linear infinite;
+  }
+  .stage-paused .vinyl-disc {
+    animation-play-state: paused;
+  }
+  .vinyl-center-art {
+    width: 76px;
+    height: 76px;
+    border-radius: 50%;
+    overflow: hidden;
+    border: 3px solid #fff;
+    box-shadow: 0 0 8px rgba(0, 0, 0, 0.3);
+    position: relative;
+    background: #409eff;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .vinyl-center-art img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+  }
+  .vinyl-center-hole {
+    position: absolute;
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    background: #0d0e12;
+    border: 2px solid #fff;
+    z-index: 2;
+  }
+  .turntable-arm {
+    position: absolute;
+    top: 4px;
+    right: 18px;
+    width: 44px;
+    height: 90px;
+    transform-origin: 36px 8px;
+    transform: rotate(0deg);
+    transition: transform 0.5s cubic-bezier(0.4, 0, 0.2, 1);
+    pointer-events: none;
+    z-index: 5;
+  }
+  .stage-playing .turntable-arm {
+    transform: rotate(25deg);
+  }
+
+  /* 播放台控制器 */
+  .stage-info {
+    text-align: center;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    padding: 0 10px;
+  }
+  .stage-track-title {
+    font-size: 16px;
+    font-weight: 700;
+    color: #303133;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .stage-track-meta {
+    font-size: 13px;
+    color: #909399;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+  }
+  .stage-source-tag {
+    font-size: 11px;
+    padding: 1px 6px;
+    border-radius: 3px;
+    background: #f0f2f5;
+    color: #606266;
+  }
+  .stage-source-tag.is-bili {
+    background: #ffecf2;
+    color: #fb7299;
+  }
+
+  /* 进度条与时间 */
+  .stage-progress-wrap {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    margin: 4px 10px 0;
+  }
+  .stage-progress-bar {
+    width: 100%;
+    height: 6px;
+    background: #e4e7ed;
+    border-radius: 3px;
+    position: relative;
+    cursor: pointer;
+    overflow: hidden;
+  }
+  .stage-progress-fill {
+    height: 100%;
+    background: #409eff;
+    width: 0%;
+    border-radius: 3px;
+    transition: width 0.1s linear;
+  }
+  .stage-time-row {
+    display: flex;
+    justify-content: space-between;
+    font-size: 11px;
+    color: #909399;
+    font-family: monospace;
+  }
+
+  /* 播放控制条 */
+  .stage-ctrl-row {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 16px;
+    margin-top: 4px;
+  }
+  .btn-round-ctrl {
+    background: #f4f6f8;
+    border: 1px solid #dcdfe6;
+    color: #606266;
+    cursor: pointer;
+    border-radius: 50%;
+    width: 36px;
+    height: 36px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 14px;
+    transition: all 0.15s;
+  }
+  .btn-round-ctrl:hover {
+    background: #ecf5ff;
+    color: #409eff;
+    border-color: #c6e2ff;
+  }
+  .btn-play-large {
+    width: 46px;
+    height: 46px;
+    border-radius: 50%;
+    background: #409eff;
+    color: #fff;
+    border: none;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 16px;
+    box-shadow: 0 4px 12px rgba(64, 158, 255, 0.35);
+    transition: all 0.15s;
+  }
+  .btn-play-large:hover {
+    background: #79bbff;
+    transform: scale(1.06);
+  }
+
+  /* 音量滑块 */
+  .stage-vol-row {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    margin-top: 2px;
+  }
+  .vol-slider {
+    width: 100px;
+    accent-color: #409eff;
+    cursor: pointer;
+  }
+
+  /* 曲库列表表格 */
+  .radio-table-card {
+    background: #fff;
+    border: 1px solid #ebeef5;
+    border-radius: 8px;
+    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.03);
+    overflow: hidden;
+  }
+  .radio-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13px;
+  }
+  .radio-table th {
+    background: #fafbfc;
+    color: #606266;
+    font-weight: 600;
+    text-align: left;
+    padding: 12px 14px;
+    border-bottom: 1px solid #ebeef5;
+  }
+  .radio-table td {
+    padding: 12px 14px;
+    border-bottom: 1px solid #f0f2f5;
+    color: #303133;
+    vertical-align: middle;
+  }
+  .radio-table tr:hover td {
+    background: #fbfcfe;
+  }
+  .radio-table tr.is-playing-row td {
+    background: #f0f7ff !important;
+  }
+  .track-cell-cover {
+    width: 44px;
+    height: 44px;
+    border-radius: 6px;
+    overflow: hidden;
+    position: relative;
+    background: #252830;
+    cursor: pointer;
+    flex: 0 0 44px;
+    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.1);
+  }
+  .track-cell-cover img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+  }
+  .track-cell-cover .play-overlay {
+    position: absolute;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.35);
+    color: #fff;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 14px;
+    opacity: 0;
+    transition: opacity 0.15s;
+  }
+  .track-cell-cover:hover .play-overlay {
+    opacity: 1;
+  }
+  .playing-wave-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    margin-left: 6px;
+    color: #409eff;
+    font-size: 11px;
+    font-weight: 600;
+  }
+
+  /* 弹窗通用样式 */
+  .admin-modal-mask {
+    display: none;
+    position: fixed;
+    inset: 0;
+    z-index: 2200;
+    background: rgba(0, 0, 0, 0.45);
+    align-items: center;
+    justify-content: center;
+    padding: 20px;
+    backdrop-filter: blur(2px);
+  }
+  .admin-modal-mask.is-open {
+    display: flex;
+  }
+  .admin-modal-dialog {
+    width: min(540px, 94vw);
+    background: #fff;
+    border-radius: 8px;
+    box-shadow: 0 16px 40px rgba(0, 0, 0, 0.2);
+    overflow: hidden;
+    animation: fadeIn 0.18s ease-out;
+  }
+  .admin-modal-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 16px 20px;
+    border-bottom: 1px solid #ebeef5;
+  }
+  .admin-modal-title {
+    margin: 0;
+    font-size: 16px;
+    font-weight: 650;
+    color: #303133;
+  }
+  .admin-modal-body {
+    padding: 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+  }
+  .admin-modal-foot {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 10px;
+    padding: 12px 20px;
+    border-top: 1px solid #ebeef5;
+    background: #fafbfc;
+  }
+
+  /* 上传拖拽区域 */
+  .upload-dropzone {
+    border: 2px dashed #dcdfe6;
+    border-radius: 8px;
+    padding: 24px;
+    text-align: center;
+    background: #fafbfc;
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+  .upload-dropzone:hover, .upload-dropzone.is-dragover {
+    border-color: #409eff;
+    background: #f5f9ff;
+  }
+  .upload-dropzone-icon {
+    font-size: 32px;
+    color: #409eff;
+    margin-bottom: 6px;
+  }
+
+  @keyframes fadeIn {
+    from { opacity: 0; transform: translateY(-6px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+  @media (max-width: 900px) {
+    .radio-stats-row { grid-template-columns: 1fr 1fr; }
+    .radio-stage-grid { grid-template-columns: 1fr; }
+    .preview-card { flex-direction: column; }
+    .preview-cover-box { width: 100%; height: 140px; }
+  }
+</style>
+
+<div class="radio-page-wrap">
+  <!-- 头部与快捷操作 -->
+  <div class="head" style="margin-bottom: 4px;">
+    <div>
+      <h1 style="display: flex; align-items: center; gap: 8px;">
+        <span>📻 音乐电台</span>
+        <span class="tag tag-ok" style="font-size: 12px; font-weight: normal;">全页面无缝播放已就绪</span>
+      </h1>
+      <p>B站音源高音质纯音频提取入库 · 独立曲库管理 · 切换后台任何页面音乐永不断播</p>
+    </div>
+    <div style="display: flex; gap: 10px; align-items: center;">
+      <button type="button" class="el-button" id="btnOpenUploadModal">
+        <span>☁️ 上传本地音频</span>
+      </button>
+      <button type="button" class="el-button el-button--primary" id="btnRandomPlay">
+        <span>🔀 随机播放电台</span>
+      </button>
+    </div>
+  </div>
+
+  <!-- 统计指标卡片 -->
+  <div class="radio-stats-row">
+    <div class="radio-stat-card">
+      <div class="stat-icon" style="background: #ecf5ff; color: #409eff;">🎵</div>
+      <div>
+        <div class="stat-val" id="statTotalTracks">{{ stats.total_tracks }}</div>
+        <div class="stat-lbl">曲库总曲目 (首)</div>
+      </div>
+    </div>
+    <div class="radio-stat-card">
+      <div class="stat-icon" style="background: #ffecf2; color: #fb7299;">📺</div>
+      <div>
+        <div class="stat-val" id="statBiliTracks">{{ stats.bilibili_tracks }}</div>
+        <div class="stat-lbl">B站音源扒取 (首)</div>
+      </div>
+    </div>
+    <div class="radio-stat-card">
+      <div class="stat-icon" style="background: #f0f9eb; color: #67c23a;">💻</div>
+      <div>
+        <div class="stat-val" id="statUploadTracks">{{ stats.upload_tracks }}</div>
+        <div class="stat-lbl">本地手工上传 (首)</div>
+      </div>
+    </div>
+    <div class="radio-stat-card">
+      <div class="stat-icon" style="background: #fdf6ec; color: #e6a23c;">🎧</div>
+      <div>
+        <div class="stat-val" id="statTotalPlays">{{ stats.total_plays }}</div>
+        <div class="stat-lbl">总累计播放 (次)</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 主体工作台：左侧 B站音源提取 + 右侧黑胶唱机播放台 -->
+  <div class="radio-stage-grid">
+    <!-- 模块 A：B 站音源在线提取入库 -->
+    <div class="radio-card">
+      <div class="radio-card-head">
+        <h2 class="radio-card-title">
+          <span style="color: #fb7299;">⚡</span>
+          <span>B 站音源一键提取 & 收录</span>
+        </h2>
+        <span style="font-size: 12px; color: #909399;">提取最高码率 DASH 纯音频流</span>
+      </div>
+      <div class="radio-card-body">
+        <div class="extractor-input-box">
+          <div class="el-input">
+            <div class="el-input__wrapper">
+              <input
+                class="el-input__inner"
+                id="biliUrlInput"
+                placeholder="粘贴 B 站视频网址、短链 (b23.tv) 或 BV 号，如 https://www.bilibili.com/video/BV1xx411c7mD"
+              />
+            </div>
+          </div>
+          <button type="button" class="el-button el-button--primary" id="btnBiliParse">
+            <span id="btnBiliParseText">解析视频</span>
+          </button>
+        </div>
+
+        <div class="bili-tip">
+          💡 <strong>功能说明</strong>：输入 B 站带有音乐、翻唱、歌单或 BGM 的视频链接。系统将自动解析元数据并直接下载纯音频文件保存至服务器，无需耗费本地转码流量。
+        </div>
+
+        <!-- 视频解析预览与编辑入库卡片 -->
+        <div class="preview-card" id="biliPreviewCard">
+          <div class="preview-cover-box">
+            <img id="previewCoverImg" src="" alt="封面" />
+            <div class="preview-duration-badge" id="previewDurationBadge">00:00</div>
+          </div>
+          <div class="preview-form">
+            <div class="preview-form-row">
+              <span class="lbl">歌名:</span>
+              <div class="el-input">
+                <div class="el-input__wrapper">
+                  <input class="el-input__inner" id="previewTitle" placeholder="歌曲标题" />
+                </div>
+              </div>
+            </div>
+            <div class="preview-form-row">
+              <span class="lbl">歌手:</span>
+              <div class="el-input">
+                <div class="el-input__wrapper">
+                  <input class="el-input__inner" id="previewArtist" placeholder="UP主或歌手名" />
+                </div>
+              </div>
+            </div>
+            <div class="preview-form-row" id="previewPartRow" style="display: none;">
+              <span class="lbl">分P:</span>
+              <select class="admin-select" id="previewPartSelect" style="flex: 1;"></select>
+            </div>
+            <div class="preview-actions">
+              <button type="button" class="el-button el-button--primary" id="btnBiliDownload">
+                <span id="btnBiliDownloadText">⬇️ 一键扒取入库</span>
+              </button>
+              <button type="button" class="el-button" id="btnBiliCancel">取消</button>
+              <span id="downloadStatusText" style="font-size: 12px; color: #409eff;"></span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 模块 B：电台音乐播放台 / 黑胶唱机 -->
+    <div class="radio-card" id="turntableCard">
+      <div class="radio-card-head">
+        <h2 class="radio-card-title">
+          <span style="color: #409eff;">💿</span>
+          <span>电台正在播放</span>
+        </h2>
+        <span id="stageModeLabel" style="font-size: 12px; color: #909399;">列表循环</span>
+      </div>
+      <div class="radio-card-body" style="padding-top: 14px;">
+        <!-- 黑胶唱盘视觉区 -->
+        <div class="turntable-container">
+          <div class="turntable-wrapper">
+            <div class="vinyl-disc">
+              <div class="vinyl-center-art">
+                <img id="stageCoverImg" src="/static/radio/default_cover.svg" alt="Album Art" onerror="this.src='/static/radio/default_cover.svg'">
+                <div class="vinyl-center-hole"></div>
+              </div>
+            </div>
+          </div>
+          <!-- 唱臂 -->
+          <svg class="turntable-arm" viewBox="0 0 50 120">
+            <circle cx="36" cy="12" r="10" fill="#717786" stroke="#484d5c" stroke-width="2" />
+            <circle cx="36" cy="12" r="4" fill="#cfd3dc" />
+            <path d="M36 12 L30 75 L18 100 L12 98 L24 73 Z" fill="#b0b5c1" />
+            <rect x="8" y="96" width="12" height="18" rx="2" fill="#2c303b" transform="rotate(22 14 105)" />
+            <circle cx="11" cy="112" r="1.5" fill="#f56c6c" />
+          </svg>
+        </div>
+
+        <!-- 当前歌曲信息 -->
+        <div class="stage-info">
+          <div class="stage-track-title" id="stageTrackTitle">未播放音乐</div>
+          <div class="stage-track-meta">
+            <span id="stageTrackArtist">点击曲库开始畅听</span>
+            <span class="stage-source-tag" id="stageTrackSourceTag" style="display: none;"></span>
+          </div>
+        </div>
+
+        <!-- 进度条 -->
+        <div class="stage-progress-wrap">
+          <div class="stage-progress-bar" id="stageProgressBarWrap">
+            <div class="stage-progress-fill" id="stageProgressFill"></div>
+          </div>
+          <div class="stage-time-row">
+            <span id="stageCurrentTime">00:00</span>
+            <span id="stageDuration">00:00</span>
+          </div>
+        </div>
+
+        <!-- 控制按钮群 -->
+        <div class="stage-ctrl-row">
+          <button type="button" class="btn-round-ctrl" id="stageModeBtn" title="切换播放模式">🔁</button>
+          <button type="button" class="btn-round-ctrl" id="stagePrevBtn" title="上一首">⏮</button>
+          <button type="button" class="btn-play-large" id="stagePlayBtn" title="播放 / 暂停">▶</button>
+          <button type="button" class="btn-round-ctrl" id="stageNextBtn" title="下一首">⏭</button>
+        </div>
+
+        <!-- 音量微调 -->
+        <div class="stage-vol-row">
+          <span style="font-size: 13px; color: #909399;">🔈</span>
+          <input type="range" class="vol-slider" id="stageVolumeSlider" min="0" max="100" value="70" title="调整音量">
+          <span style="font-size: 13px; color: #909399;">🔊</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 模块 C：曲库列表管理表格 -->
+  <div class="radio-table-card">
+    <div class="radio-card-head" style="gap: 14px;">
+      <h2 class="radio-card-title">
+        <span>📋</span>
+        <span>电台曲库列表 (共 {{ tracks|length }} 首)</span>
+      </h2>
+      <form class="search" method="get" action="/admin/radio" style="min-width: 240px;">
+        <div class="el-input">
+          <div class="el-input__wrapper">
+            <input class="el-input__inner" name="q" value="{{ q }}" placeholder="搜索歌曲名 / UP主 / 歌手" />
+          </div>
+        </div>
+        <button class="el-button el-button--primary" type="submit">搜索</button>
+      </form>
+    </div>
+
+    <table class="radio-table" id="tracksTable">
+      <thead>
+        <tr>
+          <th style="width: 50px; text-align: center;">#</th>
+          <th style="width: 60px; text-align: center;">封面</th>
+          <th style="min-width: 220px;">歌曲名称</th>
+          <th style="width: 140px;">歌手 / UP主</th>
+          <th style="width: 80px; text-align: center;">时长</th>
+          <th style="width: 90px; text-align: center;">音源来源</th>
+          <th style="width: 80px; text-align: center;">大小</th>
+          <th style="width: 70px; text-align: center;">播放数</th>
+          <th style="width: 120px; text-align: center;">收录时间</th>
+          <th style="width: 160px; text-align: center;">操作</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for track in tracks %}
+        <tr data-track-id="{{ track.id }}" id="track-row-{{ track.id }}">
+          <td style="text-align: center; color: #909399; font-weight: 500;">{{ loop.index }}</td>
+          <td style="text-align: center;">
+            <div class="track-cell-cover" onclick="playSingleTrack({{ track.id }})">
+              <img src="{{ track.cover_url or '/static/radio/default_cover.svg' }}" alt="封面" onerror="this.src='/static/radio/default_cover.svg'" />
+              <div class="play-overlay">▶</div>
+            </div>
+          </td>
+          <td>
+            <div style="display: flex; align-items: center;">
+              <a href="javascript:void(0)" onclick="playSingleTrack({{ track.id }})" style="font-weight: 600; color: #303133;" class="track-title-link">
+                {{ track.title }}
+              </a>
+              <span class="playing-wave-badge" id="wave-badge-{{ track.id }}" style="display: none;">♫ 播放中</span>
+            </div>
+          </td>
+          <td style="color: #606266;">{{ track.artist }}</td>
+          <td style="text-align: center; font-family: monospace; color: #909399;">
+            {{ "%02d:%02d"|format(track.duration // 60, track.duration % 60) if track.duration else "—" }}
+          </td>
+          <td style="text-align: center;">
+            {% if track.source_type == "bilibili" %}
+            <a href="{{ track.source_url or 'https://www.bilibili.com/video/' ~ track.source_id }}" target="_blank" class="stage-source-tag is-bili" title="点击打开 B 站原视频">
+              B站 {{ track.source_id }} ↗
+            </a>
+            {% else %}
+            <span class="stage-source-tag">本地上传</span>
+            {% endif %}
+          </td>
+          <td style="text-align: center; color: #909399; font-size: 12px;">
+            {{ "%.1f MB"|format(track.file_size / 1048576) if track.file_size else "—" }}
+          </td>
+          <td style="text-align: center; font-weight: 600; color: #409eff;">{{ track.play_count }}</td>
+          <td style="text-align: center; font-size: 12px; color: #909399;">
+            {{ track.created_at.strftime("%Y-%m-%d %H:%M") if track.created_at else "—" }}
+          </td>
+          <td style="text-align: center;">
+            <div style="display: inline-flex; gap: 6px; align-items: center;">
+              <button type="button" class="el-button btn-sm" onclick="playSingleTrack({{ track.id }})" style="padding: 3px 8px; font-size: 12px; height: 26px;">播放</button>
+              <button type="button" class="el-button btn-sm" onclick="openEditModal({{ track.id }}, '{{ track.title|e }}', '{{ track.artist|e }}')" style="padding: 3px 8px; font-size: 12px; height: 26px;">编辑</button>
+              <a href="{{ track.audio_url }}" download="{{ track.title }}.m4a" class="el-button btn-sm" style="padding: 3px 8px; font-size: 12px; height: 26px;">下载</a>
+              <button type="button" class="el-button btn-sm" onclick="deleteTrack({{ track.id }}, '{{ track.title|e }}')" style="padding: 3px 8px; font-size: 12px; height: 26px; color: #f56c6c; border-color: #fde2e2;">删除</button>
+            </div>
+          </td>
+        </tr>
+        {% else %}
+        <tr>
+          <td colspan="10" style="text-align: center; padding: 40px 10px; color: #909399;">
+            <div style="font-size: 32px; margin-bottom: 8px;">📻</div>
+            <div>电台曲库空空如也，在上方输入 B 站音乐视频链接即可一键提取入库！</div>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<!-- 本地音频上传弹窗 -->
+<div class="admin-modal-mask" id="uploadModal">
+  <div class="admin-modal-dialog">
+    <div class="admin-modal-head">
+      <h3 class="admin-modal-title">☁️ 上传本地音频至电台</h3>
+      <button type="button" class="missing-keys-dialog__close" onclick="closeUploadModal()">×</button>
+    </div>
+    <div class="admin-modal-body">
+      <div class="upload-dropzone" id="uploadDropzone" onclick="document.getElementById('uploadFileInput').click()">
+        <div class="upload-dropzone-icon">📁</div>
+        <div style="font-weight: 600; color: #303133; margin-bottom: 4px;">点击选择或拖拽音频文件到此处</div>
+        <div style="font-size: 12px; color: #909399;">支持 MP3, M4A, WAV, FLAC, AAC 等格式，文件需小于 50MB</div>
+        <input type="file" id="uploadFileInput" accept=".mp3,.m4a,.wav,.flac,.aac,.ogg" style="display: none;" />
+        <div id="uploadSelectedFileName" style="margin-top: 10px; font-size: 13px; color: #409eff; font-weight: 600;"></div>
+      </div>
+      <div>
+        <label class="lbl">歌曲标题 (选填):</label>
+        <div class="el-input">
+          <div class="el-input__wrapper">
+            <input class="el-input__inner" id="uploadCustomTitle" placeholder="默认使用文件名" />
+          </div>
+        </div>
+      </div>
+      <div>
+        <label class="lbl">歌手 / 艺术家 (选填):</label>
+        <div class="el-input">
+          <div class="el-input__wrapper">
+            <input class="el-input__inner" id="uploadCustomArtist" placeholder="默认为 本地上传" />
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="admin-modal-foot">
+      <button type="button" class="el-button" onclick="closeUploadModal()">取消</button>
+      <button type="button" class="el-button el-button--primary" id="btnConfirmUpload">确认上传</button>
+    </div>
+  </div>
+</div>
+
+<!-- 歌曲元数据编辑弹窗 -->
+<div class="admin-modal-mask" id="editModal">
+  <div class="admin-modal-dialog">
+    <div class="admin-modal-head">
+      <h3 class="admin-modal-title">✏️ 编辑歌曲信息</h3>
+      <button type="button" class="missing-keys-dialog__close" onclick="closeEditModal()">×</button>
+    </div>
+    <div class="admin-modal-body">
+      <input type="hidden" id="editTrackId" />
+      <div>
+        <label class="lbl">歌曲名称:</label>
+        <div class="el-input">
+          <div class="el-input__wrapper">
+            <input class="el-input__inner" id="editTrackTitle" placeholder="输入歌曲名称" />
+          </div>
+        </div>
+      </div>
+      <div>
+        <label class="lbl">歌手 / UP主:</label>
+        <div class="el-input">
+          <div class="el-input__wrapper">
+            <input class="el-input__inner" id="editTrackArtist" placeholder="输入歌手或UP主" />
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="admin-modal-foot">
+      <button type="button" class="el-button" onclick="closeEditModal()">取消</button>
+      <button type="button" class="el-button el-button--primary" id="btnConfirmEdit">保存修改</button>
+    </div>
+  </div>
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+  (function () {
+    // 原始曲库数据
+    const rawTracks = [
+      {% for t in tracks %}
+      {
+        id: {{ t.id }},
+        title: {{ t.title | tojson }},
+        artist: {{ t.artist | tojson }},
+        duration: {{ t.duration }},
+        cover_url: {{ t.cover_url | tojson }},
+        audio_url: {{ t.audio_url | tojson }},
+        source_type: {{ t.source_type | tojson }},
+        source_url: {{ t.source_url | tojson }},
+        source_id: {{ t.source_id | tojson }},
+        file_size: {{ t.file_size }},
+        play_count: {{ t.play_count }}
+      },
+      {% endfor %}
+    ];
+
+    // 同步给全局控制器播放列表
+    if (window.RadioPlayer) {
+      if (!window.RadioPlayer.playlist || window.RadioPlayer.playlist.length === 0 || rawTracks.length > 0) {
+        window.RadioPlayer.loadPlaylist(rawTracks);
+      }
+    }
+
+    // -------------------------------------------------------------
+    // 1. 黑胶播放台与全局 RadioPlayer 双向绑定
+    // -------------------------------------------------------------
+    const stageCard = document.getElementById("turntableCard");
+    const stageTitle = document.getElementById("stageTrackTitle");
+    const stageArtist = document.getElementById("stageTrackArtist");
+    const stageSourceTag = document.getElementById("stageTrackSourceTag");
+    const stageCoverImg = document.getElementById("stageCoverImg");
+    const stagePlayBtn = document.getElementById("stagePlayBtn");
+    const stagePrevBtn = document.getElementById("stagePrevBtn");
+    const stageNextBtn = document.getElementById("stageNextBtn");
+    const stageModeBtn = document.getElementById("stageModeBtn");
+    const stageModeLabel = document.getElementById("stageModeLabel");
+    const stageProgressBar = document.getElementById("stageProgressBarWrap");
+    const stageProgressFill = document.getElementById("stageProgressFill");
+    const stageCurrentTime = document.getElementById("stageCurrentTime");
+    const stageDuration = document.getElementById("stageDuration");
+    const stageVolumeSlider = document.getElementById("stageVolumeSlider");
+
+    function updateStageUI(detail) {
+      if (!detail) return;
+      const track = detail.track;
+      const isPlaying = detail.isPlaying;
+
+      if (isPlaying) {
+        stageCard.classList.add("stage-playing");
+        stageCard.classList.remove("stage-paused");
+        stagePlayBtn.innerHTML = "❚❚";
+        stagePlayBtn.title = "暂停";
+      } else {
+        stageCard.classList.remove("stage-playing");
+        stageCard.classList.add("stage-paused");
+        stagePlayBtn.innerHTML = "▶";
+        stagePlayBtn.title = "播放";
+      }
+
+      if (track) {
+        stageTitle.textContent = track.title;
+        stageArtist.textContent = track.artist || "电台音乐";
+        if (track.cover_url) {
+          stageCoverImg.src = track.cover_url;
+        } else {
+          stageCoverImg.src = "/static/radio/default_cover.svg";
+        }
+
+        if (track.source_type === "bilibili") {
+          stageSourceTag.style.display = "inline-block";
+          stageSourceTag.className = "stage-source-tag is-bili";
+          stageSourceTag.textContent = "B站音源: " + track.source_id;
+        } else {
+          stageSourceTag.style.display = "inline-block";
+          stageSourceTag.className = "stage-source-tag";
+          stageSourceTag.textContent = "本地音源";
+        }
+      } else {
+        stageTitle.textContent = "未播放音乐";
+        stageArtist.textContent = "点击曲库开始畅听";
+        stageCoverImg.src = "/static/radio/default_cover.svg";
+        stageSourceTag.style.display = "none";
+      }
+
+      // 播放模式
+      if (detail.mode === "loop") {
+        stageModeBtn.textContent = "🔂";
+        stageModeLabel.textContent = "单曲循环";
+      } else if (detail.mode === "random") {
+        stageModeBtn.textContent = "🔀";
+        stageModeLabel.textContent = "随机播放";
+      } else {
+        stageModeBtn.textContent = "🔁";
+        stageModeLabel.textContent = "列表循环";
+      }
+
+      // 更新曲库表格激活样式
+      document.querySelectorAll("#tracksTable tr[data-track-id]").forEach((row) => {
+        const id = parseInt(row.getAttribute("data-track-id"), 10);
+        const wave = document.getElementById("wave-badge-" + id);
+        if (track && id === track.id) {
+          row.classList.add("is-playing-row");
+          if (wave) wave.style.display = isPlaying ? "inline-flex" : "none";
+        } else {
+          row.classList.remove("is-playing-row");
+          if (wave) wave.style.display = "none";
+        }
+      });
+    }
+
+    function updateStageProgress(detail) {
+      if (!detail) return;
+      const cur = detail.currentTime || 0;
+      const dur = detail.duration || 0;
+      const pct = dur > 0 ? Math.min(100, (cur / dur) * 100) : 0;
+      if (stageProgressFill) stageProgressFill.style.width = pct + "%";
+      if (stageCurrentTime && window.RadioPlayer) stageCurrentTime.textContent = window.RadioPlayer.formatTime(cur);
+      if (stageDuration && window.RadioPlayer) stageDuration.textContent = window.RadioPlayer.formatTime(dur);
+    }
+
+    // 监听全局电台事件广播
+    window.addEventListener("radio:update", function (e) {
+      if (e.detail.type === "timeupdate") {
+        updateStageProgress(e.detail);
+      } else {
+        updateStageUI(e.detail);
+        updateStageProgress(e.detail);
+      }
+    });
+
+    // 初始主动拉取全局状态渲染一次
+    if (window.RadioPlayer) {
+      updateStageUI({
+        track: window.RadioPlayer.currentTrack,
+        isPlaying: window.RadioPlayer.isPlaying,
+        mode: window.RadioPlayer.mode,
+      });
+      updateStageProgress({
+        currentTime: window.RadioPlayer.audio ? window.RadioPlayer.audio.currentTime : 0,
+        duration: window.RadioPlayer.audio ? window.RadioPlayer.audio.duration : 0,
+      });
+      if (window.RadioPlayer.audio && stageVolumeSlider) {
+        stageVolumeSlider.value = Math.round(window.RadioPlayer.audio.volume * 100);
+      }
+    }
+
+    // 播放台按钮事件
+    if (stagePlayBtn) stagePlayBtn.onclick = () => window.RadioPlayer && window.RadioPlayer.togglePlay();
+    if (stagePrevBtn) stagePrevBtn.onclick = () => window.RadioPlayer && window.RadioPlayer.prev();
+    if (stageNextBtn) stageNextBtn.onclick = () => window.RadioPlayer && window.RadioPlayer.next();
+    if (stageModeBtn) stageModeBtn.onclick = () => window.RadioPlayer && window.RadioPlayer.toggleMode();
+
+    if (stageProgressBar) {
+      stageProgressBar.onclick = function (e) {
+        if (!window.RadioPlayer || !window.RadioPlayer.audio || !window.RadioPlayer.audio.duration) return;
+        const rect = stageProgressBar.getBoundingClientRect();
+        const ratio = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+        window.RadioPlayer.seekTo(ratio * window.RadioPlayer.audio.duration);
+      };
+    }
+
+    if (stageVolumeSlider) {
+      stageVolumeSlider.oninput = function () {
+        if (window.RadioPlayer) {
+          window.RadioPlayer.setVolume(stageVolumeSlider.value / 100);
+        }
+      };
+    }
+
+    // 顶部快捷随机播放
+    const btnRandomPlay = document.getElementById("btnRandomPlay");
+    if (btnRandomPlay) {
+      btnRandomPlay.onclick = function () {
+        if (window.RadioPlayer) {
+          window.RadioPlayer.setMode("random");
+          window.RadioPlayer.next();
+          window.RadioPlayer.play();
+          window.showAdminToast("已开启电台随机播放 🔀", "success");
+        }
+      };
+    }
+
+    // 播放单曲快捷方法挂载到 window
+    window.playSingleTrack = function (trackId) {
+      const target = rawTracks.find((t) => t.id === trackId);
+      if (target && window.RadioPlayer) {
+        window.RadioPlayer.playTrack(target, rawTracks);
+        window.showAdminToast("正在播放: " + target.title, "success");
+      }
+    };
+
+    // -------------------------------------------------------------
+    // 2. B 站音源在线解析与一键扒取入库
+    // -------------------------------------------------------------
+    let parsedVideoInfo = null;
+    const biliUrlInput = document.getElementById("biliUrlInput");
+    const btnBiliParse = document.getElementById("btnBiliParse");
+    const btnBiliParseText = document.getElementById("btnBiliParseText");
+    const biliPreviewCard = document.getElementById("biliPreviewCard");
+    const previewCoverImg = document.getElementById("previewCoverImg");
+    const previewDurationBadge = document.getElementById("previewDurationBadge");
+    const previewTitle = document.getElementById("previewTitle");
+    const previewArtist = document.getElementById("previewArtist");
+    const previewPartRow = document.getElementById("previewPartRow");
+    const previewPartSelect = document.getElementById("previewPartSelect");
+    const btnBiliDownload = document.getElementById("btnBiliDownload");
+    const btnBiliDownloadText = document.getElementById("btnBiliDownloadText");
+    const btnBiliCancel = document.getElementById("btnBiliCancel");
+    const downloadStatusText = document.getElementById("downloadStatusText");
+
+    // 解析按钮
+    if (btnBiliParse) {
+      btnBiliParse.onclick = async function () {
+        const url = (biliUrlInput.value || "").trim();
+        if (!url) {
+          window.showAdminToast("请先输入 B 站视频链接或 BV 号！", "warning");
+          biliUrlInput.focus();
+          return;
+        }
+
+        btnBiliParse.disabled = true;
+        btnBiliParseText.textContent = "正在解析中...";
+
+        try {
+          const resp = await fetch("/admin/api/radio/bilibili/parse", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ url }),
+          });
+          const res = await resp.json();
+          if (!res.ok) {
+            window.showAdminToast(res.error || "解析失败，请检查链接有效性", "error");
+            return;
+          }
+
+          parsedVideoInfo = res.data;
+          previewTitle.value = parsedVideoInfo.title;
+          previewArtist.value = parsedVideoInfo.artist;
+          previewCoverImg.src = parsedVideoInfo.pic || "/static/radio/default_cover.svg";
+          previewDurationBadge.textContent = window.RadioPlayer ? window.RadioPlayer.formatTime(parsedVideoInfo.duration) : "00:00";
+
+          // 多 P 选择支持
+          previewPartSelect.innerHTML = "";
+          if (parsedVideoInfo.pages && parsedVideoInfo.pages.length > 1) {
+            previewPartRow.style.display = "flex";
+            parsedVideoInfo.pages.forEach((p) => {
+              const opt = document.createElement("option");
+              opt.value = p.cid;
+              opt.textContent = `${p.part} (${window.RadioPlayer ? window.RadioPlayer.formatTime(p.duration) : p.duration + "s"})`;
+              previewPartSelect.appendChild(opt);
+            });
+          } else {
+            previewPartRow.style.display = "none";
+          }
+
+          biliPreviewCard.classList.add("is-visible");
+          window.showAdminToast("视频解析成功，可按需微调歌名后一键扒取入库！", "success");
+        } catch (err) {
+          window.showAdminToast("网络请求异常: " + err, "error");
+        } finally {
+          btnBiliParse.disabled = false;
+          btnBiliParseText.textContent = "解析视频";
+        }
+      };
+    }
+
+    // 取消重置
+    if (btnBiliCancel) {
+      btnBiliCancel.onclick = function () {
+        biliPreviewCard.classList.remove("is-visible");
+        parsedVideoInfo = null;
+      };
+    }
+
+    // 一键扒取入库
+    if (btnBiliDownload) {
+      btnBiliDownload.onclick = async function () {
+        if (!parsedVideoInfo) return;
+        const customTitle = (previewTitle.value || "").trim();
+        const customArtist = (previewArtist.value || "").trim();
+        const cid = previewPartSelect.value ? parseInt(previewPartSelect.value, 10) : parsedVideoInfo.cid;
+
+        btnBiliDownload.disabled = true;
+        btnBiliDownloadText.textContent = "正在扒取下载纯音频...";
+        downloadStatusText.textContent = "正在拉取 DASH 高音质流与封面图并存储...";
+
+        try {
+          const resp = await fetch("/admin/api/radio/bilibili/download", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              url: parsedVideoInfo.canonical_url,
+              title: customTitle,
+              artist: customArtist,
+              cid: cid,
+            }),
+          });
+          const res = await resp.json();
+          if (!res.ok) {
+            window.showAdminToast(res.error || "扒取入库失败", "error");
+            return;
+          }
+
+          window.showAdminToast("🎉 扒取入库成功！已加入电台曲库", "success");
+          biliPreviewCard.classList.remove("is-visible");
+          biliUrlInput.value = "";
+
+          // 自动播放该歌曲
+          if (res.track && window.RadioPlayer) {
+            rawTracks.unshift(res.track);
+            window.RadioPlayer.loadPlaylist(rawTracks);
+            window.RadioPlayer.playTrack(res.track, rawTracks);
+          }
+
+          // 刷新列表（使用 PJAX 确保音乐无感不中断）
+          setTimeout(() => {
+            if (window.pjaxNavigate) {
+              window.pjaxNavigate(window.location.href);
+            } else {
+              window.location.reload();
+            }
+          }, 800);
+        } catch (err) {
+          window.showAdminToast("扒取发生网络异常: " + err, "error");
+        } finally {
+          btnBiliDownload.disabled = false;
+          btnBiliDownloadText.textContent = "⬇️ 一键扒取入库";
+          downloadStatusText.textContent = "";
+        }
+      };
+    }
+
+    // -------------------------------------------------------------
+    // 3. 本地音频上传弹窗逻辑
+    // -------------------------------------------------------------
+    const uploadModal = document.getElementById("uploadModal");
+    const btnOpenUploadModal = document.getElementById("btnOpenUploadModal");
+    const uploadFileInput = document.getElementById("uploadFileInput");
+    const uploadSelectedFileName = document.getElementById("uploadSelectedFileName");
+    const uploadCustomTitle = document.getElementById("uploadCustomTitle");
+    const uploadCustomArtist = document.getElementById("uploadCustomArtist");
+    const btnConfirmUpload = document.getElementById("btnConfirmUpload");
+    const uploadDropzone = document.getElementById("uploadDropzone");
+
+    window.openUploadModal = function () {
+      if (uploadModal) uploadModal.classList.add("is-open");
+    };
+    window.closeUploadModal = function () {
+      if (uploadModal) uploadModal.classList.remove("is-open");
+      uploadFileInput.value = "";
+      uploadSelectedFileName.textContent = "";
+      uploadCustomTitle.value = "";
+      uploadCustomArtist.value = "";
+    };
+
+    if (btnOpenUploadModal) btnOpenUploadModal.onclick = window.openUploadModal;
+
+    if (uploadFileInput) {
+      uploadFileInput.onchange = function () {
+        if (uploadFileInput.files && uploadFileInput.files[0]) {
+          const f = uploadFileInput.files[0];
+          uploadSelectedFileName.textContent = "已选中文件: " + f.name + " (" + (f.size / 1048576).toFixed(2) + " MB)";
+          if (!uploadCustomTitle.value) {
+            uploadCustomTitle.value = f.name.replace(/\.[^/.]+$/, "");
+          }
+        }
+      };
+    }
+
+    // 拖拽上传支持
+    if (uploadDropzone) {
+      uploadDropzone.ondragover = (e) => {
+        e.preventDefault();
+        uploadDropzone.classList.add("is-dragover");
+      };
+      uploadDropzone.ondragleave = () => uploadDropzone.classList.remove("is-dragover");
+      uploadDropzone.ondrop = (e) => {
+        e.preventDefault();
+        uploadDropzone.classList.remove("is-dragover");
+        if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+          uploadFileInput.files = e.dataTransfer.files;
+          const f = e.dataTransfer.files[0];
+          uploadSelectedFileName.textContent = "已拖入文件: " + f.name + " (" + (f.size / 1048576).toFixed(2) + " MB)";
+          if (!uploadCustomTitle.value) {
+            uploadCustomTitle.value = f.name.replace(/\.[^/.]+$/, "");
+          }
+        }
+      };
+    }
+
+    if (btnConfirmUpload) {
+      btnConfirmUpload.onclick = async function () {
+        if (!uploadFileInput.files || !uploadFileInput.files[0]) {
+          window.showAdminToast("请先选择要上传的音频文件！", "warning");
+          return;
+        }
+        const file = uploadFileInput.files[0];
+        const formData = new FormData();
+        formData.append("file", file);
+        formData.append("title", uploadCustomTitle.value.trim());
+        formData.append("artist", uploadCustomArtist.value.trim());
+
+        btnConfirmUpload.disabled = true;
+        btnConfirmUpload.textContent = "正在上传中...";
+
+        try {
+          const resp = await fetch("/admin/api/radio/upload", {
+            method: "POST",
+            body: formData,
+          });
+          const res = await resp.json();
+          if (!res.ok) {
+            window.showAdminToast(res.error || "上传失败", "error");
+            return;
+          }
+
+          window.showAdminToast("🎉 本地音频上传入库成功！", "success");
+          window.closeUploadModal();
+
+          if (res.track && window.RadioPlayer) {
+            rawTracks.unshift(res.track);
+            window.RadioPlayer.loadPlaylist(rawTracks);
+          }
+
+          setTimeout(() => {
+            if (window.pjaxNavigate) {
+              window.pjaxNavigate(window.location.href);
+            } else {
+              window.location.reload();
+            }
+          }, 600);
+        } catch (err) {
+          window.showAdminToast("上传网络异常: " + err, "error");
+        } finally {
+          btnConfirmUpload.disabled = false;
+          btnConfirmUpload.textContent = "确认上传";
+        }
+      };
+    }
+
+    // -------------------------------------------------------------
+    // 4. 歌曲元数据编辑与删除
+    // -------------------------------------------------------------
+    const editModal = document.getElementById("editModal");
+    const editTrackId = document.getElementById("editTrackId");
+    const editTrackTitle = document.getElementById("editTrackTitle");
+    const editTrackArtist = document.getElementById("editTrackArtist");
+    const btnConfirmEdit = document.getElementById("btnConfirmEdit");
+
+    window.openEditModal = function (trackId, title, artist) {
+      editTrackId.value = trackId;
+      editTrackTitle.value = title;
+      editTrackArtist.value = artist;
+      if (editModal) editModal.classList.add("is-open");
+    };
+
+    window.closeEditModal = function () {
+      if (editModal) editModal.classList.remove("is-open");
+    };
+
+    if (btnConfirmEdit) {
+      btnConfirmEdit.onclick = async function () {
+        const id = editTrackId.value;
+        const title = editTrackTitle.value.trim();
+        const artist = editTrackArtist.value.trim();
+
+        if (!title) {
+          window.showAdminToast("歌曲名称不能为空！", "warning");
+          return;
+        }
+
+        try {
+          const resp = await fetch(`/admin/api/radio/tracks/${id}/update`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ title, artist }),
+          });
+          const res = await resp.json();
+          if (!res.ok) {
+            window.showAdminToast(res.error || "保存失败", "error");
+            return;
+          }
+
+          window.showAdminToast("歌曲信息更新成功！", "success");
+          window.closeEditModal();
+
+          // 更新本地数据
+          const item = rawTracks.find((t) => t.id === parseInt(id, 10));
+          if (item) {
+            item.title = title;
+            item.artist = artist;
+            if (window.RadioPlayer && window.RadioPlayer.currentTrack && window.RadioPlayer.currentTrack.id === item.id) {
+              window.RadioPlayer.currentTrack.title = title;
+              window.RadioPlayer.currentTrack.artist = artist;
+              window.RadioPlayer.updateUI();
+              window.RadioPlayer.broadcast();
+            }
+          }
+
+          setTimeout(() => {
+            if (window.pjaxNavigate) {
+              window.pjaxNavigate(window.location.href);
+            } else {
+              window.location.reload();
+            }
+          }, 400);
+        } catch (err) {
+          window.showAdminToast("网络错误: " + err, "error");
+        }
+      };
+    }
+
+    window.deleteTrack = async function (trackId, title) {
+      if (!confirm(`确定要从曲库中永久删除歌曲《${title}》吗？关联的音频文件也将被删除。`)) {
+        return;
+      }
+      try {
+        const resp = await fetch(`/admin/api/radio/tracks/${trackId}/delete`, { method: "POST" });
+        const res = await resp.json();
+        if (!res.ok) {
+          window.showAdminToast(res.error || "删除失败", "error");
+          return;
+        }
+
+        window.showAdminToast(`歌曲《${title}》已从曲库中删除`, "success");
+
+        // 若正在播放被删歌曲，切到下一首
+        if (window.RadioPlayer && window.RadioPlayer.currentTrack && window.RadioPlayer.currentTrack.id === trackId) {
+          window.RadioPlayer.next();
+        }
+
+        setTimeout(() => {
+          if (window.pjaxNavigate) {
+            window.pjaxNavigate(window.location.href);
+          } else {
+            window.location.reload();
+          }
+        }, 400);
+      } catch (err) {
+        window.showAdminToast("删除请求异常: " + err, "error");
+      }
+    };
+  })();
+</script>
+{% endblock %}
