@@ -453,5 +453,96 @@ def test_admin_usage_page_renders_model_and_timing_columns(admin_client):
     assert "总耗时" in resp.text
 
 
+def test_admin_login_page_renders_remember_me_and_theme(admin_client):
+    # 退出当前登录以测试登录页渲染
+    admin_client.get("/admin/logout", follow_redirects=False)
+    resp = admin_client.get("/admin/login")
+    assert resp.status_code == 200
+    assert "记住密码" in resp.text
+    assert 'id="rememberMe"' in resp.text
+    assert 'id="usernameInput"' in resp.text
+    assert 'id="passwordInput"' in resp.text
+    assert "admin_remember_user" in resp.text
+    assert "admin_remember_pwd" in resp.text
+    assert "admin_remember_enabled" in resp.text
+
+
+def test_admin_profile_page_and_theme_settings(admin_client, tmp_path, monkeypatch):
+    import app.admin_panel as ap
+
+    # 使用临时主题文件避免污染生产配置
+    theme_file = tmp_path / "test_theme.json"
+    upload_file = tmp_path / "test_custom_bg.jpg"
+    monkeypatch.setattr(ap, "_THEME_FILE", theme_file)
+    monkeypatch.setattr(ap, "_UPLOADED_BG_FILE", upload_file)
+
+    # 1. 访问个人中心页面
+    resp = admin_client.get("/admin/profile")
+    assert resp.status_code == 200
+    assert "个人中心" in resp.text
+    assert "管理员基本资料" in resp.text
+    assert "登录界面封面与外观设置" in resp.text
+    assert "内置精选渐变" in resp.text
+    assert "网络图片链接" in resp.text
+    assert "本地图片上传" in resp.text
+    assert "实时渲染效果预览" in resp.text
+
+    # 2. 保存预设主题 (蓝莓霜雾)
+    save_resp = admin_client.post(
+        "/admin/profile/theme",
+        data={
+            "mode": "preset",
+            "preset_key": "gradient_frost",
+            "glass": "1",
+        },
+        follow_redirects=False,
+    )
+    assert save_resp.status_code == 302
+    assert "msg=saved" in save_resp.headers.get("location", "")
+
+    # 3. 验证登录页正确应用所选渐变背景及毛玻璃
+    admin_client.get("/admin/logout", follow_redirects=False)
+    login_resp = admin_client.get("/admin/login")
+    assert login_resp.status_code == 200
+    assert "linear-gradient(135deg, #667eea 0%, #764ba2 100%)" in login_resp.text
+    assert "backdrop-filter: blur(20px)" in login_resp.text
+
+    # 4. 重新登录并设置网络图片主题
+    admin_client.post(
+        "/admin/login",
+        data={
+            "username": settings.admin_username,
+            "password": settings.admin_password,
+        },
+        follow_redirects=False,
+    )
+    save_url_resp = admin_client.post(
+        "/admin/profile/theme",
+        data={
+            "mode": "url",
+            "custom_url": "https://images.example.com/login_bg.jpg",
+            "glass": "1",
+        },
+        follow_redirects=False,
+    )
+    assert save_url_resp.status_code == 302
+
+    admin_client.get("/admin/logout", follow_redirects=False)
+    login_url_resp = admin_client.get("/admin/login")
+    assert login_url_resp.status_code == 200
+    assert "https://images.example.com/login_bg.jpg" in login_url_resp.text
+
+
+def test_admin_errors_page_batch_resolve_modal(admin_client):
+    resp = admin_client.get("/admin/errors")
+    assert resp.status_code == 200
+    # 不得含有原生 confirm(' 弹框
+    assert "confirm(" not in resp.text
+    # 含有现代化确认模态框
+    assert 'id="batch-resolve-modal"' in resp.text
+    assert "确认一键处理" in resp.text
+
+
+
 
 

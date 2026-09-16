@@ -11,80 +11,232 @@
       min-height: 100vh;
       display: grid;
       place-items: center;
-      background: #f5f7fa;
+      background-color: #f5f7fa;
+      {{ bg_css | safe }}
       font-family: "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei UI", sans-serif;
+      position: relative;
     }
+    {% if bg_css and "f5f7fa" not in bg_css %}
+    .bg-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.16);
+      backdrop-filter: blur(1px);
+      -webkit-backdrop-filter: blur(1px);
+      z-index: 1;
+      pointer-events: none;
+    }
+    {% endif %}
     .card {
+      position: relative;
+      z-index: 2;
       width: min(420px, 92vw);
+      {% if is_glass and bg_css and "f5f7fa" not in bg_css %}
+      background: rgba(255, 255, 255, 0.88);
+      backdrop-filter: blur(20px);
+      -webkit-backdrop-filter: blur(20px);
+      border: 1px solid rgba(255, 255, 255, 0.65);
+      box-shadow: 0 16px 40px rgba(0, 0, 0, 0.16);
+      {% else %}
       background: #fff;
       border: 1px solid #ebeef5;
-      border-radius: 8px;
-      padding: 32px 28px 28px;
-      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.04);
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.05);
+      {% endif %}
+      border-radius: 12px;
+      padding: 34px 30px 30px;
+      transition: all 0.3s ease;
     }
-    h1 { margin: 0 0 6px; font-size: 22px; }
-    p { margin: 0 0 22px; color: #909399; font-size: 13px; }
+    .brand-header {
+      margin-bottom: 24px;
+      text-align: center;
+    }
+    .brand-logo {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 44px;
+      height: 44px;
+      border-radius: 10px;
+      background: linear-gradient(135deg, #409eff 0%, #3a8ee6 100%);
+      color: #fff;
+      font-size: 20px;
+      font-weight: bold;
+      margin-bottom: 10px;
+      box-shadow: 0 4px 12px rgba(64, 158, 255, 0.3);
+    }
+    h1 { margin: 0 0 4px; font-size: 22px; color: #303133; font-weight: 650; }
+    p { margin: 0; color: #909399; font-size: 13px; }
     .el-form-item { margin-bottom: 16px; }
     .el-input__wrapper {
       display: flex;
       align-items: center;
-      height: 32px;
-      padding: 0 11px;
+      height: 38px;
+      padding: 0 13px;
       border: 1px solid #dcdfe6;
-      border-radius: 4px;
-      background: #fff;
+      border-radius: 6px;
+      background: rgba(255, 255, 255, 0.95);
+      transition: all 0.2s;
+    }
+    .el-input__wrapper:focus-within {
+      border-color: #409eff;
+      box-shadow: 0 0 0 2px rgba(64, 158, 255, 0.18);
     }
     .el-input__inner {
       border: 0;
       outline: none;
       width: 100%;
-      height: 30px;
+      height: 34px;
       font-size: 14px;
+      color: #303133;
+      background: transparent;
+    }
+    .el-input__inner::placeholder {
+      color: #a8abb2;
+    }
+    .remember-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 18px;
+    }
+    .remember-label {
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      font-size: 13px;
+      color: #606266;
+      cursor: pointer;
+      user-select: none;
+    }
+    .remember-label input[type="checkbox"] {
+      width: 15px;
+      height: 15px;
+      cursor: pointer;
+      accent-color: #409eff;
+      margin: 0;
     }
     .el-button {
       display: inline-flex;
       align-items: center;
       justify-content: center;
-      height: 32px;
+      height: 38px;
       padding: 0 16px;
       border: 1px solid #409eff;
-      border-radius: 4px;
+      border-radius: 6px;
       background: #409eff;
       color: #fff;
       cursor: pointer;
       font-size: 14px;
+      font-weight: 500;
+      transition: all 0.2s;
+      width: 100%;
     }
-    .err { color: #f56c6c; font-size: 13px; min-height: 1.2em; margin: 0 0 12px; }
+    .el-button:hover {
+      background: #66b1ff;
+      border-color: #66b1ff;
+      box-shadow: 0 4px 12px rgba(64, 158, 255, 0.3);
+    }
+    .el-button:active {
+      background: #3a8ee6;
+      border-color: #3a8ee6;
+    }
+    .err {
+      color: #f56c6c;
+      font-size: 13px;
+      min-height: 1.2em;
+      margin: 0 0 12px;
+      display: flex;
+      align-items: center;
+      gap: 4px;
+    }
   </style>
 </head>
 <body>
+  {% if bg_css and "f5f7fa" not in bg_css %}
+  <div class="bg-overlay"></div>
+  {% endif %}
   <div class="card">
-    <h1>剪辑助手</h1>
-    <p>管理后台登录</p>
-    <form method="post" action="/admin/login">
+    <div class="brand-header">
+      <div class="brand-logo">✂</div>
+      <h1>剪辑助手</h1>
+      <p>管理后台登录</p>
+    </div>
+    <form id="loginForm" method="post" action="/admin/login">
       <input type="hidden" name="next" value="{{ next }}">
       <div class="el-form-item">
         <div class="el-input">
           <div class="el-input__wrapper">
-            <input class="el-input__inner" name="username" placeholder="管理员账号" autocomplete="username" required>
+            <input id="usernameInput" class="el-input__inner" name="username" placeholder="管理员账号" autocomplete="username" required>
           </div>
         </div>
       </div>
       <div class="el-form-item">
         <div class="el-input">
           <div class="el-input__wrapper">
-            <input class="el-input__inner" name="password" type="password" placeholder="密码" autocomplete="current-password" required>
+            <input id="passwordInput" class="el-input__inner" name="password" type="password" placeholder="密码" autocomplete="current-password" required>
           </div>
         </div>
       </div>
-      <div class="err">{{ error }}</div>
-      <button class="el-button el-button--primary" type="submit" style="width:100%">进入后台</button>
+      <div class="remember-row">
+        <label class="remember-label">
+          <input type="checkbox" id="rememberMe">
+          <span>记住密码</span>
+        </label>
+      </div>
+      {% if error %}
+      <div class="err">⚠ {{ error }}</div>
+      {% else %}
+      <div class="err"></div>
+      {% endif %}
+      <button class="el-button el-button--primary" type="submit">进入后台</button>
     </form>
   </div>
   <script>
-    try {
-      sessionStorage.removeItem("missing_keys_dialog_dismissed");
-    } catch (e) {}
+    (function () {
+      try {
+        sessionStorage.removeItem("missing_keys_dialog_dismissed");
+      } catch (e) {}
+
+      const STORAGE_KEY_USER = "admin_remember_user";
+      const STORAGE_KEY_PWD = "admin_remember_pwd";
+      const STORAGE_KEY_ENABLED = "admin_remember_enabled";
+
+      const form = document.getElementById("loginForm");
+      const userInput = document.getElementById("usernameInput");
+      const pwdInput = document.getElementById("passwordInput");
+      const rememberCheckbox = document.getElementById("rememberMe");
+
+      try {
+        const isRemembered = localStorage.getItem(STORAGE_KEY_ENABLED) === "true";
+        if (isRemembered) {
+          const savedUser = localStorage.getItem(STORAGE_KEY_USER) || "";
+          const savedPwd = localStorage.getItem(STORAGE_KEY_PWD) || "";
+          if (savedUser) userInput.value = savedUser;
+          if (savedPwd) pwdInput.value = savedPwd;
+          rememberCheckbox.checked = true;
+        }
+      } catch (err) {
+        console.warn("Storage access error:", err);
+      }
+
+      if (form) {
+        form.addEventListener("submit", function () {
+          try {
+            if (rememberCheckbox.checked) {
+              localStorage.setItem(STORAGE_KEY_ENABLED, "true");
+              localStorage.setItem(STORAGE_KEY_USER, userInput.value.trim());
+              localStorage.setItem(STORAGE_KEY_PWD, pwdInput.value);
+            } else {
+              localStorage.removeItem(STORAGE_KEY_ENABLED);
+              localStorage.removeItem(STORAGE_KEY_USER);
+              localStorage.removeItem(STORAGE_KEY_PWD);
+            }
+          } catch (err) {
+            console.warn("Storage write error:", err);
+          }
+        });
+      }
+    })();
   </script>
 </body>
 </html>

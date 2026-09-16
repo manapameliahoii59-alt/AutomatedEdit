@@ -1,0 +1,629 @@
+{% extends "admin/base.html" %}
+{% block title %}个人中心 · {{ app_name }} 后台{% endblock %}
+{% block body %}
+<style>
+  .profile-container {
+    max-width: 1280px;
+    width: 100%;
+    margin: 0 auto;
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+  }
+  .panel-card {
+    background: #fff;
+    border: 1px solid #ebeef5;
+    border-radius: 8px;
+    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.03);
+    overflow: hidden;
+  }
+  .panel-card-head {
+    padding: 16px 22px;
+    border-bottom: 1px solid #ebeef5;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    background: #fafbfc;
+  }
+  .panel-card-title {
+    font-size: 15px;
+    font-weight: 600;
+    color: #303133;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .panel-card-body {
+    padding: 22px;
+  }
+
+  /* 管理员信息展示 */
+  .admin-info-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 16px;
+  }
+  .admin-info-item {
+    background: #f8f9fa;
+    border: 1px solid #e9ecef;
+    border-radius: 6px;
+    padding: 14px 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .admin-info-label {
+    font-size: 12px;
+    color: #909399;
+  }
+  .admin-info-value {
+    font-size: 14px;
+    font-weight: 600;
+    color: #303133;
+  }
+
+  /* 模式切换 Tabs */
+  .theme-mode-tabs {
+    display: flex;
+    gap: 10px;
+    margin-bottom: 20px;
+    border-bottom: 1px solid #ebeef5;
+    padding-bottom: 12px;
+    flex-wrap: wrap;
+  }
+  .theme-tab-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 8px 16px;
+    border-radius: 6px;
+    border: 1px solid #dcdfe6;
+    background: #fff;
+    color: #606266;
+    font-size: 13px;
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+  .theme-tab-btn:hover {
+    color: #409eff;
+    border-color: #c6e2ff;
+    background: #ecf5ff;
+  }
+  .theme-tab-btn.is-active {
+    background: #409eff;
+    border-color: #409eff;
+    color: #fff;
+    font-weight: 500;
+    box-shadow: 0 2px 6px rgba(64, 158, 255, 0.3);
+  }
+
+  /* 预设网格 */
+  .preset-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+    gap: 16px;
+    margin-bottom: 20px;
+  }
+  .preset-card {
+    border: 2px solid #e4e7ed;
+    border-radius: 8px;
+    cursor: pointer;
+    overflow: hidden;
+    transition: all 0.25s;
+    background: #fff;
+    position: relative;
+  }
+  .preset-card:hover {
+    border-color: #b3d8ff;
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+  }
+  .preset-card.is-selected {
+    border-color: #409eff;
+    box-shadow: 0 0 0 2px rgba(64, 158, 255, 0.25);
+  }
+  .preset-preview-box {
+    height: 80px;
+    width: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    position: relative;
+  }
+  .preset-card.is-selected .preset-preview-box::after {
+    content: "✓";
+    position: absolute;
+    top: 6px;
+    right: 6px;
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+    background: #409eff;
+    color: #fff;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 12px;
+    font-weight: bold;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+  }
+  .preset-info {
+    padding: 10px 12px;
+    border-top: 1px solid #ebeef5;
+  }
+  .preset-title {
+    font-size: 13px;
+    font-weight: 600;
+    color: #303133;
+    margin: 0 0 2px;
+  }
+  .preset-desc {
+    font-size: 11px;
+    color: #909399;
+    margin: 0;
+  }
+
+  /* 自定义输入与上传区 */
+  .custom-section {
+    background: #f8f9fb;
+    border: 1px solid #e9ecef;
+    border-radius: 8px;
+    padding: 20px;
+    margin-bottom: 20px;
+  }
+  .upload-dropzone {
+    border: 2px dashed #dcdfe6;
+    border-radius: 8px;
+    padding: 26px 20px;
+    text-align: center;
+    background: #fff;
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+  .upload-dropzone:hover {
+    border-color: #409eff;
+    background: #fdfefe;
+  }
+
+  /* 实时预览区 */
+  .preview-wrapper {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    margin-top: 24px;
+    padding-top: 20px;
+    border-top: 1px solid #ebeef5;
+  }
+  .preview-stage-container {
+    width: 100%;
+    max-width: 520px;
+    height: 300px;
+    border-radius: 10px;
+    overflow: hidden;
+    position: relative;
+    border: 1px solid #dcdfe6;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.08);
+    display: grid;
+    place-items: center;
+    transition: background 0.3s ease;
+  }
+  .preview-overlay {
+    position: absolute;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.16);
+    pointer-events: none;
+  }
+  .preview-card-mock {
+    position: relative;
+    z-index: 2;
+    width: 250px;
+    border-radius: 8px;
+    padding: 16px;
+    text-align: center;
+    transition: all 0.3s ease;
+  }
+  .preview-card-mock.is-glass {
+    background: rgba(255, 255, 255, 0.88);
+    backdrop-filter: blur(14px);
+    -webkit-backdrop-filter: blur(14px);
+    border: 1px solid rgba(255, 255, 255, 0.65);
+    box-shadow: 0 10px 24px rgba(0, 0, 0, 0.14);
+  }
+  .preview-card-mock.no-glass {
+    background: #fff;
+    border: 1px solid #ebeef5;
+    box-shadow: 0 4px 14px rgba(0, 0, 0, 0.06);
+  }
+  .mock-logo {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 28px;
+    border-radius: 6px;
+    background: #409eff;
+    color: #fff;
+    font-size: 13px;
+    font-weight: bold;
+    margin-bottom: 6px;
+  }
+  .mock-title { font-size: 14px; font-weight: 650; margin: 0; color: #303133; }
+  .mock-sub { font-size: 11px; color: #909399; margin: 2px 0 10px; }
+  .mock-input {
+    height: 24px;
+    background: rgba(255, 255, 255, 0.9);
+    border: 1px solid #dcdfe6;
+    border-radius: 4px;
+    margin-bottom: 8px;
+  }
+  .mock-btn {
+    height: 24px;
+    background: #409eff;
+    border-radius: 4px;
+    color: #fff;
+    font-size: 11px;
+    line-height: 24px;
+  }
+</style>
+
+<div class="profile-container">
+  <div class="head">
+    <div>
+      <h1>个人中心</h1>
+      <p>管理系统管理员账号信息与后台登录封面个性化设定</p>
+    </div>
+    <div style="display: flex; gap: 10px; align-items: center;">
+      <a href="/admin/login" target="_blank" class="el-button" style="background: #fff; border: 1px solid #dcdfe6; color: #606266; display: inline-flex; align-items: center; gap: 6px;">
+        <span>🔗 打开登录页预览</span>
+      </a>
+    </div>
+  </div>
+
+  {% if msg == "saved" %}
+  <div style="background: #f0f9eb; border: 1px solid #e1f3d8; border-radius: 6px; padding: 12px 18px; color: #67c23a; font-size: 14px; display: flex; align-items: center; gap: 8px; box-shadow: 0 1px 3px rgba(103, 194, 58, 0.1);">
+    <span style="font-weight: bold; font-size: 16px;">✓</span>
+    <span>登录界面封面与外观设置已成功保存并立即生效！您可以打开登录页预览效果。</span>
+  </div>
+  {% elif msg == "upload_deleted" %}
+  <div style="background: #fdf6ec; border: 1px solid #faecd8; border-radius: 6px; padding: 12px 18px; color: #e6a23c; font-size: 14px; display: flex; align-items: center; gap: 8px;">
+    <span>已成功清除已上传的本地背景图片并恢复经典浅灰。</span>
+  </div>
+  {% endif %}
+
+  <!-- 管理员信息概览 -->
+  <div class="panel-card">
+    <div class="panel-card-head">
+      <div class="panel-card-title">
+        <span style="display: inline-flex; align-items: center; justify-content: center; width: 22px; height: 22px; border-radius: 50%; background: #ecf5ff; color: #409eff; font-size: 12px;">👤</span>
+        <span>管理员基本资料</span>
+      </div>
+      <span style="font-size: 12px; color: #67c23a; background: #f0f9eb; border: 1px solid #e1f3d8; padding: 2px 8px; border-radius: 10px;">在线中</span>
+    </div>
+    <div class="panel-card-body">
+      <div class="admin-info-grid">
+        <div class="admin-info-item">
+          <span class="admin-info-label">管理员登录账号</span>
+          <span class="admin-info-value">{{ admin_username }}</span>
+        </div>
+        <div class="admin-info-item">
+          <span class="admin-info-label">当前角色权限</span>
+          <span class="admin-info-value" style="color: #409eff;">超级管理员 (Super Admin)</span>
+        </div>
+        <div class="admin-info-item">
+          <span class="admin-info-label">系统名称</span>
+          <span class="admin-info-value">{{ app_name }} 管理后台</span>
+        </div>
+        <div class="admin-info-item">
+          <span class="admin-info-label">服务器系统时间</span>
+          <span class="admin-info-value">{{ now_str }}</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 登录界面封面设定 -->
+  <div class="panel-card">
+    <div class="panel-card-head">
+      <div class="panel-card-title">
+        <span style="display: inline-flex; align-items: center; justify-content: center; width: 22px; height: 22px; border-radius: 50%; background: #fdf6ec; color: #e6a23c; font-size: 12px;">🎨</span>
+        <span>登录界面封面与外观设置</span>
+      </div>
+      <span style="font-size: 12px; color: #909399;">支持预设渐变、网络外链及本地壁纸上传</span>
+    </div>
+    <div class="panel-card-body">
+      <form id="themeForm" method="post" action="/admin/profile/theme" enctype="multipart/form-data">
+        <input type="hidden" name="mode" id="themeModeInput" value="{{ theme.mode }}">
+        <input type="hidden" name="preset_key" id="presetKeyInput" value="{{ theme.preset_key }}">
+
+        <!-- 模式切换标签 -->
+        <div class="theme-mode-tabs">
+          <button type="button" class="theme-tab-btn{% if theme.mode == 'preset' or theme.mode == 'default' %} is-active{% endif %}" onclick="switchMode('preset')">
+            <span>✨ 内置精选渐变</span>
+          </button>
+          <button type="button" class="theme-tab-btn{% if theme.mode == 'url' %} is-active{% endif %}" onclick="switchMode('url')">
+            <span>🌐 网络图片链接</span>
+          </button>
+          <button type="button" class="theme-tab-btn{% if theme.mode == 'upload' %} is-active{% endif %}" onclick="switchMode('upload')">
+            <span>📁 本地图片上传</span>
+          </button>
+        </div>
+
+        <!-- 模式 1: 内置精选预设 -->
+        <div id="sectionPreset" style="display: {% if theme.mode == 'preset' or theme.mode == 'default' %}block{% else %}none{% endif %};">
+          <div style="margin-bottom: 12px; font-size: 13px; color: #606266;">
+            选择下方推荐的极简或科技感纯净渐变背景：
+          </div>
+          <div class="preset-grid">
+            {% for p in presets %}
+            <div
+              class="preset-card{% if (theme.mode == 'preset' and theme.preset_key == p.key) or (theme.mode == 'default' and p.key == 'default') %} is-selected{% endif %}"
+              onclick="selectPreset('{{ p.key }}', '{{ p.css | escape }}')"
+              data-key="{{ p.key }}"
+              data-css="{{ p.css }}"
+            >
+              <div class="preset-preview-box" style="{{ p.preview_css }}"></div>
+              <div class="preset-info">
+                <div class="preset-title">{{ p.name }}</div>
+                <div class="preset-desc">{{ p.desc }}</div>
+              </div>
+            </div>
+            {% endfor %}
+          </div>
+        </div>
+
+        <!-- 模式 2: 网络图片 URL -->
+        <div id="sectionUrl" class="custom-section" style="display: {% if theme.mode == 'url' %}block{% else %}none{% endif %};">
+          <div style="font-size: 14px; font-weight: 600; color: #303133; margin-bottom: 8px;">自定义在线图片 URL</div>
+          <div style="font-size: 12px; color: #909399; margin-bottom: 14px;">支持输入任意公网直链高清图片地址（推荐 1920x1080 分辨率以上，JPG/PNG/WEBP）。</div>
+          <div style="display: flex; gap: 10px;">
+            <div class="el-input__wrapper" style="flex: 1; height: 38px;">
+              <input
+                type="text"
+                class="el-input__inner"
+                name="custom_url"
+                id="customUrlInput"
+                placeholder="例如：https://images.unsplash.com/photo-1579546929518-9e396f3cc809"
+                value="{{ theme.custom_url }}"
+                oninput="onUrlChanged(this.value)"
+              >
+            </div>
+            <button type="button" class="el-button" onclick="testUrlPreview()" style="height: 38px; padding: 0 16px;">
+              预览链接
+            </button>
+          </div>
+        </div>
+
+        <!-- 模式 3: 上传本地图片 -->
+        <div id="sectionUpload" class="custom-section" style="display: {% if theme.mode == 'upload' %}block{% else %}none{% endif %};">
+          <div style="font-size: 14px; font-weight: 600; color: #303133; margin-bottom: 8px;">本地壁纸上传</div>
+          <div style="font-size: 12px; color: #909399; margin-bottom: 14px;">上传一张本地照片作为后台登录背景，文件将保存于后台静态资源目录中。</div>
+
+          <div class="upload-dropzone" onclick="document.getElementById('bgFileInput').click()">
+            <input
+              type="file"
+              name="bg_file"
+              id="bgFileInput"
+              accept="image/png,image/jpeg,image/webp,image/jpg"
+              style="display: none;"
+              onchange="onFileSelected(this)"
+            >
+            <div style="font-size: 32px; color: #409eff; margin-bottom: 8px;">📤</div>
+            <div style="font-size: 14px; font-weight: 500; color: #303133;">点击选择或将图片拖拽至此处</div>
+            <div style="font-size: 12px; color: #909399; margin-top: 4px;" id="uploadTipText">
+              {% if theme.has_uploaded %}
+              当前已上传自定义背景图，选择新图片可覆盖替换
+              {% else %}
+              支持 PNG, JPG, JPEG, WEBP 格式（推荐大小 2MB 以内）
+              {% endif %}
+            </div>
+          </div>
+
+          {% if theme.has_uploaded %}
+          <div style="margin-top: 14px; display: flex; align-items: center; justify-content: space-between; background: #fff; padding: 10px 14px; border: 1px solid #e4e7ed; border-radius: 6px;">
+            <span style="font-size: 13px; color: #67c23a; display: flex; align-items: center; gap: 6px;">
+              <span>✓</span> 当前已上传生效的自定义背景图
+            </span>
+            <button type="submit" form="resetUploadForm" class="el-button" style="border-color: #f56c6c; color: #f56c6c; background: #fff; font-size: 12px; height: 28px; padding: 0 10px;">
+              删除已上传文件
+            </button>
+          </div>
+          {% endif %}
+        </div>
+
+        <!-- 视觉质感选项 -->
+        <div style="margin: 20px 0; padding: 14px 18px; background: #fafbfc; border: 1px solid #ebeef5; border-radius: 6px; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px;">
+          <div>
+            <div style="font-size: 14px; font-weight: 600; color: #303133;">毛玻璃质感（Glassmorphism）</div>
+            <div style="font-size: 12px; color: #909399; margin-top: 2px;">为登录卡片启用高斯模糊半透明玻璃效果，在丰富背景下质感更强</div>
+          </div>
+          <label style="display: inline-flex; align-items: center; gap: 8px; cursor: pointer; user-select: none;">
+            <input
+              type="checkbox"
+              name="glass"
+              id="glassCheckbox"
+              value="1"
+              {% if theme.glass %}checked{% endif %}
+              onchange="onGlassToggle(this.checked)"
+              style="width: 16px; height: 16px; accent-color: #409eff; cursor: pointer;"
+            >
+            <span style="font-size: 13px; color: #606266; font-weight: 500;">启用毛玻璃半透明效果</span>
+          </label>
+        </div>
+
+        <!-- 实时模拟预览区域 -->
+        <div class="preview-wrapper">
+          <div style="font-size: 14px; font-weight: 600; color: #303133; margin-bottom: 6px;">实时渲染效果预览</div>
+          <div style="font-size: 12px; color: #909399; margin-bottom: 14px;">下方窗口即时模拟管理员登录页在当前配置下的视觉呈现：</div>
+
+          <div class="preview-stage-container" id="previewStage">
+            <div class="preview-overlay" id="previewOverlay" style="display: none;"></div>
+            <div class="preview-card-mock is-glass" id="previewCardMock">
+              <div class="mock-logo">✂</div>
+              <div class="mock-title">剪辑助手</div>
+              <div class="mock-sub">管理后台登录</div>
+              <div class="mock-input"></div>
+              <div class="mock-input"></div>
+              <div class="mock-btn">进入后台</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 操作按钮条 -->
+        <div style="margin-top: 24px; padding-top: 16px; border-top: 1px solid #ebeef5; display: flex; justify-content: flex-end; gap: 12px;">
+          <button type="button" class="el-button" onclick="resetToDefaultPreset()">恢复经典浅灰</button>
+          <button type="submit" class="el-button el-button--primary" style="padding: 0 24px; font-weight: 600;">
+            💾 保存背景设置
+          </button>
+        </div>
+      </form>
+
+      <!-- 独立删除上传表单 -->
+      <form id="resetUploadForm" method="post" action="/admin/profile/theme/reset-upload" style="display: none;"></form>
+    </div>
+  </div>
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+  const presetsData = {{ presets | tojson }};
+  const currentTheme = {{ theme | tojson }};
+
+  let activeMode = currentTheme.mode || "preset";
+  let activePresetKey = currentTheme.preset_key || "default";
+  let activeCustomUrl = currentTheme.custom_url || "";
+  let isGlass = currentTheme.glass !== false;
+
+  const modeInput = document.getElementById("themeModeInput");
+  const presetKeyInput = document.getElementById("presetKeyInput");
+  const previewStage = document.getElementById("previewStage");
+  const previewOverlay = document.getElementById("previewOverlay");
+  const previewCard = document.getElementById("previewCardMock");
+  const customUrlInput = document.getElementById("customUrlInput");
+  const glassCheckbox = document.getElementById("glassCheckbox");
+
+  function switchMode(mode) {
+    activeMode = mode;
+    modeInput.value = mode;
+
+    document.querySelectorAll(".theme-tab-btn").forEach((btn, idx) => {
+      btn.classList.remove("is-active");
+    });
+    if (mode === "preset" || mode === "default") {
+      document.querySelectorAll(".theme-tab-btn")[0].classList.add("is-active");
+      document.getElementById("sectionPreset").style.display = "block";
+      document.getElementById("sectionUrl").style.display = "none";
+      document.getElementById("sectionUpload").style.display = "none";
+      updatePresetPreview();
+    } else if (mode === "url") {
+      document.querySelectorAll(".theme-tab-btn")[1].classList.add("is-active");
+      document.getElementById("sectionPreset").style.display = "none";
+      document.getElementById("sectionUrl").style.display = "block";
+      document.getElementById("sectionUpload").style.display = "none";
+      updateUrlPreview();
+    } else if (mode === "upload") {
+      document.querySelectorAll(".theme-tab-btn")[2].classList.add("is-active");
+      document.getElementById("sectionPreset").style.display = "none";
+      document.getElementById("sectionUrl").style.display = "none";
+      document.getElementById("sectionUpload").style.display = "block";
+      updateUploadPreview();
+    }
+  }
+
+  function selectPreset(key, css) {
+    activeMode = (key === "default") ? "default" : "preset";
+    activePresetKey = key;
+    modeInput.value = activeMode;
+    presetKeyInput.value = key;
+
+    document.querySelectorAll(".preset-card").forEach(card => {
+      card.classList.toggle("is-selected", card.getAttribute("data-key") === key);
+    });
+
+    applyPreviewCss(css, key !== "default");
+  }
+
+  function updatePresetPreview() {
+    const found = presetsData.find(p => p.key === activePresetKey);
+    if (found) {
+      applyPreviewCss(found.css, found.key !== "default");
+    } else {
+      applyPreviewCss("background-color: #f5f7fa;", false);
+    }
+  }
+
+  function onUrlChanged(val) {
+    activeCustomUrl = val.trim();
+    updateUrlPreview();
+  }
+
+  function testUrlPreview() {
+    updateUrlPreview();
+  }
+
+  function updateUrlPreview() {
+    if (activeCustomUrl) {
+      applyPreviewCss(`background: url('${activeCustomUrl}') center center / cover no-repeat;`, true);
+    } else {
+      applyPreviewCss("background-color: #f5f7fa;", false);
+    }
+  }
+
+  function onFileSelected(input) {
+    if (input.files && input.files[0]) {
+      const file = input.files[0];
+      const objUrl = URL.createObjectURL(file);
+      document.getElementById("uploadTipText").innerHTML = `<span style="color: #409eff; font-weight: 500;">已选中本地文件：${file.name}</span>`;
+      switchMode("upload");
+      applyPreviewCss(`background: url('${objUrl}') center center / cover no-repeat;`, true);
+    }
+  }
+
+  function updateUploadPreview() {
+    if (currentTheme.has_uploaded) {
+      applyPreviewCss("background: url('/static/admin/custom_login_bg.jpg?t=" + Date.now() + "') center center / cover no-repeat;", true);
+    } else {
+      applyPreviewCss("background-color: #f5f7fa;", false);
+    }
+  }
+
+  function onGlassToggle(checked) {
+    isGlass = checked;
+    updateCardGlassStyle();
+  }
+
+  function updateCardGlassStyle() {
+    if (isGlass) {
+      previewCard.classList.remove("no-glass");
+      previewCard.classList.add("is-glass");
+    } else {
+      previewCard.classList.remove("is-glass");
+      previewCard.classList.add("no-glass");
+    }
+  }
+
+  function applyPreviewCss(cssText, isCustomBackground) {
+    previewStage.style.cssText = cssText;
+    previewOverlay.style.display = isCustomBackground ? "block" : "none";
+    updateCardGlassStyle();
+  }
+
+  function resetToDefaultPreset() {
+    switchMode("preset");
+    selectPreset("default", "background-color: #f5f7fa;");
+  }
+
+  // 初始化预览
+  (function init() {
+    updateCardGlassStyle();
+    if (activeMode === "url") {
+      updateUrlPreview();
+    } else if (activeMode === "upload") {
+      updateUploadPreview();
+    } else {
+      updatePresetPreview();
+    }
+  })();
+</script>
+{% endblock %}

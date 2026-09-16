@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Annotated, Any
 from urllib.parse import urlencode
 
-from fastapi import APIRouter, Depends, Form, Query, Request
+from fastapi import APIRouter, Depends, File, Form, Query, Request, UploadFile
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -39,7 +39,106 @@ _DRAMA_COL_MAX_WIDTH_PX = 200
 _PAGE_SIZE = 40
 _TEMPLATE_DIR = Path(__file__).resolve().parent / "templates"
 _STATIC_DIR = Path(__file__).resolve().parent / "static" / "admin"
+_THEME_FILE = _STATIC_DIR / "login_theme.json"
+_UPLOADED_BG_FILE = _STATIC_DIR / "custom_login_bg.jpg"
 templates = Jinja2Templates(directory=str(_TEMPLATE_DIR))
+
+LOGIN_BG_PRESETS: list[dict[str, str]] = [
+    {
+        "key": "default",
+        "name": "经典浅灰",
+        "css": "background-color: #f5f7fa;",
+        "preview_css": "background: #f5f7fa; border: 1px solid #dcdfe6;",
+        "desc": "极简纯净，专注高效",
+    },
+    {
+        "key": "gradient_frost",
+        "name": "蓝莓霜雾",
+        "css": "background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);",
+        "preview_css": "background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);",
+        "desc": "蓝紫梦幻渐变，现代科技感",
+    },
+    {
+        "key": "gradient_tech",
+        "name": "赛博深空",
+        "css": "background: linear-gradient(135deg, #0f2027 0%, #203a43 50%, #2c5364 100%);",
+        "preview_css": "background: linear-gradient(135deg, #0f2027 0%, #203a43 50%, #2c5364 100%);",
+        "desc": "深色科技渐变，沉稳大气",
+    },
+    {
+        "key": "gradient_aurora",
+        "name": "极光微澜",
+        "css": "background: linear-gradient(135deg, #134e5e 0%, #71b280 100%);",
+        "preview_css": "background: linear-gradient(135deg, #134e5e 0%, #71b280 100%);",
+        "desc": "青绿自然微光，清新典雅",
+    },
+    {
+        "key": "gradient_ocean",
+        "name": "深海雅致",
+        "css": "background: linear-gradient(135deg, #2b5876 0%, #4e4376 100%);",
+        "preview_css": "background: linear-gradient(135deg, #2b5876 0%, #4e4376 100%);",
+        "desc": "深海靛蓝渐变，低调内敛",
+    },
+    {
+        "key": "gradient_sunset",
+        "name": "晚霞流彩",
+        "css": "background: linear-gradient(135deg, #fa709a 0%, #fee140 100%);",
+        "preview_css": "background: linear-gradient(135deg, #fa709a 0%, #fee140 100%);",
+        "desc": "落日温暖霞光，柔和明丽",
+    },
+]
+
+
+def _get_login_theme() -> dict[str, Any]:
+    default_theme: dict[str, Any] = {
+        "mode": "default",
+        "preset_key": "default",
+        "custom_url": "",
+        "glass": True,
+        "has_uploaded": _UPLOADED_BG_FILE.is_file(),
+    }
+    if not _THEME_FILE.is_file():
+        return default_theme
+    try:
+        data = json.loads(_THEME_FILE.read_text(encoding="utf-8"))
+        if isinstance(data, dict):
+            default_theme.update(data)
+    except Exception:
+        pass
+    default_theme["has_uploaded"] = _UPLOADED_BG_FILE.is_file()
+    return default_theme
+
+
+def _save_login_theme(theme_data: dict[str, Any]) -> None:
+    _STATIC_DIR.mkdir(parents=True, exist_ok=True)
+    _THEME_FILE.write_text(json.dumps(theme_data, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def _get_login_bg_style(theme: dict[str, Any]) -> tuple[str, bool]:
+    mode = theme.get("mode", "default")
+    glass = bool(theme.get("glass", True))
+    if mode == "preset":
+        preset_key = theme.get("preset_key", "default")
+        for p in LOGIN_BG_PRESETS:
+            if p["key"] == preset_key:
+                return p["css"], glass
+        return "background-color: #f5f7fa;", False
+    elif mode == "url":
+        url = (theme.get("custom_url") or "").strip()
+        if url:
+            return f"background: url('{url}') center center / cover no-repeat fixed;", glass
+        return "background-color: #f5f7fa;", False
+    elif mode == "upload":
+        if _UPLOADED_BG_FILE.is_file():
+            mtime = int(_UPLOADED_BG_FILE.stat().st_mtime)
+            return (
+                f"background: url('/static/admin/custom_login_bg.jpg?t={mtime}') center center / cover no-repeat fixed;",
+                glass,
+            )
+        return "background-color: #f5f7fa;", False
+    else:
+        return "background-color: #f5f7fa;", False
+
 
 router = APIRouter(prefix="/admin")
 
@@ -178,6 +277,7 @@ def _nav(active: str) -> list[dict[str, str]]:
         ("jobs", "/admin/jobs", "策划任务"),
         ("settings", "/admin/settings", "用户配置"),
         ("errors", "/admin/errors", "错误反馈"),
+        ("profile", "/admin/profile", "个人中心"),
     ]
     return [
         {"key": key, "href": href, "label": label, "active": key == active}
@@ -284,10 +384,18 @@ def _parse_valid_until(raw: str | None) -> date | None:
 def login_page(request: Request, next: str = "", error: str = ""):
     if _is_logged_in(request):
         return RedirectResponse("/admin/users", status_code=302)
+    theme = _get_login_theme()
+    bg_css, is_glass = _get_login_bg_style(theme)
     return templates.TemplateResponse(
         request,
         "admin/login.html",
-        {"next": next, "error": error, "app_name": "剪辑助手"},
+        {
+            "next": next,
+            "error": error,
+            "app_name": "剪辑助手",
+            "bg_css": bg_css,
+            "is_glass": is_glass,
+        },
     )
 
 
@@ -305,6 +413,8 @@ def login_submit(
         if not dest.startswith("/admin"):
             dest = "/admin/users"
         return RedirectResponse(dest, status_code=302)
+    theme = _get_login_theme()
+    bg_css, is_glass = _get_login_bg_style(theme)
     return templates.TemplateResponse(
         request,
         "admin/login.html",
@@ -312,6 +422,8 @@ def login_submit(
             "next": next,
             "error": "账号或密码错误",
             "app_name": "剪辑助手",
+            "bg_css": bg_css,
+            "is_glass": is_glass,
         },
         status_code=401,
     )
@@ -975,6 +1087,85 @@ def error_report_delete(
         db.commit()
     referer = request.headers.get("referer") or "/admin/errors"
     return RedirectResponse(referer, status_code=302)
+
+
+@router.get("/profile", response_class=HTMLResponse)
+def profile_page(
+    request: Request,
+    db: Db,
+    msg: str = "",
+):
+    if not _is_logged_in(request):
+        return RedirectResponse("/admin/login", status_code=302)
+    theme = _get_login_theme()
+    return templates.TemplateResponse(
+        request,
+        "admin/profile.html",
+        _ctx(
+            request,
+            active="profile",
+            db=db,
+            theme=theme,
+            presets=LOGIN_BG_PRESETS,
+            admin_username=settings.admin_username,
+            msg=msg,
+            now_str=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        ),
+    )
+
+
+@router.post("/profile/theme")
+async def profile_theme_save(
+    request: Request,
+    mode: Annotated[str, Form()] = "default",
+    preset_key: Annotated[str, Form()] = "default",
+    custom_url: Annotated[str, Form()] = "",
+    glass: Annotated[str, Form()] = "",
+    bg_file: UploadFile | None = File(None),
+):
+    if not _is_logged_in(request):
+        return RedirectResponse("/admin/login", status_code=302)
+
+    _STATIC_DIR.mkdir(parents=True, exist_ok=True)
+    has_uploaded = _UPLOADED_BG_FILE.is_file()
+
+    if bg_file and bg_file.filename:
+        content = await bg_file.read()
+        if content:
+            _UPLOADED_BG_FILE.write_bytes(content)
+            has_uploaded = True
+            mode = "upload"
+
+    mode_clean = mode.strip().lower()
+    if mode_clean not in ("preset", "url", "upload", "default"):
+        mode_clean = "default"
+
+    theme_data = {
+        "mode": mode_clean,
+        "preset_key": (preset_key or "default").strip(),
+        "custom_url": (custom_url or "").strip(),
+        "glass": glass in ("1", "true", "on"),
+        "has_uploaded": has_uploaded,
+    }
+    _save_login_theme(theme_data)
+    return RedirectResponse("/admin/profile?msg=saved", status_code=302)
+
+
+@router.post("/profile/theme/reset-upload")
+def profile_theme_reset_upload(request: Request):
+    if not _is_logged_in(request):
+        return RedirectResponse("/admin/login", status_code=302)
+    if _UPLOADED_BG_FILE.is_file():
+        try:
+            _UPLOADED_BG_FILE.unlink()
+        except OSError:
+            pass
+    theme = _get_login_theme()
+    if theme.get("mode") == "upload":
+        theme["mode"] = "default"
+    theme["has_uploaded"] = False
+    _save_login_theme(theme)
+    return RedirectResponse("/admin/profile?msg=upload_deleted", status_code=302)
 
 
 def setup_admin(app: Starlette):
