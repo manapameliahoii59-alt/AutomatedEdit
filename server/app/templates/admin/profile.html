@@ -264,6 +264,45 @@
     font-size: 11px;
     line-height: 24px;
   }
+
+  /* 顶部浮动弱提示 (Toast) */
+  .admin-toast-message {
+    position: fixed;
+    top: 24px;
+    left: 50%;
+    transform: translateX(-50%) translateY(-24px);
+    z-index: 9999;
+    padding: 10px 22px;
+    border-radius: 6px;
+    font-size: 14px;
+    font-weight: 550;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    box-shadow: 0 6px 20px rgba(0, 0, 0, 0.12);
+    opacity: 0;
+    transition: transform 0.28s cubic-bezier(0.18, 0.89, 0.32, 1.28), opacity 0.28s ease;
+    pointer-events: none;
+  }
+  .admin-toast-message.show {
+    transform: translateX(-50%) translateY(0);
+    opacity: 1;
+  }
+  .admin-toast--success {
+    background: #f0f9eb;
+    border: 1px solid #e1f3d8;
+    color: #67c23a;
+  }
+  .admin-toast--warning {
+    background: #fdf6ec;
+    border: 1px solid #faecd8;
+    color: #e6a23c;
+  }
+  .admin-toast--error {
+    background: #fef0f0;
+    border: 1px solid #fde2e2;
+    color: #f56c6c;
+  }
 </style>
 
 <div class="profile-container">
@@ -273,20 +312,27 @@
       <p>管理系统管理员账号信息与后台登录封面个性化设定</p>
     </div>
     <div style="display: flex; gap: 10px; align-items: center;">
-      <a href="/admin/login" target="_blank" class="el-button" style="background: #fff; border: 1px solid #dcdfe6; color: #606266; display: inline-flex; align-items: center; gap: 6px;">
+      <a href="/admin/login?preview=1" target="_blank" class="el-button" style="background: #fff; border: 1px solid #dcdfe6; color: #606266; display: inline-flex; align-items: center; gap: 6px;">
         <span>🔗 打开登录页预览</span>
       </a>
     </div>
   </div>
 
   {% if msg == "saved" %}
-  <div style="background: #f0f9eb; border: 1px solid #e1f3d8; border-radius: 6px; padding: 12px 18px; color: #67c23a; font-size: 14px; display: flex; align-items: center; gap: 8px; box-shadow: 0 1px 3px rgba(103, 194, 58, 0.1);">
-    <span style="font-weight: bold; font-size: 16px;">✓</span>
-    <span>登录界面封面与外观设置已成功保存并立即生效！您可以打开登录页预览效果。</span>
+  <div class="admin-toast-message admin-toast--success" id="toast-saved">
+    <span style="font-size: 16px;">✅</span>
+    <span>登录界面封面与外观设置已成功保存并立即生效！</span>
   </div>
   {% elif msg == "upload_deleted" %}
-  <div style="background: #fdf6ec; border: 1px solid #faecd8; border-radius: 6px; padding: 12px 18px; color: #e6a23c; font-size: 14px; display: flex; align-items: center; gap: 8px;">
-    <span>已成功清除已上传的本地背景图片并恢复经典浅灰。</span>
+  <div class="admin-toast-message admin-toast--warning" id="toast-deleted">
+    <span style="font-size: 16px;">🗑️</span>
+    <span>已成功清除已上传的本地背景图片并恢复经典浅灰</span>
+  </div>
+  {% endif %}
+  {% if error %}
+  <div class="admin-toast-message admin-toast--error" id="toast-error">
+    <span style="font-size: 16px;">❌</span>
+    <span>{{ error }}</span>
   </div>
   {% endif %}
 
@@ -625,5 +671,91 @@
       updatePresetPreview();
     }
   })();
+
+  function showFloatingToast(text, type, duration) {
+    type = type || "success";
+    duration = duration || 2600;
+    const toast = document.createElement("div");
+    toast.className = `admin-toast-message admin-toast--${type}`;
+    const icon = type === "success" ? "✅" : (type === "warning" ? "⚡" : "❌");
+    toast.innerHTML = `<span style="font-size: 16px;">${icon}</span><span>${text}</span>`;
+    document.body.appendChild(toast);
+    requestAnimationFrame(function() {
+      toast.classList.add("show");
+    });
+    setTimeout(function() {
+      toast.classList.remove("show");
+      setTimeout(function() { toast.remove(); }, 300);
+    }, duration);
+  }
+
+  function initAdminToast() {
+    function show(el) {
+      if (!el) return;
+      requestAnimationFrame(function() {
+        el.classList.add("show");
+      });
+      setTimeout(function() {
+        el.classList.remove("show");
+        setTimeout(function() { el.remove(); }, 300);
+      }, 2600);
+    }
+
+    let toastCount = 0;
+    const tSaved = document.getElementById("toast-saved");
+    const tDeleted = document.getElementById("toast-deleted");
+    const tError = document.getElementById("toast-error");
+    if (tSaved) {
+      show(tSaved);
+      toastCount++;
+    }
+    if (tDeleted) {
+      if (toastCount > 0) tDeleted.style.top = "74px";
+      show(tDeleted);
+      toastCount++;
+    }
+    if (tError) {
+      if (toastCount > 0) tError.style.top = `${24 + toastCount * 50}px`;
+      show(tError);
+      toastCount++;
+    }
+    if (toastCount > 0 && window.history && window.history.replaceState) {
+      const url = new URL(window.location);
+      url.searchParams.delete("msg");
+      url.searchParams.delete("error");
+      window.history.replaceState({}, document.title, url.pathname + (url.search ? url.search : ""));
+    }
+  }
+
+  // 绑定表单提交校验
+  const themeForm = document.getElementById("themeForm");
+  if (themeForm) {
+    themeForm.addEventListener("submit", function(e) {
+      if (activeMode === "url") {
+        const urlVal = (activeCustomUrl || "").trim();
+        if (!urlVal) {
+          e.preventDefault();
+          showFloatingToast("请填写有效的网络图片链接地址", "error");
+          const input = document.getElementById("customUrlInput");
+          if (input) input.focus();
+          return false;
+        }
+      } else if (activeMode === "upload") {
+        const fileInput = document.getElementById("bgFileInput");
+        const hasFile = fileInput && fileInput.files && fileInput.files.length > 0;
+        if (!hasFile && !currentTheme.has_uploaded) {
+          e.preventDefault();
+          showFloatingToast("请先选择要上传的本地背景图片", "error");
+          return false;
+        }
+      }
+    });
+  }
+
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", initAdminToast);
+  } else {
+    initAdminToast();
+  }
 </script>
 {% endblock %}

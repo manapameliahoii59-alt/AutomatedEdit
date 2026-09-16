@@ -152,6 +152,13 @@
   </style>
 </head>
 <body>
+  {% if is_preview %}
+  <div style="position: fixed; top: 16px; left: 50%; transform: translateX(-50%); z-index: 1000; background: rgba(30, 35, 45, 0.88); color: #fff; padding: 7px 18px; border-radius: 20px; font-size: 13px; display: flex; align-items: center; gap: 12px; box-shadow: 0 6px 20px rgba(0,0,0,0.25); backdrop-filter: blur(10px); border: 1px solid rgba(255,255,255,0.15);">
+    <span style="font-weight: 500;">👁️ 登录界面封面预览模式</span>
+    <a href="/admin/profile" style="color: #79bbff; text-decoration: underline; font-size: 12px;">返回个人中心</a>
+    <button type="button" onclick="window.close()" style="background: rgba(255,255,255,0.15); border: none; color: #fff; cursor: pointer; font-size: 12px; padding: 2px 8px; border-radius: 10px; margin-left: 4px;" title="关闭预览窗口">关闭预览</button>
+  </div>
+  {% endif %}
   {% if bg_css and "f5f7fa" not in bg_css %}
   <div class="bg-overlay"></div>
   {% endif %}

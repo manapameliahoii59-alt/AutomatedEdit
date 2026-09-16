@@ -542,6 +542,38 @@ def test_admin_profile_page_and_theme_settings(admin_client, tmp_path, monkeypat
     assert login_url_resp.status_code == 200
     assert "https://images.example.com/login_bg.jpg" in login_url_resp.text
 
+    # 5. 重新登录，验证已登录状态下访问 /admin/login?preview=1 不跳转，正常进入预览模式
+    admin_client.post(
+        "/admin/login",
+        data={
+            "username": settings.admin_username,
+            "password": settings.admin_password,
+        },
+        follow_redirects=False,
+    )
+    # 未带 preview 参数应正常重定向至 /admin/users
+    direct_login = admin_client.get("/admin/login", follow_redirects=False)
+    assert direct_login.status_code == 302
+    assert "/admin/users" in direct_login.headers.get("location", "")
+
+    # 带 preview=1 参数应直接渲染登录界面并包含预览标头
+    preview_resp = admin_client.get("/admin/login?preview=1")
+    assert preview_resp.status_code == 200
+    assert "登录界面封面预览模式" in preview_resp.text
+
+    # 6. 验证个人中心上传非法文件时返回弱提示错误
+    bad_upload_resp = admin_client.post(
+        "/admin/profile/theme",
+        files={"bg_file": ("test.exe", b"binary content", "application/octet-stream")},
+        follow_redirects=False,
+    )
+    assert bad_upload_resp.status_code == 302
+    assert "error=" in bad_upload_resp.headers.get("location", "")
+
+    profile_err_resp = admin_client.get(bad_upload_resp.headers.get("location"))
+    assert profile_err_resp.status_code == 200
+    assert 'id="toast-error"' in profile_err_resp.text
+
 
 def test_admin_errors_page_batch_resolve_modal(admin_client):
     resp = admin_client.get("/admin/errors")

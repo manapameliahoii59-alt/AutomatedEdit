@@ -381,8 +381,14 @@ def _parse_valid_until(raw: str | None) -> date | None:
 
 
 @router.get("/login", response_class=HTMLResponse)
-def login_page(request: Request, next: str = "", error: str = ""):
-    if _is_logged_in(request):
+def login_page(
+    request: Request,
+    next: str = "",
+    error: str = "",
+    preview: str = "",
+):
+    is_preview = preview in ("1", "true", "yes")
+    if _is_logged_in(request) and not is_preview:
         return RedirectResponse("/admin/users", status_code=302)
     theme = _get_login_theme()
     bg_css, is_glass = _get_login_bg_style(theme)
@@ -395,6 +401,7 @@ def login_page(request: Request, next: str = "", error: str = ""):
             "app_name": "剪辑助手",
             "bg_css": bg_css,
             "is_glass": is_glass,
+            "is_preview": is_preview,
         },
     )
 
@@ -1118,6 +1125,7 @@ def profile_page(
     request: Request,
     db: Db,
     msg: str = "",
+    error: str = "",
 ):
     if not _is_logged_in(request):
         return RedirectResponse("/admin/login", status_code=302)
@@ -1133,6 +1141,7 @@ def profile_page(
             presets=LOGIN_BG_PRESETS,
             admin_username=settings.admin_username,
             msg=msg,
+            error=error,
             now_str=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         ),
     )
@@ -1150,29 +1159,43 @@ async def profile_theme_save(
     if not _is_logged_in(request):
         return RedirectResponse("/admin/login", status_code=302)
 
-    _STATIC_DIR.mkdir(parents=True, exist_ok=True)
-    has_uploaded = _UPLOADED_BG_FILE.is_file()
+    try:
+        _STATIC_DIR.mkdir(parents=True, exist_ok=True)
+        has_uploaded = _UPLOADED_BG_FILE.is_file()
 
-    if bg_file and bg_file.filename:
-        content = await bg_file.read()
-        if content:
+        if bg_file and bg_file.filename:
+            ext = Path(bg_file.filename).suffix.lower()
+            if ext not in (".png", ".jpg", ".jpeg", ".webp", ".bmp", ".gif", ".svg"):
+                from urllib.parse import quote
+                return RedirectResponse(f"/admin/profile?error={quote('仅支持上传图片格式文件 (PNG/JPG/WEBP等)')}", status_code=302)
+            content = await bg_file.read()
+            if not content:
+                from urllib.parse import quote
+                return RedirectResponse(f"/admin/profile?error={quote('上传的文件内容为空，请重新选择')}", status_code=302)
+            if len(content) > 15 * 1024 * 1024:
+                from urllib.parse import quote
+                return RedirectResponse(f"/admin/profile?error={quote('上传文件过大，单张背景图片请控制在 15MB 以内')}", status_code=302)
             _UPLOADED_BG_FILE.write_bytes(content)
             has_uploaded = True
             mode = "upload"
 
-    mode_clean = mode.strip().lower()
-    if mode_clean not in ("preset", "url", "upload", "default"):
-        mode_clean = "default"
+        mode_clean = mode.strip().lower()
+        if mode_clean not in ("preset", "url", "upload", "default"):
+            mode_clean = "default"
 
-    theme_data = {
-        "mode": mode_clean,
-        "preset_key": (preset_key or "default").strip(),
-        "custom_url": (custom_url or "").strip(),
-        "glass": glass in ("1", "true", "on"),
-        "has_uploaded": has_uploaded,
-    }
-    _save_login_theme(theme_data)
-    return RedirectResponse("/admin/profile?msg=saved", status_code=302)
+        theme_data = {
+            "mode": mode_clean,
+            "preset_key": (preset_key or "default").strip(),
+            "custom_url": (custom_url or "").strip(),
+            "glass": glass in ("1", "true", "on"),
+            "has_uploaded": has_uploaded,
+        }
+        _save_login_theme(theme_data)
+        return RedirectResponse("/admin/profile?msg=saved", status_code=302)
+    except Exception as e:
+        from urllib.parse import quote
+        logger.exception("保存登录封面设置失败: {}", e)
+        return RedirectResponse(f"/admin/profile?error={quote('保存失败: ' + str(e))}", status_code=302)
 
 
 @router.post("/profile/theme/reset-upload")
