@@ -273,6 +273,40 @@
       grid-template-columns: 1fr;
     }
   }
+
+  /* 顶部浮动弱提示 (Toast) */
+  .admin-toast-message {
+    position: fixed;
+    top: 24px;
+    left: 50%;
+    transform: translateX(-50%) translateY(-24px);
+    z-index: 9999;
+    padding: 10px 22px;
+    border-radius: 6px;
+    font-size: 14px;
+    font-weight: 550;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    box-shadow: 0 6px 20px rgba(0, 0, 0, 0.12);
+    opacity: 0;
+    transition: transform 0.28s cubic-bezier(0.18, 0.89, 0.32, 1.28), opacity 0.28s ease;
+    pointer-events: none;
+  }
+  .admin-toast-message.show {
+    transform: translateX(-50%) translateY(0);
+    opacity: 1;
+  }
+  .admin-toast--success {
+    background: #f0f9eb;
+    border: 1px solid #e1f3d8;
+    color: #67c23a;
+  }
+  .admin-toast--warning {
+    background: #fdf6ec;
+    border: 1px solid #faecd8;
+    color: #e6a23c;
+  }
 </style>
 
 <div class="edit-page-container">
@@ -298,17 +332,15 @@
   </div>
 
   {% if saved %}
-  <div class="flash" style="margin: 0;">
-    <div class="el-alert el-alert--success is-light" role="alert">
-      <div class="el-alert__content"><span class="el-alert__title">✅ 用户配置已成功保存并下发</span></div>
-    </div>
+  <div class="admin-toast-message admin-toast--success" id="toast-saved">
+    <span style="font-size: 16px;">✅</span>
+    <span>用户配置已成功保存并下发</span>
   </div>
   {% endif %}
   {% if msg == "session_revoked" %}
-  <div class="flash" style="margin: 0;">
-    <div class="el-alert el-alert--warning is-light" role="alert" style="background: #fdf6ec; border: 1px solid #faecd8; color: #e6a23c;">
-      <div class="el-alert__content"><span class="el-alert__title">⚡ 该用户的登录状态已强制设为已过期！其所有现有桌面端会话已失效。</span></div>
-    </div>
+  <div class="admin-toast-message admin-toast--warning" id="toast-revoked">
+    <span style="font-size: 16px;">⚡</span>
+    <span>该用户的登录状态已强制设为已过期（会话已失效）</span>
   </div>
   {% endif %}
 
@@ -773,6 +805,46 @@ function copyPassword(pwd, btn) {
       setTimeout(function() { btn.innerText = orig; }, 1800);
     }
   });
+}
+
+function initAdminToast() {
+  function show(el) {
+    if (!el) return;
+    requestAnimationFrame(function() {
+      el.classList.add("show");
+    });
+    setTimeout(function() {
+      el.classList.remove("show");
+      setTimeout(function() { el.remove(); }, 300);
+    }, 2600);
+  }
+
+  let toastCount = 0;
+  const tSaved = document.getElementById("toast-saved");
+  const tRevoked = document.getElementById("toast-revoked");
+  if (tSaved) {
+    show(tSaved);
+    toastCount++;
+  }
+  if (tRevoked) {
+    if (toastCount > 0) {
+      tRevoked.style.top = "74px";
+    }
+    show(tRevoked);
+    toastCount++;
+  }
+  if (toastCount > 0 && window.history && window.history.replaceState) {
+    const url = new URL(window.location);
+    url.searchParams.delete("saved");
+    url.searchParams.delete("msg");
+    window.history.replaceState({}, document.title, url.pathname + (url.search ? url.search : ""));
+  }
+}
+
+if (document.readyState === "loading") {
+  document.addEventListener("DOMContentLoaded", initAdminToast);
+} else {
+  initAdminToast();
 }
 </script>
 {% endblock %}
