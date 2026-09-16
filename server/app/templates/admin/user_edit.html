@@ -9,6 +9,7 @@
     display: flex;
     flex-direction: column;
     gap: 20px;
+    padding-bottom: 24px;
   }
   
   /* 顶部导航与主操作条 */
@@ -240,19 +241,6 @@
     gap: 14px;
   }
 
-  /* 底部固定操作栏 */
-  .bottom-actions {
-    background: #fff;
-    border: 1px solid #ebeef5;
-    border-radius: 8px;
-    padding: 16px 24px;
-    display: flex;
-    align-items: center;
-    justify-content: flex-end;
-    gap: 14px;
-    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.03);
-    margin-bottom: 20px;
-  }
 
   .lbl-strong {
     font-size: 13px;
@@ -397,10 +385,6 @@
                 <option value="keep" selected>正常有效 (v{{ user.token_version or 1 }})</option>
                 <option value="revoke">设为过期 (保存后下线)</option>
               </select>
-            </div>
-
-            <div style="text-align: right;">
-              <button class="el-button el-button--primary btn-save-main" type="submit" name="save" value="Save" style="width: 100%;">立即保存</button>
             </div>
           </div>
         </div>
@@ -730,12 +714,6 @@
 
         </div>
 
-      </div>
-
-      <!-- 3. 底部操作栏 -->
-      <div class="bottom-actions">
-        <a class="el-button" href="/admin/users" style="padding: 9px 24px;">取消并返回</a>
-        <button class="el-button el-button--primary btn-save-main" type="submit" name="save" value="Save" style="padding: 9px 36px !important;">保存所有更改</button>
       </div>
 
     </div>
