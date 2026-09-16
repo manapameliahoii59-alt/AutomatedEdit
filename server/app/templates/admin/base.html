@@ -448,18 +448,114 @@
       border-color: #e6a23c;
       color: #fff;
     }
-    /* 全局微型音乐电台 Dock & PJAX 样式 */
+    /* 全局悬浮可拖拽音乐电台卡片 */
     .admin-radio-dock {
-      margin: 8px 10px 4px;
-      padding: 10px;
-      background: #f8fafc;
-      border: 1px solid #e4e7ed;
-      border-radius: 8px;
-      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
+      position: fixed;
+      z-index: 2050;
+      width: 260px;
+      bottom: 24px;
+      right: 28px;
+      background: rgba(255, 255, 255, 0.96);
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+      border: 1px solid rgba(220, 223, 230, 0.9);
+      border-radius: 12px;
+      box-shadow: 0 10px 28px rgba(0, 0, 0, 0.12), 0 2px 6px rgba(0, 0, 0, 0.04);
+      padding: 10px 12px 10px;
       display: flex;
       flex-direction: column;
       gap: 6px;
       user-select: none;
+      cursor: grab;
+      transition: box-shadow 0.2s, opacity 0.2s, border-color 0.2s;
+    }
+    .admin-radio-dock:hover {
+      box-shadow: 0 14px 34px rgba(0, 0, 0, 0.16), 0 3px 8px rgba(0, 0, 0, 0.06);
+      border-color: #c6e2ff;
+    }
+    .admin-radio-dock.is-dragging {
+      cursor: grabbing !important;
+      box-shadow: 0 18px 45px rgba(0, 0, 0, 0.25);
+      opacity: 0.92;
+      transition: none;
+    }
+    .admin-radio-dock.is-collapsed {
+      width: 210px;
+      padding: 6px 10px;
+      gap: 4px;
+    }
+    .admin-radio-dock.is-collapsed .radio-dock-header {
+      padding-bottom: 2px;
+      border-bottom: none;
+    }
+    .admin-radio-dock.is-collapsed .radio-dock-body {
+      display: none !important;
+    }
+    .admin-radio-dock.is-collapsed .radio-dock-collapsed-bar {
+      display: flex !important;
+    }
+    .radio-dock-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding-bottom: 6px;
+      border-bottom: 1px solid #f0f2f5;
+    }
+    .radio-dock-drag-handle {
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      font-size: 11px;
+      color: #909399;
+      font-weight: 600;
+      letter-spacing: 0.05em;
+    }
+    .drag-grip-icon {
+      font-size: 14px;
+      color: #b0b5c1;
+      line-height: 1;
+    }
+    .dock-header-actions {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+    }
+    .dock-head-link {
+      font-size: 12px;
+      color: #909399;
+      padding: 1px 4px;
+      border-radius: 4px;
+      line-height: 1;
+      transition: all 0.15s;
+    }
+    .dock-head-link:hover {
+      color: #409eff;
+      background: #ecf5ff;
+    }
+    .dock-head-btn {
+      background: none;
+      border: none;
+      cursor: pointer;
+      color: #909399;
+      font-size: 13px;
+      padding: 1px 4px;
+      border-radius: 4px;
+      line-height: 1;
+      transition: all 0.15s;
+    }
+    .dock-head-btn:hover {
+      color: #409eff;
+      background: #ecf5ff;
+    }
+    .radio-dock-body {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+    .radio-dock-collapsed-bar {
+      display: none;
+      align-items: center;
+      gap: 8px;
     }
     .radio-dock-top {
       display: flex;
@@ -634,35 +730,6 @@
         </a>
         {% endfor %}
       </nav>
-      <!-- 全局微型音乐电台 Dock -->
-      <div class="admin-radio-dock" id="adminRadioDock">
-        <div class="radio-dock-top">
-          <div class="radio-dock-cover-wrap" id="radioDockCoverWrap" title="打开音乐电台">
-            <img class="radio-dock-cover" id="radioDockCover" src="/static/radio/default_cover.svg" alt="Cover" style="display:none;" onerror="this.src='/static/radio/default_cover.svg'">
-            <div class="radio-dock-cover-placeholder" id="radioDockCoverPlaceholder">🎵</div>
-          </div>
-          <div class="radio-dock-info">
-            <div class="radio-dock-title" id="radioDockTitle" title="未播放音乐">未播放音乐</div>
-            <div class="radio-dock-artist" id="radioDockArtist">点击电台开始点歌</div>
-          </div>
-        </div>
-        <div class="radio-dock-bar-wrap" id="radioDockBarWrap" title="点击跳转进度">
-          <div class="radio-dock-bar-bg">
-            <div class="radio-dock-bar-fill" id="radioDockBarFill" style="width: 0%;"></div>
-          </div>
-          <div class="radio-dock-time">
-            <span id="radioDockCurrentTime">00:00</span>
-            <span id="radioDockDuration">00:00</span>
-          </div>
-        </div>
-        <div class="radio-dock-ctrls">
-          <button type="button" class="radio-btn-ctrl" id="radioDockPrev" title="上一首">⏮</button>
-          <button type="button" class="radio-btn-play" id="radioDockToggle" title="播放 / 暂停">▶</button>
-          <button type="button" class="radio-btn-ctrl" id="radioDockNext" title="下一首">⏭</button>
-          <button type="button" class="radio-btn-ctrl" id="radioDockMode" title="列表循环">🔁</button>
-          <a href="/admin/radio" class="radio-btn-link" title="进入音乐电台工作台">📻</a>
-        </div>
-      </div>
       <div class="admin-foot"><a href="/admin/logout">退出登录</a></div>
     </aside>
     <main class="admin-main">
@@ -960,6 +1027,59 @@
   </script>
   {% endif %}
 
+  <!-- 全局可拖动悬浮音乐电台卡片 -->
+  <div class="admin-radio-dock" id="adminRadioDock">
+    <div class="radio-dock-header">
+      <div class="radio-dock-drag-handle" title="按住可拖动电台卡片到任意位置">
+        <span class="drag-grip-icon">⠿</span>
+        <span class="dock-header-label">音乐电台</span>
+      </div>
+      <div class="dock-header-actions">
+        <a href="/admin/radio" class="dock-head-link" title="进入电台工作台">📻</a>
+        <button type="button" class="dock-head-btn" id="radioDockCollapseBtn" title="折叠/展开卡片">▾</button>
+      </div>
+    </div>
+
+    <!-- 展开状态卡片主体 -->
+    <div class="radio-dock-body" id="radioDockBody">
+      <div class="radio-dock-top">
+        <div class="radio-dock-cover-wrap" id="radioDockCoverWrap" title="点击打开音乐电台">
+          <img class="radio-dock-cover" id="radioDockCover" src="/static/radio/default_cover.svg" alt="Cover" style="display:none;" onerror="this.src='/static/radio/default_cover.svg'">
+          <div class="radio-dock-cover-placeholder" id="radioDockCoverPlaceholder">🎵</div>
+        </div>
+        <div class="radio-dock-info">
+          <div class="radio-dock-title" id="radioDockTitle" title="未播放音乐">未播放音乐</div>
+          <div class="radio-dock-artist" id="radioDockArtist">点击电台开始点歌</div>
+        </div>
+      </div>
+      <div class="radio-dock-bar-wrap" id="radioDockBarWrap" title="点击跳转进度">
+        <div class="radio-dock-bar-bg">
+          <div class="radio-dock-bar-fill" id="radioDockBarFill" style="width: 0%;"></div>
+        </div>
+        <div class="radio-dock-time">
+          <span id="radioDockCurrentTime">00:00</span>
+          <span id="radioDockDuration">00:00</span>
+        </div>
+      </div>
+      <div class="radio-dock-ctrls">
+        <button type="button" class="radio-btn-ctrl" id="radioDockPrev" title="上一首">⏮</button>
+        <button type="button" class="radio-btn-play" id="radioDockToggle" title="播放 / 暂停">▶</button>
+        <button type="button" class="radio-btn-ctrl" id="radioDockNext" title="下一首">⏭</button>
+        <button type="button" class="radio-btn-ctrl" id="radioDockMode" title="列表循环">🔁</button>
+      </div>
+    </div>
+
+    <!-- 折叠状态微型条 -->
+    <div class="radio-dock-collapsed-bar" id="radioDockCollapsedBar">
+      <div class="radio-dock-cover-wrap" style="width: 28px; height: 28px; flex: 0 0 28px;" id="radioDockMiniCoverWrap" title="点击打开音乐电台">
+        <img class="radio-dock-cover" id="radioDockMiniCover" src="/static/radio/default_cover.svg" alt="Cover" style="display:none;" onerror="this.src='/static/radio/default_cover.svg'">
+        <div class="radio-dock-cover-placeholder" id="radioDockMiniCoverPlaceholder" style="font-size: 14px;">🎵</div>
+      </div>
+      <div class="radio-dock-title" id="radioDockMiniTitle" style="flex: 1; min-width: 0; font-size: 11px;">未播放音乐</div>
+      <button type="button" class="radio-btn-play" id="radioDockMiniToggle" style="width: 24px; height: 24px; font-size: 10px;" title="播放 / 暂停">▶</button>
+    </div>
+  </div>
+
   <!-- 全局后台音频播放器（永不销毁，保证切页不断播） -->
   <audio id="globalAudioPlayer" preload="auto" style="display:none;"></audio>
 
@@ -1051,6 +1171,7 @@
 
         this.bindDockEvents();
         this.restoreState();
+        initDraggableDock();
 
         // 尝试加载远程曲库列表补全播放列表
         this.fetchPlaylistIfEmpty();
@@ -1064,21 +1185,30 @@
         const barWrap = document.getElementById("radioDockBarWrap");
         const coverWrap = document.getElementById("radioDockCoverWrap");
 
-        if (toggleBtn) toggleBtn.onclick = () => this.togglePlay();
-        if (prevBtn) prevBtn.onclick = () => this.prev();
-        if (nextBtn) nextBtn.onclick = () => this.next();
-        if (modeBtn) modeBtn.onclick = () => this.toggleMode();
-        if (coverWrap) {
-          coverWrap.onclick = () => {
-            if (window.pjaxNavigate) {
-              window.pjaxNavigate("/admin/radio");
-            } else {
-              window.location.href = "/admin/radio";
-            }
-          };
-        }
+        const miniToggleBtn = document.getElementById("radioDockMiniToggle");
+        const miniCoverWrap = document.getElementById("radioDockMiniCoverWrap");
+
+        if (toggleBtn) toggleBtn.onclick = (e) => { e.stopPropagation(); this.togglePlay(); };
+        if (miniToggleBtn) miniToggleBtn.onclick = (e) => { e.stopPropagation(); this.togglePlay(); };
+        if (prevBtn) prevBtn.onclick = (e) => { e.stopPropagation(); this.prev(); };
+        if (nextBtn) nextBtn.onclick = (e) => { e.stopPropagation(); this.next(); };
+        if (modeBtn) modeBtn.onclick = (e) => { e.stopPropagation(); this.toggleMode(); };
+
+        const openRadioPage = (e) => {
+          e.stopPropagation();
+          if (window.pjaxNavigate) {
+            window.pjaxNavigate("/admin/radio");
+          } else {
+            window.location.href = "/admin/radio";
+          }
+        };
+
+        if (coverWrap) coverWrap.onclick = openRadioPage;
+        if (miniCoverWrap) miniCoverWrap.onclick = openRadioPage;
+
         if (barWrap) {
           barWrap.onclick = (e) => {
+            e.stopPropagation();
             if (!this.audio || !this.audio.duration) return;
             const rect = barWrap.getBoundingClientRect();
             const ratio = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
@@ -1317,6 +1447,31 @@
             modeBtn.title = "列表循环";
           }
         }
+
+        // 折叠状态微型栏更新
+        const miniTitleEl = document.getElementById("radioDockMiniTitle");
+        const miniCoverEl = document.getElementById("radioDockMiniCover");
+        const miniPlaceholderEl = document.getElementById("radioDockMiniCoverPlaceholder");
+        const miniToggleBtn = document.getElementById("radioDockMiniToggle");
+
+        if (miniTitleEl) {
+          miniTitleEl.textContent = this.currentTrack ? this.currentTrack.title : "未播放音乐";
+          miniTitleEl.title = this.currentTrack ? this.currentTrack.title : "暂无歌曲";
+        }
+        if (this.currentTrack && this.currentTrack.cover_url) {
+          if (miniCoverEl) {
+            miniCoverEl.src = this.currentTrack.cover_url;
+            miniCoverEl.style.display = "block";
+          }
+          if (miniPlaceholderEl) miniPlaceholderEl.style.display = "none";
+        } else {
+          if (miniCoverEl) miniCoverEl.style.display = "none";
+          if (miniPlaceholderEl) miniPlaceholderEl.style.display = "flex";
+        }
+        if (miniToggleBtn) {
+          miniToggleBtn.innerHTML = this.isPlaying ? "❚❚" : "▶";
+          miniToggleBtn.title = this.isPlaying ? "暂停" : "播放";
+        }
       },
 
       updateProgress() {
@@ -1408,7 +1563,136 @@
       },
     };
 
-    // 3. 全局 PJAX 无缝切页拦截器（确保全页面切换时底层音频永不断播）
+    // 3. 全局可拖拽卡片交互逻辑
+    function initDraggableDock() {
+      const dock = document.getElementById("adminRadioDock");
+      if (!dock || dock._dragInitialized) return;
+      dock._dragInitialized = true;
+
+      let isDragging = false;
+      let startX = 0;
+      let startY = 0;
+      let startLeft = 0;
+      let startTop = 0;
+      let hasMoved = false;
+
+      function applySavedPosition() {
+        try {
+          const raw = localStorage.getItem("admin_radio_dock_pos");
+          if (raw) {
+            const pos = JSON.parse(raw);
+            if (typeof pos.left === "number" && typeof pos.top === "number") {
+              const maxLeft = Math.max(10, window.innerWidth - dock.offsetWidth - 10);
+              const maxTop = Math.max(10, window.innerHeight - dock.offsetHeight - 10);
+              const left = Math.max(10, Math.min(maxLeft, pos.left));
+              const top = Math.max(10, Math.min(maxTop, pos.top));
+              dock.style.left = left + "px";
+              dock.style.top = top + "px";
+              dock.style.right = "auto";
+              dock.style.bottom = "auto";
+              return;
+            }
+          }
+        } catch (e) {}
+
+        // 默认靠右下角
+        dock.style.right = "28px";
+        dock.style.bottom = "24px";
+        dock.style.left = "auto";
+        dock.style.top = "auto";
+      }
+
+      requestAnimationFrame(applySavedPosition);
+      window.addEventListener("resize", applySavedPosition);
+
+      // 鼠标拖拽
+      dock.addEventListener("mousedown", function (e) {
+        if (e.button !== 0) return;
+        if (e.target.closest("button, a, input, .radio-dock-bar-wrap")) {
+          return;
+        }
+
+        isDragging = true;
+        hasMoved = false;
+        startX = e.clientX;
+        startY = e.clientY;
+
+        const rect = dock.getBoundingClientRect();
+        startLeft = rect.left;
+        startTop = rect.top;
+
+        dock.classList.add("is-dragging");
+        e.preventDefault();
+      });
+
+      window.addEventListener("mousemove", function (e) {
+        if (!isDragging) return;
+        const dx = e.clientX - startX;
+        const dy = e.clientY - startY;
+
+        if (Math.abs(dx) > 3 || Math.abs(dy) > 3) {
+          hasMoved = true;
+        }
+
+        let newLeft = startLeft + dx;
+        let newTop = startTop + dy;
+
+        const maxLeft = Math.max(10, window.innerWidth - dock.offsetWidth - 10);
+        const maxTop = Math.max(10, window.innerHeight - dock.offsetHeight - 10);
+        newLeft = Math.max(10, Math.min(maxLeft, newLeft));
+        newTop = Math.max(10, Math.min(maxTop, newTop));
+
+        dock.style.left = newLeft + "px";
+        dock.style.top = newTop + "px";
+        dock.style.right = "auto";
+        dock.style.bottom = "auto";
+      });
+
+      window.addEventListener("mouseup", function () {
+        if (!isDragging) return;
+        isDragging = false;
+        dock.classList.remove("is-dragging");
+
+        if (hasMoved) {
+          try {
+            const rect = dock.getBoundingClientRect();
+            localStorage.setItem(
+              "admin_radio_dock_pos",
+              JSON.stringify({
+                left: Math.round(rect.left),
+                top: Math.round(rect.top),
+              })
+            );
+          } catch (e) {}
+        }
+      });
+
+      // 折叠/展开
+      const collapseBtn = document.getElementById("radioDockCollapseBtn");
+      if (collapseBtn) {
+        collapseBtn.addEventListener("click", function (e) {
+          e.stopPropagation();
+          dock.classList.toggle("is-collapsed");
+          const isCollapsed = dock.classList.contains("is-collapsed");
+          collapseBtn.textContent = isCollapsed ? "▴" : "▾";
+          collapseBtn.title = isCollapsed ? "展开卡片" : "折叠卡片";
+          try {
+            localStorage.setItem("admin_radio_dock_collapsed", isCollapsed ? "1" : "0");
+          } catch (e) {}
+          applySavedPosition();
+        });
+
+        try {
+          if (localStorage.getItem("admin_radio_dock_collapsed") === "1") {
+            dock.classList.add("is-collapsed");
+            collapseBtn.textContent = "▴";
+            collapseBtn.title = "展开卡片";
+          }
+        } catch (e) {}
+      }
+    }
+
+    // 4. 全局 PJAX 无缝切页拦截器（确保全页面切换时底层音频永不断播）
     window.initPjaxNavigation = function () {
       if (window._pjaxInitialized) return;
       window._pjaxInitialized = true;
