@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import re
+import sys
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
@@ -11,9 +12,19 @@ from typing import Callable
 from urllib.parse import unquote, urlparse
 
 import requests
-from PySide6.QtCore import QObject, Qt, QUrl, Signal
+from PySide6.QtCore import QObject, Qt, QUrl, Signal, QTimer
 from PySide6.QtGui import QDesktopServices
-from PySide6.QtWidgets import QProgressDialog, QWidget
+from PySide6.QtWidgets import (
+    QDialog,
+    QHBoxLayout,
+    QLabel,
+    QProgressBar,
+    QProgressDialog,
+    QPushButton,
+    QTextEdit,
+    QVBoxLayout,
+    QWidget,
+)
 from qfluentwidgets import Dialog, qconfig
 
 from app.common.config import APP_NAME, VERSION, cfg
@@ -217,15 +228,200 @@ def _start_installer_download(parent: QWidget | None, info: UpdateInfo) -> None:
     )
 
 
+class ForcedUpdateDialog(QDialog):
+    """强制更新模态对话框：
+    - 绝不允许通过 ESC 或点击关闭按钮绕过使用！
+    - 若用户主动关闭或退出，直接终止程序进程 (sys.exit(0))。
+    """
+
+    def __init__(self, info: UpdateInfo, parent: QWidget | None = None):
+        super().__init__(parent)
+        self.info = info
+        self._is_installing = False
+        self._init_ui()
+
+    def _init_ui(self):
+        self.setWindowTitle("版本停用通知 - 必须更新")
+        self.setFixedWidth(480)
+        self.setWindowFlags(
+            Qt.WindowType.Dialog
+            | Qt.WindowType.CustomizeWindowHint
+            | Qt.WindowType.WindowTitleHint
+            | Qt.WindowType.WindowCloseButtonHint
+            | Qt.WindowType.WindowStaysOnTopHint
+        )
+        self.setWindowModality(Qt.WindowModality.ApplicationModal)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(28, 24, 28, 24)
+        layout.setSpacing(16)
+
+        title_label = QLabel("⚠️ 当前版本已停用，必须更新后方可使用")
+        title_label.setStyleSheet("font-size: 16px; font-weight: bold; color: #cf1322;")
+        layout.addWidget(title_label)
+
+        desc_text = (
+            f"当前客户端版本：v{VERSION}\n"
+            f"系统最低支持版本：v{self.info.min_supported}\n"
+            f"最新发布版本：v{self.info.latest}\n\n"
+            "为保障系统稳定与数据一致性，您当前的版本已停止服务。请更新至最新版本以继续使用。"
+        )
+        desc_label = QLabel(desc_text)
+        desc_label.setWordWrap(True)
+        desc_label.setStyleSheet("font-size: 13px; color: #262626; line-height: 1.5;")
+        layout.addWidget(desc_label)
+
+        if self.info.changelog:
+            cl_title = QLabel("更新说明：")
+            cl_title.setStyleSheet("font-size: 12px; font-weight: bold; color: #595959;")
+            layout.addWidget(cl_title)
+
+            cl_box = QTextEdit()
+            cl_box.setReadOnly(True)
+            cl_box.setPlainText(self.info.changelog)
+            cl_box.setFixedHeight(90)
+            cl_box.setStyleSheet(
+                "background: #f5f5f5; border: 1px solid #d9d9d9; border-radius: 4px; padding: 6px; font-size: 12px; color: #595959;"
+            )
+            layout.addWidget(cl_box)
+
+        self.progress_bar = QProgressBar()
+        self.progress_bar.setRange(0, 100)
+        self.progress_bar.setValue(0)
+        self.progress_bar.setFixedHeight(12)
+        self.progress_bar.setTextVisible(False)
+        self.progress_bar.setStyleSheet("""
+            QProgressBar {
+                background-color: #f0f0f0;
+                border-radius: 6px;
+            }
+            QProgressBar::chunk {
+                background-color: #1890ff;
+                border-radius: 6px;
+            }
+        """)
+        self.progress_bar.hide()
+        layout.addWidget(self.progress_bar)
+
+        self.status_label = QLabel("")
+        self.status_label.setStyleSheet("font-size: 12px; color: #8c8c8c;")
+        self.status_label.hide()
+        layout.addWidget(self.status_label)
+
+        btn_layout = QHBoxLayout()
+        btn_layout.setSpacing(12)
+        btn_layout.addStretch()
+
+        self.exit_btn = QPushButton("退出软件")
+        self.exit_btn.setStyleSheet(
+            "padding: 7px 18px; font-size: 13px; border-radius: 4px; border: 1px solid #d9d9d9; background: #fff;"
+        )
+        self.exit_btn.clicked.connect(self._do_exit)
+        btn_layout.addWidget(self.exit_btn)
+
+        if self.info.download_url:
+            self.update_btn = QPushButton("立即下载并更新")
+            self.update_btn.setStyleSheet(
+                "padding: 7px 22px; font-size: 13px; font-weight: bold; border-radius: 4px; border: none; background: #1890ff; color: #fff;"
+            )
+            self.update_btn.clicked.connect(self._do_update)
+            btn_layout.addWidget(self.update_btn)
+        else:
+            tip = QLabel("未配置下载链接，请联系管理员获取安装包")
+            tip.setStyleSheet("font-size: 12px; color: #ff4d4f;")
+            btn_layout.insertWidget(0, tip)
+
+        layout.addLayout(btn_layout)
+
+    def keyPressEvent(self, event):
+        if event.key() == Qt.Key.Key_Escape:
+            event.ignore()
+            return
+        super().keyPressEvent(event)
+
+    def closeEvent(self, event):
+        if not self._is_installing:
+            sys.exit(0)
+        event.accept()
+
+    def _do_exit(self):
+        sys.exit(0)
+
+    def _do_update(self):
+        if not self.info.download_url:
+            return
+        self.update_btn.setEnabled(False)
+        self.update_btn.setText("正在下载…")
+        self.exit_btn.setEnabled(False)
+        self.progress_bar.show()
+        self.status_label.show()
+        self.status_label.setText("正在准备连接服务器下载安装包…")
+
+        bridge = _DownloadProgressBridge(self)
+
+        def _on_progress(d: int, t: int):
+            if t > 0:
+                pct = min(100, int(d * 100 / t))
+                self.progress_bar.setMaximum(100)
+                self.progress_bar.setValue(pct)
+                self.status_label.setText(
+                    f"下载中: {d / (1024*1024):.1f} / {t / (1024*1024):.1f} MB ({pct}%)"
+                )
+            else:
+                self.progress_bar.setMaximum(0)
+                self.status_label.setText(f"已下载: {d / (1024*1024):.1f} MB")
+
+        bridge.progress.connect(_on_progress)
+
+        def _worker():
+            return download_update_installer(
+                self.info.download_url,
+                version=self.info.latest,
+                progress_callback=lambda d, t: bridge.progress.emit(d, t),
+            )
+
+        def _on_success(path: Path):
+            self._is_installing = True
+            self.status_label.setText("下载完成，正在启动安装程序…")
+            try:
+                _launch_installer(path)
+            except Exception as e:
+                self.status_label.setText(f"无法自动打开安装程序，请手动安装：{path}")
+                self.update_btn.setEnabled(True)
+                self.update_btn.setText("重试更新")
+                self.exit_btn.setEnabled(True)
+                return
+            QTimer.singleShot(1000, lambda: sys.exit(0))
+
+        def _on_error(err_msg: str):
+            self.status_label.setText(f"下载失败：{err_msg}")
+            self.status_label.setStyleSheet("font-size: 12px; color: #ff4d4f;")
+            self.update_btn.setEnabled(True)
+            self.update_btn.setText("重试下载")
+            self.exit_btn.setEnabled(True)
+
+        task_manager.submit_task(
+            _worker,
+            on_success=_on_success,
+            on_error=_on_error,
+            check_access=False,
+        )
+
+
 def show_update_dialog(parent: QWidget | None, info: UpdateInfo) -> None:
+    if info.force:
+        dialog = ForcedUpdateDialog(info, parent)
+        dialog.exec()
+        sys.exit(0)
+        return
+
     dialog = Dialog("发现新版本", _build_message(info), parent)
     dialog.contentLabel.setWordWrap(True)
     dialog.yesButton.setText("立即更新")
-    if info.force or not info.download_url:
+    if not info.download_url:
         dialog.cancelButton.hide()
-        dialog.yesButton.setEnabled(bool(info.download_url))
-        if not info.download_url:
-            dialog.yesButton.setText("确定")
+        dialog.yesButton.setEnabled(False)
+        dialog.yesButton.setText("确定")
     else:
         dialog.cancelButton.setText("稍后")
 
@@ -327,3 +523,31 @@ def check_and_prompt_update(
 
 def prompt_update_on_startup(parent: QWidget | None = None) -> None:
     check_and_prompt_update(parent, manual=False)
+
+
+def check_mandatory_update_on_startup(
+    parent: QWidget | None = None,
+    on_blocked: Callable[[], None] | None = None,
+) -> bool:
+    """启动阶段前置检查强制更新。
+    若存在强制更新，先调用 on_blocked 回调（如关闭 splash），然后弹出不可绕过的 ForcedUpdateDialog；
+    对话框关闭或退出即直接终止应用。
+    返回 True 表示触发了强更阻断；返回 False 表示可正常继续启动。
+    """
+    try:
+        info = fetch_update_info()
+    except Exception:
+        return False
+
+    if info is not None and info.force:
+        if on_blocked:
+            try:
+                on_blocked()
+            except Exception:
+                pass
+        dialog = ForcedUpdateDialog(info, parent)
+        dialog.exec()
+        sys.exit(0)
+        return True
+    return False
+

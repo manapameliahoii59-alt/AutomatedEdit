@@ -116,3 +116,62 @@ def test_download_update_installer(mocker, tmp_path):
     assert path.exists()
     assert path.read_bytes() == b"abcd"
     assert progress == [(4, 4)]
+
+
+def test_check_mandatory_update_on_startup_when_no_update(mocker):
+    mocker.patch("app.data.services.update_service.fetch_update_info", return_value=None)
+    assert update_service.check_mandatory_update_on_startup() is False
+
+
+def test_check_mandatory_update_on_startup_when_not_force(mocker):
+    info = update_service.UpdateInfo(
+        latest="0.0.2",
+        min_supported="0.0.1",
+        download_url="https://x/setup.exe",
+        changelog="",
+        force=False,
+    )
+    mocker.patch("app.data.services.update_service.fetch_update_info", return_value=info)
+    assert update_service.check_mandatory_update_on_startup() is False
+
+
+def test_check_mandatory_update_on_startup_blocks_and_exits(mocker, qapp):
+    info = update_service.UpdateInfo(
+        latest="0.0.2",
+        min_supported="0.0.2",
+        download_url="https://x/setup.exe",
+        changelog="",
+        force=True,
+    )
+    mocker.patch("app.data.services.update_service.fetch_update_info", return_value=info)
+    mocker.patch.object(update_service.ForcedUpdateDialog, "exec", return_value=0)
+    mock_exit = mocker.patch("sys.exit")
+
+    blocked_called = []
+    update_service.check_mandatory_update_on_startup(
+        on_blocked=lambda: blocked_called.append(True)
+    )
+
+    assert blocked_called == [True]
+    assert mock_exit.called
+
+
+def test_forced_update_dialog_blocks_esc(mocker, qapp):
+    from PySide6.QtGui import QKeyEvent
+    from PySide6.QtCore import QEvent, Qt
+
+    info = update_service.UpdateInfo(
+        latest="0.0.2",
+        min_supported="0.0.2",
+        download_url="",
+        changelog="必须更新",
+        force=True,
+    )
+    dialog = update_service.ForcedUpdateDialog(info)
+    mock_exit = mocker.patch("sys.exit")
+
+    # 按 ESC 必须被忽略且不关闭
+    esc_event = QKeyEvent(QEvent.Type.KeyPress, Qt.Key.Key_Escape, Qt.KeyboardModifier.NoModifier)
+    dialog.keyPressEvent(esc_event)
+    assert not esc_event.isAccepted()
+

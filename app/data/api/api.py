@@ -25,6 +25,11 @@ class ApiError(Exception):
         self.detail = detail or ""
 
 
+class ClientVersionUnsupportedError(ApiError):
+    """客户端版本过低已被服务端停用 (HTTP 426)。"""
+    pass
+
+
 @dataclass
 class LoginResult:
     access_token: str
@@ -86,7 +91,10 @@ class RemoteApi:
         self._token = token or ''
 
     def _headers(self) -> dict:
-        headers = {'Content-Type': 'application/json'}
+        headers = {
+            'Content-Type': 'application/json',
+            'X-Client-Version': str(VERSION),
+        }
         if self._token:
             headers['Authorization'] = f'Bearer {self._token}'
         return headers
@@ -132,6 +140,8 @@ class RemoteApi:
             msg = str(detail or "").strip()
             if not msg:
                 msg = f"服务器错误 HTTP {resp.status_code}"
+            if resp.status_code == 426:
+                raise ClientVersionUnsupportedError(msg, status_code=426)
             raise ApiError(msg, status_code=resp.status_code)
         if resp.content:
             return resp.json()

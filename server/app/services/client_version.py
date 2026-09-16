@@ -116,6 +116,97 @@ def build_client_version_out(request: Request | None = None) -> ClientVersionOut
     )
 
 
+def parse_version(version: str) -> tuple[int, ...]:
+    text = (version or "").strip()
+    if not text:
+        return (0,)
+    parts: list[int] = []
+    for segment in text.split("."):
+        token = segment.split("-", 1)[0].strip()
+        if not token:
+            parts.append(0)
+            continue
+        digits = ""
+        for ch in token:
+            if ch.isdigit():
+                digits += ch
+            else:
+                break
+        parts.append(int(digits or "0"))
+    return tuple(parts) if parts else (0,)
+
+
+def compare_versions(left: str, right: str) -> int:
+    """left < right 返回 -1，相等 0，left > right 返回 1。"""
+    a = parse_version(left)
+    b = parse_version(right)
+    width = max(len(a), len(b))
+    a = a + (0,) * (width - len(a))
+    b = b + (0,) * (width - len(b))
+    if a < b:
+        return -1
+    if a > b:
+        return 1
+    return 0
+
+
+def is_version_older(current: str, target: str) -> bool:
+    return compare_versions(current, target) < 0
+
+
+def save_version_file(
+    *,
+    latest: str,
+    min_supported: str,
+    download_url: str = "",
+    changelog: str = "",
+    installer: str = "",
+) -> dict:
+    version_file = get_version_file()
+    version_file.parent.mkdir(parents=True, exist_ok=True)
+
+    existing = _load_version_file() or {}
+    data = {
+        **existing,
+        "latest": (latest or "").strip(),
+        "min_supported": (min_supported or "").strip() or (latest or "").strip(),
+        "download_url": (download_url or "").strip(),
+        "changelog": (changelog or "").strip(),
+    }
+    if installer.strip():
+        data["installer"] = installer.strip()
+    elif "installer" in data and not data["installer"]:
+        del data["installer"]
+
+    version_file.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+    return data
+
+
+def assert_client_version_supported(
+    client_version: str | None,
+    *,
+    request: Request | None = None,
+) -> None:
+    if not client_version or not client_version.strip():
+        return
+
+    version_info = build_client_version_out(request)
+    min_supported = (version_info.min_supported or "").strip()
+    if not min_supported:
+        return
+
+    cur_ver = client_version.strip().lstrip("vV")
+    min_ver = min_supported.lstrip("vV")
+    if is_version_older(cur_ver, min_ver):
+        from fastapi import HTTPException
+
+        raise HTTPException(
+            status_code=426,
+            detail=f"当前客户端版本 (v{cur_ver}) 已停用，最低要求版本为 v{min_ver}，请升级后继续使用！",
+        )
+
+
 # 兼容旧测试/导入名
 RELEASES_DIR = SERVER_ROOT / "release"
 VERSION_FILE = RELEASES_DIR / "version.json"
+

@@ -175,6 +175,16 @@ def _run_main_window(main_window: MainWindow) -> bool:
 
 def main():
     _startup_log("main() begin")
+    # 强制更新前置检查：若当前客户端版本已被停用，直接弹窗硬阻断，不可跳过
+    try:
+        from app.data.services.update_service import check_mandatory_update_on_startup
+
+        if check_mandatory_update_on_startup(on_blocked=close_startup_splash):
+            _startup_log("mandatory update triggered - application exiting")
+            return
+    except Exception as e:
+        _startup_log(f"mandatory update check exception: {e}")
+
     auth = Container.auth_service()
     while True:
         if cfg.auto_login.value and auth.try_auto_login():

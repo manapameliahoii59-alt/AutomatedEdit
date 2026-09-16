@@ -1,6 +1,6 @@
 import secrets
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, Header, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -10,6 +10,7 @@ from app.database import get_db
 from app.deps import get_current_user
 from app.models import User
 from app.schemas import LoginRequest, TokenResponse, UserOut
+from app.services.client_version import assert_client_version_supported
 from app.services.iocpx_auth import IocpxAuthError, verify_iocpx_credentials
 from app.services.user_access import assert_user_allowed
 
@@ -42,7 +43,12 @@ def _get_or_create_user(db: Session, username: str) -> User:
 
 
 @router.post("/login", response_model=TokenResponse)
-def login(body: LoginRequest, db: Session = Depends(get_db)):
+def login(
+    body: LoginRequest,
+    db: Session = Depends(get_db),
+    client_version: str | None = Header(None, alias="X-Client-Version"),
+):
+    assert_client_version_supported(client_version)
     username = (body.username or "").strip()
     password = (body.password or "").strip()
     try:

@@ -83,3 +83,77 @@ def test_get_client_version_from_release_dir(monkeypatch, tmp_path):
         dl = client.get("/release/app-v2.exe")
         assert dl.status_code == 200
         assert dl.content == b"fake-installer"
+
+
+def test_version_compare_logic():
+    assert client_version_service.compare_versions("0.0.17", "0.0.18") == -1
+    assert client_version_service.compare_versions("0.0.18", "0.0.18") == 0
+    assert client_version_service.compare_versions("0.0.19", "0.0.18") == 1
+    assert client_version_service.compare_versions("1.0", "1.0.0") == 0
+    assert client_version_service.is_version_older("0.0.16", "0.0.17") is True
+    assert client_version_service.is_version_older("0.0.17", "0.0.17") is False
+    assert client_version_service.is_version_older("0.0.18", "0.0.17") is False
+
+
+def test_assert_client_version_supported(monkeypatch, tmp_path):
+    from fastapi import HTTPException
+
+    monkeypatch.setattr(settings, "client_releases_dir", str(tmp_path))
+    monkeypatch.setattr(settings, "client_latest_version", "1.0.0")
+    monkeypatch.setattr(settings, "client_min_supported_version", "1.0.0")
+
+    # 当无版本 header 时放行
+    client_version_service.assert_client_version_supported(None)
+    client_version_service.assert_client_version_supported("")
+
+    # 当版本满足时放行
+    client_version_service.assert_client_version_supported("1.0.0")
+    client_version_service.assert_client_version_supported("1.0.1")
+    client_version_service.assert_client_version_supported("v1.0.0")
+
+    # 当版本过低时抛出 426
+    with pytest.raises(HTTPException) as exc_info:
+        client_version_service.assert_client_version_supported("0.9.9")
+    assert exc_info.value.status_code == 426
+    assert "已停用" in exc_info.value.detail
+
+
+def test_save_version_file(monkeypatch, tmp_path):
+    monkeypatch.setattr(settings, "client_releases_dir", str(tmp_path))
+    saved = client_version_service.save_version_file(
+        latest="2.0.0",
+        min_supported="1.9.0",
+        download_url="https://example.com/2.0.0.exe",
+        changelog="重大版本发布",
+        installer="installer-2.0.0.exe",
+    )
+    assert saved["latest"] == "2.0.0"
+    assert saved["min_supported"] == "1.9.0"
+
+    # 重新加载检查
+    v_out = client_version_service.build_client_version_out()
+    assert v_out.latest == "2.0.0"
+    assert v_out.min_supported == "1.9.0"
+    assert v_out.download_url == "https://example.com/2.0.0.exe"
+    assert v_out.changelog == "重大版本发布"
+
+
+def test_login_enforces_version(monkeypatch, tmp_path):
+    from app.routers import auth as auth_router
+
+    monkeypatch.setattr(settings, "client_releases_dir", str(tmp_path))
+    monkeypatch.setattr(settings, "client_latest_version", "2.0.0")
+    monkeypatch.setattr(settings, "client_min_supported_version", "2.0.0")
+
+    app = FastAPI()
+    app.include_router(auth_router.router)
+    with TestClient(app, raise_server_exceptions=False) as client:
+        # 低版本直接 426
+        resp = client.post(
+            "/api/auth/login",
+            json={"username": "test", "password": "123"},
+            headers={"X-Client-Version": "1.0.0"},
+        )
+        assert resp.status_code == 426
+        assert "已停用" in resp.json()["detail"]
+

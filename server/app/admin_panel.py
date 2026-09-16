@@ -9,7 +9,7 @@ from typing import Annotated, Any
 from urllib.parse import urlencode
 
 from fastapi import APIRouter, Depends, File, Form, Query, Request, UploadFile
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from markupsafe import Markup, escape
@@ -21,6 +21,7 @@ from starlette.middleware.sessions import SessionMiddleware
 from app.config import settings
 from app.database import engine
 from app.models import ErrorReport, PlanJob, UsageEvent, User, UserDailyActivity, UserMachine, UserSettings
+from app.services import client_version as client_version_service
 from app.services.plan_secrets import (
     PLAN_LLM_PRESET_CHOICES,
     PLAN_LLM_PROVIDER_DEEPSEEK,
@@ -278,6 +279,7 @@ def _nav(active: str) -> list[dict[str, str]]:
         ("settings", "/admin/settings", "用户配置"),
         ("errors", "/admin/errors", "错误反馈"),
         ("radio", "/admin/radio", "音乐电台"),
+        ("version", "/admin/version", "版本更新"),
         ("profile", "/admin/profile", "个人中心"),
     ]
     return [
@@ -1555,6 +1557,87 @@ def api_radio_track_play(request: Request, track_id: int, db: Db):
         return JSONResponse({"ok": False}, status_code=401)
     increment_track_play_count(track_id, db)
     return {"ok": True}
+
+
+@router.get("/version", response_class=HTMLResponse)
+def admin_version_page(request: Request, db: Db):
+    if not _is_logged_in(request):
+        return _login_redirect(request)
+
+    v_out = client_version_service.build_client_version_out(request)
+    raw_file = client_version_service._load_version_file() or {}
+    installer_name = str(raw_file.get("installer") or raw_file.get("filename") or "").strip()
+
+    version_stats: list[dict[str, Any]] = []
+    try:
+        rows = db.execute(
+            select(
+                UserMachine.client_version,
+                func.count(UserMachine.id).label("machine_count"),
+                func.max(UserMachine.updated_at).label("last_active"),
+            )
+            .where(UserMachine.client_version != "")
+            .group_by(UserMachine.client_version)
+            .order_by(desc("machine_count"))
+        ).all()
+        for r in rows:
+            ver = r[0]
+            count = r[1]
+            last_active = r[2]
+            is_blocked = False
+            if v_out.min_supported:
+                is_blocked = client_version_service.is_version_older(
+                    ver.lstrip("vV"), v_out.min_supported.lstrip("vV")
+                )
+            version_stats.append(
+                {
+                    "version": ver,
+                    "machine_count": count,
+                    "last_active": last_active.strftime("%Y-%m-%d %H:%M") if last_active else "—",
+                    "is_blocked": is_blocked,
+                }
+            )
+    except Exception:
+        version_stats = []
+
+    ctx = _ctx(
+        request,
+        active="version",
+        db=db,
+        version_out=v_out,
+        installer_name=installer_name,
+        version_stats=version_stats,
+    )
+    return templates.TemplateResponse("admin/version.html", ctx)
+
+
+@router.post("/api/version/save")
+async def admin_api_version_save(request: Request, db: Db):
+    if not _is_logged_in(request):
+        return JSONResponse({"ok": False, "error": "未登录"}, status_code=401)
+    try:
+        data = await request.json()
+    except Exception:
+        data = {}
+    latest = (data.get("latest") or "").strip()
+    min_supported = (data.get("min_supported") or "").strip()
+    download_url = (data.get("download_url") or "").strip()
+    changelog = (data.get("changelog") or "").strip()
+    installer = (data.get("installer") or "").strip()
+
+    if not latest:
+        return JSONResponse({"ok": False, "error": "最新版本号不能为空"}, status_code=400)
+    if not min_supported:
+        min_supported = latest
+
+    saved = client_version_service.save_version_file(
+        latest=latest,
+        min_supported=min_supported,
+        download_url=download_url,
+        changelog=changelog,
+        installer=installer,
+    )
+    return {"ok": True, "data": saved, "message": "版本配置已保存，实时生效"}
 
 
 def setup_admin(app: Starlette):

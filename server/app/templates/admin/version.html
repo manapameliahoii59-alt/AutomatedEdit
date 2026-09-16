@@ -1,0 +1,419 @@
+{% extends "admin/base.html" %}
+{% block title %}版本更新管理 · {{ app_name }}{% endblock %}
+{% block body %}
+<style>
+  .version-container {
+    max-width: 1200px;
+    margin: 0 auto;
+    padding: 20px 24px;
+  }
+  .version-head {
+    margin-bottom: 24px;
+  }
+  .version-head h1 {
+    margin: 0 0 8px 0;
+    font-size: 22px;
+    font-weight: 600;
+    color: #303133;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .version-head p {
+    margin: 0;
+    font-size: 13px;
+    color: #909399;
+    line-height: 1.5;
+  }
+  .stat-cards {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+    gap: 16px;
+    margin-bottom: 24px;
+  }
+  .stat-card {
+    background: #fff;
+    border-radius: 8px;
+    padding: 18px 20px;
+    border: 1px solid #e4e7ed;
+    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.03);
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .stat-card__title {
+    font-size: 13px;
+    color: #909399;
+  }
+  .stat-card__value {
+    font-size: 24px;
+    font-weight: 700;
+    color: #303133;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .stat-card__desc {
+    font-size: 12px;
+    color: #a8abb2;
+  }
+
+  .content-grid {
+    display: grid;
+    grid-template-columns: 1.2fr 1fr;
+    gap: 24px;
+  }
+  @media (max-width: 900px) {
+    .content-grid {
+      grid-template-columns: 1fr;
+    }
+  }
+
+  .panel-card {
+    background: #fff;
+    border-radius: 8px;
+    border: 1px solid #e4e7ed;
+    box-shadow: 0 2px 12px rgba(0, 0, 0, 0.04);
+    overflow: hidden;
+  }
+  .panel-card__head {
+    padding: 16px 20px;
+    border-bottom: 1px solid #ebeef5;
+    background: #fafafa;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+  .panel-card__title {
+    margin: 0;
+    font-size: 15px;
+    font-weight: 600;
+    color: #303133;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .panel-card__body {
+    padding: 22px;
+  }
+
+  .form-group {
+    margin-bottom: 20px;
+  }
+  .form-label {
+    display: block;
+    margin-bottom: 7px;
+    font-size: 13px;
+    font-weight: 600;
+    color: #606266;
+  }
+  .form-label .required {
+    color: #f56c6c;
+    margin-right: 4px;
+  }
+  .form-tip {
+    font-size: 12px;
+    color: #909399;
+    margin-top: 5px;
+    line-height: 1.4;
+  }
+  .form-control {
+    width: 100%;
+    box-sizing: border-box;
+    padding: 9px 12px;
+    font-size: 14px;
+    border: 1px solid #dcdfe6;
+    border-radius: 4px;
+    outline: none;
+    transition: border-color 0.2s;
+  }
+  .form-control:focus {
+    border-color: #409eff;
+  }
+  textarea.form-control {
+    resize: vertical;
+    min-height: 90px;
+    font-family: inherit;
+  }
+
+  .quick-action-box {
+    background: #ecf5ff;
+    border: 1px solid #d9ecff;
+    border-radius: 6px;
+    padding: 12px 16px;
+    margin-bottom: 20px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+  }
+  .quick-action-box__text {
+    font-size: 13px;
+    color: #409eff;
+    line-height: 1.4;
+  }
+
+  .table-custom {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13px;
+  }
+  .table-custom th, .table-custom td {
+    padding: 12px 14px;
+    text-align: left;
+    border-bottom: 1px solid #ebeef5;
+  }
+  .table-custom th {
+    background: #f8f9fb;
+    color: #909399;
+    font-weight: 600;
+  }
+  .table-custom tr:last-child td {
+    border-bottom: none;
+  }
+
+  .tag-status {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 3px 8px;
+    border-radius: 4px;
+    font-size: 12px;
+    font-weight: 500;
+  }
+  .tag-status--ok {
+    background: #f0f9eb;
+    color: #67c23a;
+    border: 1px solid #e1f3d8;
+  }
+  .tag-status--blocked {
+    background: #fef0f0;
+    color: #f56c6c;
+    border: 1px solid #fde2e2;
+  }
+</style>
+
+<div class="version-container">
+  <div class="version-head">
+    <h1>
+      <span>🚀 客户端版本发布与强制更新</span>
+    </h1>
+    <p>管理客户端最新版本分发与版本兼容阻断规则。当客户端版本低于「最低运行版本」时，桌面端在启动和登录时均会被硬性阻断，无法使用。</p>
+  </div>
+
+  <!-- 统计信息 -->
+  <div class="stat-cards">
+    <div class="stat-card">
+      <div class="stat-card__title">最新分发版本 (latest)</div>
+      <div class="stat-card__value">
+        <span>v{{ version_out.latest or "未设置" }}</span>
+      </div>
+      <div class="stat-card__desc">向所有存量客户端推荐更新的版本</div>
+    </div>
+
+    <div class="stat-card">
+      <div class="stat-card__title">最低运行版本 (min_supported)</div>
+      <div class="stat-card__value" style="color: #e6a23c;">
+        <span>v{{ version_out.min_supported or version_out.latest or "未设置" }}</span>
+      </div>
+      <div class="stat-card__desc">低于此版本的客户端将被强制阻断</div>
+    </div>
+
+    <div class="stat-card">
+      <div class="stat-card__title">强制更新策略</div>
+      <div class="stat-card__value" style="font-size: 18px;">
+        {% if version_out.min_supported and version_out.latest and version_out.min_supported == version_out.latest %}
+        <span class="tag-status tag-status--blocked" style="font-size: 14px;">⛔ 全员强制更新已开启</span>
+        {% else %}
+        <span class="tag-status tag-status--ok" style="font-size: 14px;">✅ 常规增量更新</span>
+        {% endif %}
+      </div>
+      <div class="stat-card__desc">
+        {% if version_out.min_supported and version_out.latest and version_out.min_supported == version_out.latest %}
+        所有未更新到最新版的用户将被彻底阻断
+        {% else %}
+        低于 v{{ version_out.min_supported }} 阻断，中间版本仅弹窗提醒
+        {% endif %}
+      </div>
+    </div>
+  </div>
+
+  <div class="content-grid">
+    <!-- 配置表单 -->
+    <div class="panel-card">
+      <div class="panel-card__head">
+        <h3 class="panel-card__title">⚙️ 版本更新发布设置</h3>
+      </div>
+      <div class="panel-card__body">
+        <form id="versionConfigForm" onsubmit="handleSaveVersion(event)">
+          <!-- 快捷操作栏 -->
+          <div class="quick-action-box">
+            <div class="quick-action-box__text">
+              <strong>💡 紧急强制更新？</strong><br>
+              若出现重大 Bug 或需全员统一升级，点击右侧按钮可一键将「最低运行版本」同步设为最新版本。
+            </div>
+            <button type="button" class="el-button" style="white-space: nowrap; border-color: #b3d8ff; color: #409eff; background: #fff;" onclick="setForceAll()">
+              一键全员强制升级
+            </button>
+          </div>
+
+          <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px;">
+            <div class="form-group">
+              <label class="form-label" for="latest">
+                <span class="required">*</span>最新客户端版本 (latest)
+              </label>
+              <input type="text" id="latest" name="latest" class="form-control" placeholder="例如: 0.0.18" value="{{ version_out.latest }}" required>
+              <div class="form-tip">桌面端检查更新时发现的最高版本。</div>
+            </div>
+
+            <div class="form-group">
+              <label class="form-label" for="min_supported">
+                <span class="required">*</span>最低运行版本 (min_supported)
+              </label>
+              <input type="text" id="min_supported" name="min_supported" class="form-control" placeholder="例如: 0.0.17" value="{{ version_out.min_supported }}" required>
+              <div class="form-tip">低于此版本直接无法使用软件。</div>
+            </div>
+          </div>
+
+          <div class="form-group">
+            <label class="form-label" for="download_url">
+              安装包下载直链 (download_url)
+            </label>
+            <input type="text" id="download_url" name="download_url" class="form-control" placeholder="例如: http://your-domain.com/release/AutomatedEdit-Setup.exe" value="{{ version_out.download_url }}">
+            <div class="form-tip">客户端更新弹窗中点击「立即更新」时所下载的 EXE 文件直链。</div>
+          </div>
+
+          <div class="form-group">
+            <label class="form-label" for="installer">
+              安装包文件名 (installer，可选)
+            </label>
+            <input type="text" id="installer" name="installer" class="form-control" placeholder="例如: AutomatedEdit-Setup.exe" value="{{ installer_name }}">
+            <div class="form-tip">若放置于服务端 release 目录下，填写文件名将自动拼装下载地址。</div>
+          </div>
+
+          <div class="form-group">
+            <label class="form-label" for="changelog">
+              版本更新说明 (changelog)
+            </label>
+            <textarea id="changelog" name="changelog" class="form-control" placeholder="填写本次更新的具体内容、修复点等，将直接显示在客户端弹窗中...">{{ version_out.changelog }}</textarea>
+          </div>
+
+          <div style="margin-top: 24px; display: flex; gap: 12px; align-items: center;">
+            <button type="submit" id="saveBtn" class="el-button el-button--primary" style="padding: 9px 24px; font-weight: 500;">
+              💾 保存版本配置
+            </button>
+            <span id="saveNotice" style="font-size: 13px; color: #67c23a; display: none;">配置已即时生效</span>
+          </div>
+        </form>
+      </div>
+    </div>
+
+    <!-- 活跃版本设备分布 -->
+    <div class="panel-card">
+      <div class="panel-card__head">
+        <h3 class="panel-card__title">📊 活跃设备客户端版本分布</h3>
+      </div>
+      <div class="panel-card__body" style="padding: 0;">
+        {% if version_stats %}
+        <table class="table-custom">
+          <thead>
+            <tr>
+              <th>版本号</th>
+              <th>设备数量</th>
+              <th>最近活跃</th>
+              <th>当前状态</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for row in version_stats %}
+            <tr>
+              <td style="font-weight: 600; color: #303133;">v{{ row.version }}</td>
+              <td>{{ row.machine_count }} 台</td>
+              <td style="color: #909399; font-size: 12px;">{{ row.last_active }}</td>
+              <td>
+                {% if row.is_blocked %}
+                <span class="tag-status tag-status--blocked">⛔ 已阻断</span>
+                {% else %}
+                <span class="tag-status tag-status--ok">✅ 正常可用</span>
+                {% endif %}
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+        {% else %}
+        <div style="padding: 36px 20px; text-align: center; color: #909399; font-size: 13px;">
+          暂无设备版本记录
+        </div>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+  function setForceAll() {
+    const latest = document.getElementById("latest").value.trim();
+    if (!latest) {
+      if (window.showAdminToast) {
+        window.showAdminToast("请先输入最新版本号", "warning");
+      } else {
+        alert("请先输入最新版本号");
+      }
+      return;
+    }
+    document.getElementById("min_supported").value = latest;
+    if (window.showAdminToast) {
+      window.showAdminToast("已将最低支持版本同步设为 v" + latest + "，保存后将全员强制更新！", "warning");
+    }
+  }
+
+  async function handleSaveVersion(event) {
+    event.preventDefault();
+    const saveBtn = document.getElementById("saveBtn");
+    const originalText = saveBtn.innerText;
+    saveBtn.disabled = true;
+    saveBtn.innerText = "保存中...";
+
+    const payload = {
+      latest: document.getElementById("latest").value.trim(),
+      min_supported: document.getElementById("min_supported").value.trim(),
+      download_url: document.getElementById("download_url").value.trim(),
+      installer: document.getElementById("installer").value.trim(),
+      changelog: document.getElementById("changelog").value.trim(),
+    };
+
+    try {
+      const resp = await fetch("/admin/api/version/save", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
+      });
+      const res = await resp.json();
+      if (res.ok) {
+        if (window.showAdminToast) {
+          window.showAdminToast("🎉 " + (res.message || "版本配置保存成功！"), "success");
+        }
+        setTimeout(() => {
+          window.location.reload();
+        }, 800);
+      } else {
+        if (window.showAdminToast) {
+          window.showAdminToast(res.error || "保存失败", "error");
+        } else {
+          alert(res.error || "保存失败");
+        }
+      }
+    } catch (err) {
+      if (window.showAdminToast) {
+        window.showAdminToast("网络请求异常: " + err, "error");
+      } else {
+        alert("网络请求异常: " + err);
+      }
+    } finally {
+      saveBtn.disabled = false;
+      saveBtn.innerText = originalText;
+    }
+  }
+</script>
+{% endblock %}

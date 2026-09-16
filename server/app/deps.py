@@ -1,4 +1,4 @@
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, Header, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from jose import JWTError
 from sqlalchemy.orm import Session
@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 from app.auth import decode_access_token
 from app.database import get_db
 from app.models import User
+from app.services.client_version import assert_client_version_supported
 from app.services.user_access import assert_user_allowed
 
 bearer_scheme = HTTPBearer(auto_error=False)
@@ -14,7 +15,9 @@ bearer_scheme = HTTPBearer(auto_error=False)
 def get_current_user(
     credentials: HTTPAuthorizationCredentials | None = Depends(bearer_scheme),
     db: Session = Depends(get_db),
+    client_version: str | None = Header(None, alias="X-Client-Version"),
 ) -> User:
+    assert_client_version_supported(client_version)
     if credentials is None or not credentials.credentials:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="未登录或令牌无效")
     token = credentials.credentials

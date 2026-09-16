@@ -53,7 +53,15 @@ class LoginWindow(FramelessDialog):
     def bind_view_model(self):
         self.vm.loadingChanged.connect(self.loading)
         self.vm.loginSuccess.connect(self.accept)
-        self.vm.loginFailed.connect(lambda msg: show_dialog(self, msg, '提示'))
+        self.vm.loginFailed.connect(self._on_login_failed)
+
+    def _on_login_failed(self, msg: str):
+        if "426" in str(msg) or "已停用" in str(msg):
+            from app.data.services.update_service import check_mandatory_update_on_startup
+
+            if check_mandatory_update_on_startup(self):
+                return
+        show_dialog(self, msg, '提示')
 
     def _on_login_clicked(self):
         self.vm.login(
