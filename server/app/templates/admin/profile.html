@@ -198,7 +198,7 @@
     width: 100%;
     max-width: 520px;
     height: 300px;
-    border-radius: 10px;
+    border-radius: 12px;
     overflow: hidden;
     position: relative;
     border: 1px solid #dcdfe6;
@@ -210,59 +210,78 @@
   .preview-overlay {
     position: absolute;
     inset: 0;
-    background: rgba(0, 0, 0, 0.16);
+    background: radial-gradient(circle at 50% 30%, rgba(0, 0, 0, 0.06) 0%, rgba(0, 0, 0, 0.22) 100%);
+    backdrop-filter: blur(2px);
+    -webkit-backdrop-filter: blur(2px);
     pointer-events: none;
   }
   .preview-card-mock {
     position: relative;
     z-index: 2;
-    width: 250px;
-    border-radius: 8px;
-    padding: 16px;
+    width: 260px;
+    border-radius: 12px;
+    padding: 18px 16px;
     text-align: center;
     transition: all 0.3s ease;
   }
   .preview-card-mock.is-glass {
-    background: rgba(255, 255, 255, 0.88);
-    backdrop-filter: blur(14px);
-    -webkit-backdrop-filter: blur(14px);
-    border: 1px solid rgba(255, 255, 255, 0.65);
-    box-shadow: 0 10px 24px rgba(0, 0, 0, 0.14);
+    background: linear-gradient(
+      135deg,
+      rgba(255, 255, 255, 0.68) 0%,
+      rgba(255, 255, 255, 0.45) 50%,
+      rgba(255, 255, 255, 0.58) 100%
+    );
+    backdrop-filter: blur(28px) saturate(210%) contrast(102%);
+    -webkit-backdrop-filter: blur(28px) saturate(210%) contrast(102%);
+    border: 1px solid rgba(255, 255, 255, 0.72);
+    box-shadow:
+      0 18px 40px -10px rgba(0, 0, 0, 0.14),
+      0 1px 3px rgba(0, 0, 0, 0.04),
+      inset 0 1px 1.5px 0 rgba(255, 255, 255, 0.95),
+      inset 0 -1px 2px 0 rgba(255, 255, 255, 0.3);
   }
   .preview-card-mock.no-glass {
-    background: #fff;
+    background: #ffffff;
     border: 1px solid #ebeef5;
-    box-shadow: 0 4px 14px rgba(0, 0, 0, 0.06);
+    box-shadow: 0 6px 18px rgba(0, 0, 0, 0.06);
   }
   .mock-logo {
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    width: 28px;
-    height: 28px;
-    border-radius: 6px;
-    background: #409eff;
+    width: 32px;
+    height: 32px;
+    border-radius: 8px;
+    background: linear-gradient(135deg, #409eff 0%, #2f85eb 100%);
     color: #fff;
-    font-size: 13px;
+    font-size: 15px;
     font-weight: bold;
-    margin-bottom: 6px;
+    margin-bottom: 8px;
+    box-shadow: 0 4px 12px rgba(64, 158, 255, 0.38), inset 0 1px 1px rgba(255, 255, 255, 0.5);
+    border: 1px solid rgba(255, 255, 255, 0.3);
   }
-  .mock-title { font-size: 14px; font-weight: 650; margin: 0; color: #303133; }
-  .mock-sub { font-size: 11px; color: #909399; margin: 2px 0 10px; }
+  .mock-title { font-size: 15px; font-weight: 650; margin: 0; color: #1d2129; letter-spacing: -0.02em; }
+  .mock-sub { font-size: 11px; color: #86909c; margin: 2px 0 12px; letter-spacing: 0.01em; }
   .mock-input {
-    height: 24px;
-    background: rgba(255, 255, 255, 0.9);
-    border: 1px solid #dcdfe6;
-    border-radius: 4px;
+    height: 26px;
+    background: rgba(255, 255, 255, 0.52);
+    backdrop-filter: blur(12px) saturate(160%);
+    -webkit-backdrop-filter: blur(12px) saturate(160%);
+    border: 1px solid rgba(255, 255, 255, 0.65);
+    border-radius: 6px;
     margin-bottom: 8px;
   }
   .mock-btn {
-    height: 24px;
-    background: #409eff;
-    border-radius: 4px;
+    height: 26px;
+    background: linear-gradient(135deg, #409eff 0%, #2f85eb 100%);
+    border: 1px solid rgba(255, 255, 255, 0.35);
+    border-radius: 6px;
     color: #fff;
     font-size: 11px;
-    line-height: 24px;
+    font-weight: 550;
+    line-height: 26px;
+    letter-spacing: 0.02em;
+    box-shadow: 0 4px 12px rgba(64, 158, 255, 0.35), inset 0 1px 1px rgba(255, 255, 255, 0.4);
   }
 
   /* 顶部浮动弱提示 (Toast) */
@@ -477,10 +496,12 @@
         </div>
 
         <!-- 视觉质感选项 -->
-        <div style="margin: 20px 0; padding: 14px 18px; background: #fafbfc; border: 1px solid #ebeef5; border-radius: 6px; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px;">
+        <div style="margin: 20px 0; padding: 16px 20px; background: #fafbfc; border: 1px solid #ebeef5; border-radius: 8px; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 14px;">
           <div>
-            <div style="font-size: 14px; font-weight: 600; color: #303133;">毛玻璃质感（Glassmorphism）</div>
-            <div style="font-size: 12px; color: #909399; margin-top: 2px;">为登录卡片启用高斯模糊半透明玻璃效果，在丰富背景下质感更强</div>
+            <div style="font-size: 14px; font-weight: 600; color: #1d2129; display: flex; align-items: center; gap: 6px;">
+              <span>💧 iOS 液态毛玻璃效果 (Liquid Frosted Glass)</span>
+            </div>
+            <div style="font-size: 12px; color: #86909c; margin-top: 3px;">为登录卡片启用如 iOS / macOS 般的液态高光微折射与超饱和多层毛玻璃质感，通透晶莹</div>
           </div>
           <label style="display: inline-flex; align-items: center; gap: 8px; cursor: pointer; user-select: none;">
             <input
@@ -492,7 +513,7 @@
               onchange="onGlassToggle(this.checked)"
               style="width: 16px; height: 16px; accent-color: #409eff; cursor: pointer;"
             >
-            <span style="font-size: 13px; color: #606266; font-weight: 500;">启用毛玻璃半透明效果</span>
+            <span style="font-size: 13px; color: #409eff; font-weight: 600;">启用 iOS 液态毛玻璃</span>
           </label>
         </div>
 

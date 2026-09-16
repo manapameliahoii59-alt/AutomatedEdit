@@ -4,6 +4,9 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>登录 · {{ app_name }}</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
   <style>
     * { box-sizing: border-box; }
     html, body { margin: 0; height: 100%; }
@@ -13,16 +16,19 @@
       place-items: center;
       background-color: #f5f7fa;
       {{ bg_css | safe }}
-      font-family: "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei UI", sans-serif;
+      font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "Inter", "Segoe UI", Roboto, "PingFang SC", "Hiragino Sans GB", "MiSans", "HarmonyOS Sans SC", "Microsoft YaHei UI", "Microsoft YaHei", sans-serif;
+      -webkit-font-smoothing: antialiased;
+      -moz-osx-font-smoothing: grayscale;
+      text-rendering: optimizeLegibility;
       position: relative;
     }
     {% if bg_css and "f5f7fa" not in bg_css %}
     .bg-overlay {
       position: fixed;
       inset: 0;
-      background: rgba(0, 0, 0, 0.16);
-      backdrop-filter: blur(1px);
-      -webkit-backdrop-filter: blur(1px);
+      background: radial-gradient(circle at 50% 30%, rgba(0, 0, 0, 0.06) 0%, rgba(0, 0, 0, 0.22) 100%);
+      backdrop-filter: blur(2px);
+      -webkit-backdrop-filter: blur(2px);
       z-index: 1;
       pointer-events: none;
     }
@@ -32,85 +38,125 @@
       z-index: 2;
       width: min(420px, 92vw);
       {% if is_glass and bg_css and "f5f7fa" not in bg_css %}
-      background: rgba(255, 255, 255, 0.88);
-      backdrop-filter: blur(20px);
-      -webkit-backdrop-filter: blur(20px);
-      border: 1px solid rgba(255, 255, 255, 0.65);
-      box-shadow: 0 16px 40px rgba(0, 0, 0, 0.16);
+      background: linear-gradient(
+        135deg,
+        rgba(255, 255, 255, 0.68) 0%,
+        rgba(255, 255, 255, 0.45) 50%,
+        rgba(255, 255, 255, 0.58) 100%
+      );
+      backdrop-filter: blur(36px) saturate(210%) contrast(102%);
+      -webkit-backdrop-filter: blur(36px) saturate(210%) contrast(102%);
+      border: 1px solid rgba(255, 255, 255, 0.72);
+      box-shadow:
+        0 24px 50px -12px rgba(0, 0, 0, 0.16),
+        0 1px 3px rgba(0, 0, 0, 0.05),
+        inset 0 1px 1.5px 0 rgba(255, 255, 255, 0.95),
+        inset 0 -1px 2px 0 rgba(255, 255, 255, 0.3);
       {% else %}
-      background: #fff;
+      background: #ffffff;
       border: 1px solid #ebeef5;
-      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.05);
+      box-shadow: 0 12px 32px -8px rgba(0, 0, 0, 0.08), 0 2px 8px rgba(0, 0, 0, 0.03);
       {% endif %}
-      border-radius: 12px;
-      padding: 34px 30px 30px;
-      transition: all 0.3s ease;
+      border-radius: 16px;
+      padding: 38px 34px 32px;
+      transition: all 0.35s cubic-bezier(0.16, 1, 0.3, 1);
     }
     .brand-header {
-      margin-bottom: 24px;
+      margin-bottom: 26px;
       text-align: center;
     }
     .brand-logo {
       display: inline-flex;
       align-items: center;
       justify-content: center;
-      width: 44px;
-      height: 44px;
-      border-radius: 10px;
-      background: linear-gradient(135deg, #409eff 0%, #3a8ee6 100%);
+      width: 48px;
+      height: 48px;
+      border-radius: 12px;
+      background: linear-gradient(135deg, #409eff 0%, #2f85eb 100%);
       color: #fff;
-      font-size: 20px;
-      font-weight: bold;
-      margin-bottom: 10px;
-      box-shadow: 0 4px 12px rgba(64, 158, 255, 0.3);
+      font-size: 22px;
+      font-weight: 600;
+      margin-bottom: 12px;
+      box-shadow: 0 8px 20px -4px rgba(64, 158, 255, 0.42), inset 0 1px 1.5px rgba(255, 255, 255, 0.55);
+      border: 1px solid rgba(255, 255, 255, 0.3);
     }
-    h1 { margin: 0 0 4px; font-size: 22px; color: #303133; font-weight: 650; }
-    p { margin: 0; color: #909399; font-size: 13px; }
-    .el-form-item { margin-bottom: 16px; }
+    h1 {
+      margin: 0 0 6px;
+      font-size: 24px;
+      color: #1d2129;
+      font-weight: 650;
+      letter-spacing: -0.025em;
+    }
+    p {
+      margin: 0;
+      color: #86909c;
+      font-size: 13px;
+      letter-spacing: 0.01em;
+    }
+    .el-form-item { margin-bottom: 18px; }
     .el-input__wrapper {
       display: flex;
       align-items: center;
-      height: 38px;
-      padding: 0 13px;
+      height: 42px;
+      padding: 0 14px;
+      {% if is_glass and bg_css and "f5f7fa" not in bg_css %}
+      background: rgba(255, 255, 255, 0.52);
+      backdrop-filter: blur(16px) saturate(160%);
+      -webkit-backdrop-filter: blur(16px) saturate(160%);
+      border: 1px solid rgba(255, 255, 255, 0.65);
+      box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.03);
+      {% else %}
+      background: #fdfefe;
       border: 1px solid #dcdfe6;
-      border-radius: 6px;
-      background: rgba(255, 255, 255, 0.95);
-      transition: all 0.2s;
+      {% endif %}
+      border-radius: 8px;
+      transition: all 0.22s ease;
+    }
+    .el-input__wrapper:hover {
+      border-color: #c0c4cc;
+      {% if is_glass and bg_css and "f5f7fa" not in bg_css %}
+      background: rgba(255, 255, 255, 0.65);
+      {% endif %}
     }
     .el-input__wrapper:focus-within {
       border-color: #409eff;
-      box-shadow: 0 0 0 2px rgba(64, 158, 255, 0.18);
+      background: rgba(255, 255, 255, 0.88);
+      box-shadow: 0 0 0 3px rgba(64, 158, 255, 0.22), inset 0 1px 2px rgba(0, 0, 0, 0.02);
     }
     .el-input__inner {
       border: 0;
       outline: none;
       width: 100%;
-      height: 34px;
+      height: 36px;
+      font-family: inherit;
       font-size: 14px;
-      color: #303133;
+      letter-spacing: 0.01em;
+      color: #1d2129;
       background: transparent;
     }
     .el-input__inner::placeholder {
-      color: #a8abb2;
+      color: #909399;
+      font-weight: 400;
     }
     .remember-row {
       display: flex;
       align-items: center;
       justify-content: space-between;
-      margin-bottom: 18px;
+      margin-bottom: 20px;
     }
     .remember-label {
       display: inline-flex;
       align-items: center;
-      gap: 7px;
+      gap: 8px;
       font-size: 13px;
-      color: #606266;
+      color: #4e5969;
       cursor: pointer;
       user-select: none;
+      letter-spacing: 0.01em;
     }
     .remember-label input[type="checkbox"] {
-      width: 15px;
-      height: 15px;
+      width: 16px;
+      height: 16px;
       cursor: pointer;
       accent-color: #409eff;
       margin: 0;
@@ -119,26 +165,30 @@
       display: inline-flex;
       align-items: center;
       justify-content: center;
-      height: 38px;
-      padding: 0 16px;
-      border: 1px solid #409eff;
-      border-radius: 6px;
-      background: #409eff;
+      height: 42px;
+      padding: 0 18px;
+      border: 1px solid rgba(255, 255, 255, 0.35);
+      border-radius: 8px;
+      background: linear-gradient(135deg, #409eff 0%, #2f85eb 100%);
       color: #fff;
       cursor: pointer;
+      font-family: inherit;
       font-size: 14px;
-      font-weight: 500;
-      transition: all 0.2s;
+      font-weight: 550;
+      letter-spacing: 0.025em;
+      box-shadow: 0 6px 18px -3px rgba(64, 158, 255, 0.4), inset 0 1px 1px rgba(255, 255, 255, 0.4);
+      transition: all 0.22s ease;
       width: 100%;
     }
     .el-button:hover {
-      background: #66b1ff;
-      border-color: #66b1ff;
-      box-shadow: 0 4px 12px rgba(64, 158, 255, 0.3);
+      background: linear-gradient(135deg, #53a8ff 0%, #3d8ff5 100%);
+      box-shadow: 0 8px 22px -2px rgba(64, 158, 255, 0.5), inset 0 1px 1px rgba(255, 255, 255, 0.5);
+      transform: translateY(-1px);
     }
     .el-button:active {
-      background: #3a8ee6;
-      border-color: #3a8ee6;
+      transform: translateY(0);
+      background: #2b7ad9;
+      box-shadow: 0 3px 10px rgba(64, 158, 255, 0.3);
     }
     .err {
       color: #f56c6c;
