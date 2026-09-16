@@ -1048,7 +1048,10 @@
           <div class="radio-dock-cover-placeholder" id="radioDockCoverPlaceholder">🎵</div>
         </div>
         <div class="radio-dock-info">
-          <div class="radio-dock-title" id="radioDockTitle" title="未播放音乐">未播放音乐</div>
+          <div style="display:flex; align-items:center; gap:4px; max-width: 100%;">
+            <div class="radio-dock-title" id="radioDockTitle" title="未播放音乐">未播放音乐</div>
+            <span id="radioDockGroupBadge" style="display:none; font-size:10px; color:#409eff; background:#ecf5ff; border:1px solid #d9ecff; border-radius:3px; padding:0 4px; flex-shrink:0; white-space:nowrap; max-width:75px; overflow:hidden; text-overflow:ellipsis;"></span>
+          </div>
           <div class="radio-dock-artist" id="radioDockArtist">点击电台开始点歌</div>
         </div>
       </div>
@@ -1130,6 +1133,7 @@
       playlist: [],
       currentIndex: -1,
       currentTrack: null,
+      currentGroup: null, // 当前播放分组 { id, name }
       mode: "sequence", // "sequence" | "loop" | "random"
       isPlaying: false,
       hasReportedCurrentPlay: false,
@@ -1235,17 +1239,23 @@
         } catch (e) {}
       },
 
-      loadPlaylist(tracks) {
+      loadPlaylist(tracks, groupInfo) {
         if (Array.isArray(tracks)) {
           this.playlist = tracks;
+          if (groupInfo !== undefined) {
+            this.currentGroup = groupInfo;
+          }
           this.saveState();
           this.broadcast("playlistchange");
         }
       },
 
-      playTrack(track, newPlaylist) {
+      playTrack(track, newPlaylist, groupInfo) {
         if (newPlaylist && Array.isArray(newPlaylist)) {
           this.playlist = newPlaylist;
+        }
+        if (groupInfo !== undefined) {
+          this.currentGroup = groupInfo;
         }
         if (!track) return;
         this.currentTrack = track;
@@ -1397,6 +1407,17 @@
         const placeholderEl = document.getElementById("radioDockCoverPlaceholder");
         const toggleBtn = document.getElementById("radioDockToggle");
         const modeBtn = document.getElementById("radioDockMode");
+        const groupBadgeEl = document.getElementById("radioDockGroupBadge");
+
+        if (groupBadgeEl) {
+          if (this.currentGroup && this.currentGroup.name) {
+            groupBadgeEl.style.display = "inline-block";
+            groupBadgeEl.textContent = this.currentGroup.name;
+            groupBadgeEl.title = "正在播放分组: " + this.currentGroup.name;
+          } else {
+            groupBadgeEl.style.display = "none";
+          }
+        }
 
         if (this.currentTrack) {
           if (titleEl) {
@@ -1498,6 +1519,7 @@
               isPlaying: this.isPlaying,
               currentIndex: this.currentIndex,
               playlist: this.playlist,
+              currentGroup: this.currentGroup,
               mode: this.mode,
               currentTime: this.audio ? this.audio.currentTime : 0,
               duration: this.audio ? this.audio.duration : 0,
@@ -1520,6 +1542,7 @@
               track: this.currentTrack,
               playlist: this.playlist,
               currentIndex: this.currentIndex,
+              currentGroup: this.currentGroup,
               mode: this.mode,
               currentTime: this.audio ? this.audio.currentTime : 0,
               volume: this.audio ? this.audio.volume : 0.7,
@@ -1545,6 +1568,7 @@
           if (data) {
             if (Array.isArray(data.playlist)) this.playlist = data.playlist;
             if (data.mode) this.mode = data.mode;
+            if (data.currentGroup) this.currentGroup = data.currentGroup;
             if (data.track) {
               this.currentTrack = data.track;
               this.currentIndex = data.currentIndex >= 0 ? data.currentIndex : 0;

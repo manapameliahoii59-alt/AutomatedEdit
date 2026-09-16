@@ -7,9 +7,9 @@ from typing import Any
 
 import httpx
 from sqlalchemy.orm import Session
-from sqlalchemy import select, desc
+from sqlalchemy import select, desc, func, delete
 
-from app.models import RadioTrack
+from app.models import RadioTrack, RadioGroup, RadioTrackGroup
 
 logger = logging.getLogger(__name__)
 
@@ -108,6 +108,7 @@ async def download_bilibili_track(
     custom_title: str | None = None,
     custom_artist: str | None = None,
     cid_override: int | None = None,
+    group_id: int | None = None,
 ) -> RadioTrack:
     """从 B 站下载纯音频流与封面并存库。"""
     info = await parse_bilibili_video(url_or_bvid)
@@ -201,6 +202,13 @@ async def download_bilibili_track(
     db.add(track)
     db.commit()
     db.refresh(track)
+    if group_id:
+        group = db.get(RadioGroup, group_id)
+        if group:
+            db.add(RadioTrackGroup(group_id=group.id, track_id=track.id))
+            db.commit()
+
+    _attach_track_groups([track], db)
     return track
 
 
@@ -211,6 +219,7 @@ async def save_uploaded_track(
     *,
     custom_title: str | None = None,
     custom_artist: str | None = None,
+    group_id: int | None = None,
 ) -> RadioTrack:
     """上传本地音频文件并收录入库。"""
     clean_name = Path(filename).name
@@ -244,12 +253,49 @@ async def save_uploaded_track(
     db.add(track)
     db.commit()
     db.refresh(track)
+    if group_id:
+        group = db.get(RadioGroup, group_id)
+        if group:
+            db.add(RadioTrackGroup(group_id=group.id, track_id=track.id))
+            db.commit()
+
+    _attach_track_groups([track], db)
     return track
 
 
-def list_radio_tracks(db: Session, q: str = "") -> list[RadioTrack]:
-    """查询曲库列表，支持标题或艺术家模糊搜索。"""
+def _attach_track_groups(tracks: list[RadioTrack], db: Session) -> None:
+    """批量为歌曲对象附加所属分组列表信息。"""
+    if not tracks:
+        return
+    track_ids = [t.id for t in tracks]
+    stmt = (
+        select(RadioTrackGroup.track_id, RadioGroup.id, RadioGroup.name)
+        .join(RadioGroup, RadioTrackGroup.group_id == RadioGroup.id)
+        .where(RadioTrackGroup.track_id.in_(track_ids))
+    )
+    rows = db.execute(stmt).all()
+    group_map: dict[int, list[dict[str, Any]]] = {}
+    for tid, gid, gname in rows:
+        if tid not in group_map:
+            group_map[tid] = []
+        group_map[tid].append({"id": gid, "name": gname})
+
+    for t in tracks:
+        t.groups = group_map.get(t.id, [])
+        t.group_ids = [g["id"] for g in t.groups]
+
+
+def list_radio_tracks(db: Session, q: str = "", group_id: int | None = None) -> list[RadioTrack]:
+    """查询曲库列表，支持按关键字搜索和按自定义分组筛选。"""
     stmt = select(RadioTrack)
+    if group_id:
+        matching_track_ids = db.scalars(
+            select(RadioTrackGroup.track_id).where(RadioTrackGroup.group_id == group_id)
+        ).all()
+        if not matching_track_ids:
+            return []
+        stmt = stmt.where(RadioTrack.id.in_(matching_track_ids))
+
     query_text = (q or "").strip()
     if query_text:
         stmt = stmt.where(
@@ -258,11 +304,16 @@ def list_radio_tracks(db: Session, q: str = "") -> list[RadioTrack]:
             (RadioTrack.source_id.ilike(f"%{query_text}%"))
         )
     stmt = stmt.order_by(desc(RadioTrack.id))
-    return list(db.scalars(stmt).all())
+    tracks = list(db.scalars(stmt).all())
+    _attach_track_groups(tracks, db)
+    return tracks
 
 
 def get_radio_track(track_id: int, db: Session) -> RadioTrack | None:
-    return db.get(RadioTrack, track_id)
+    track = db.get(RadioTrack, track_id)
+    if track:
+        _attach_track_groups([track], db)
+    return track
 
 
 def update_radio_track(track_id: int, title: str, artist: str, db: Session) -> RadioTrack | None:
@@ -275,6 +326,7 @@ def update_radio_track(track_id: int, title: str, artist: str, db: Session) -> R
         track.artist = artist.strip()
     db.commit()
     db.refresh(track)
+    _attach_track_groups([track], db)
     return track
 
 
@@ -282,6 +334,9 @@ def delete_radio_track(track_id: int, db: Session) -> bool:
     track = db.get(RadioTrack, track_id)
     if not track:
         return False
+
+    # 清除分组关联
+    db.execute(delete(RadioTrackGroup).where(RadioTrackGroup.track_id == track_id))
 
     # 清理物理音频文件
     if track.audio_url and track.audio_url.startswith("/static/radio/tracks/"):
@@ -332,4 +387,133 @@ def get_radio_stats(db: Session) -> dict[str, Any]:
         "total_duration": total_duration,
         "total_size": total_size,
     }
+
+
+# ---------------------------------------------------------------------------
+# 自定义分组 (Radio Groups) 服务逻辑
+# ---------------------------------------------------------------------------
+
+
+def list_radio_groups(db: Session) -> list[dict[str, Any]]:
+    """获取所有自定义分组列表及组内歌曲统计。"""
+    groups = list(db.scalars(select(RadioGroup).order_by(RadioGroup.id.asc())).all())
+    count_stmt = (
+        select(RadioTrackGroup.group_id, func.count(RadioTrackGroup.track_id))
+        .group_by(RadioTrackGroup.group_id)
+    )
+    counts = dict(db.execute(count_stmt).all())
+    return [
+        {
+            "id": g.id,
+            "name": g.name,
+            "description": g.description or "",
+            "track_count": counts.get(g.id, 0),
+            "created_at": g.created_at.strftime("%Y-%m-%d %H:%M") if g.created_at else "",
+        }
+        for g in groups
+    ]
+
+
+def get_radio_group(group_id: int, db: Session) -> RadioGroup | None:
+    """获取指定分组。"""
+    return db.get(RadioGroup, group_id)
+
+
+def create_radio_group(name: str, description: str, db: Session) -> RadioGroup:
+    """新建自定义分组。"""
+    clean_name = (name or "").strip()
+    if not clean_name:
+        raise ValueError("分组名称不能为空！")
+    existing = db.scalar(select(RadioGroup).where(RadioGroup.name == clean_name))
+    if existing:
+        raise ValueError(f"分组「{clean_name}」已存在，请勿重复创建！")
+
+    group = RadioGroup(name=clean_name, description=(description or "").strip())
+    db.add(group)
+    db.commit()
+    db.refresh(group)
+    return group
+
+
+def update_radio_group(group_id: int, name: str, description: str, db: Session) -> RadioGroup | None:
+    """修改分组名称或描述。"""
+    group = db.get(RadioGroup, group_id)
+    if not group:
+        return None
+    clean_name = (name or "").strip()
+    if clean_name and clean_name != group.name:
+        existing = db.scalar(select(RadioGroup).where(RadioGroup.name == clean_name))
+        if existing and existing.id != group_id:
+            raise ValueError(f"分组名称「{clean_name}」已被其他分组使用！")
+        group.name = clean_name
+    if description is not None:
+        group.description = description.strip()
+    db.commit()
+    db.refresh(group)
+    return group
+
+
+def delete_radio_group(group_id: int, db: Session) -> bool:
+    """删除分组（仅删除分组关系，不删除歌曲本体）。"""
+    group = db.get(RadioGroup, group_id)
+    if not group:
+        return False
+    db.execute(delete(RadioTrackGroup).where(RadioTrackGroup.group_id == group_id))
+    db.delete(group)
+    db.commit()
+    return True
+
+
+def set_track_groups(track_id: int, group_ids: list[int], db: Session) -> list[dict[str, Any]]:
+    """设置单首歌曲所属的自定义分组列表。"""
+    track = db.get(RadioTrack, track_id)
+    if not track:
+        raise ValueError("曲目不存在！")
+
+    db.execute(delete(RadioTrackGroup).where(RadioTrackGroup.track_id == track_id))
+
+    if group_ids:
+        valid_groups = list(db.scalars(select(RadioGroup).where(RadioGroup.id.in_(group_ids))).all())
+        for g in valid_groups:
+            db.add(RadioTrackGroup(track_id=track_id, group_id=g.id))
+
+    db.commit()
+
+    stmt = (
+        select(RadioGroup.id, RadioGroup.name)
+        .join(RadioTrackGroup, RadioTrackGroup.group_id == RadioGroup.id)
+        .where(RadioTrackGroup.track_id == track_id)
+    )
+    return [{"id": gid, "name": gname} for gid, gname in db.execute(stmt).all()]
+
+
+def add_track_to_group(track_id: int, group_id: int, db: Session) -> bool:
+    """将单首歌曲加入指定分组。"""
+    track = db.get(RadioTrack, track_id)
+    group = db.get(RadioGroup, group_id)
+    if not track or not group:
+        return False
+    existing = db.scalar(
+        select(RadioTrackGroup).where(
+            RadioTrackGroup.track_id == track_id,
+            RadioTrackGroup.group_id == group_id,
+        )
+    )
+    if not existing:
+        db.add(RadioTrackGroup(track_id=track_id, group_id=group_id))
+        db.commit()
+    return True
+
+
+def remove_track_from_group(track_id: int, group_id: int, db: Session) -> bool:
+    """将单首歌曲从指定分组中移除。"""
+    db.execute(
+        delete(RadioTrackGroup).where(
+            RadioTrackGroup.track_id == track_id,
+            RadioTrackGroup.group_id == group_id,
+        )
+    )
+    db.commit()
+    return True
+
 

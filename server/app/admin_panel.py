@@ -1229,6 +1229,12 @@ from app.services.radio_service import (
     delete_radio_track,
     increment_track_play_count,
     get_radio_stats,
+    list_radio_groups,
+    get_radio_group,
+    create_radio_group,
+    update_radio_group,
+    delete_radio_group,
+    set_track_groups,
     _STATIC_RADIO_DIR,
 )
 
@@ -1238,13 +1244,16 @@ def radio_page(
     request: Request,
     db: Db,
     q: str = "",
+    group_id: int | None = None,
     msg: str = "",
     error: str = "",
 ):
     if not _is_logged_in(request):
         return RedirectResponse("/admin/login", status_code=302)
-    tracks = list_radio_tracks(db, q=q)
+    tracks = list_radio_tracks(db, q=q, group_id=group_id)
     stats = get_radio_stats(db)
+    groups = list_radio_groups(db)
+    active_group = get_radio_group(group_id, db) if group_id else None
     return templates.TemplateResponse(
         request,
         "admin/radio.html",
@@ -1254,6 +1263,9 @@ def radio_page(
             db=db,
             tracks=tracks,
             stats=stats,
+            groups=groups,
+            active_group_id=group_id,
+            active_group=active_group,
             q=q,
             msg=msg,
             error=error,
@@ -1262,10 +1274,10 @@ def radio_page(
 
 
 @router.get("/api/radio/tracks")
-def api_radio_tracks(request: Request, db: Db):
+def api_radio_tracks(request: Request, db: Db, q: str = "", group_id: int | None = None):
     if not _is_logged_in(request):
         return JSONResponse({"detail": "未登录"}, status_code=401)
-    tracks = list_radio_tracks(db)
+    tracks = list_radio_tracks(db, q=q, group_id=group_id)
     return {
         "tracks": [
             {
@@ -1280,11 +1292,111 @@ def api_radio_tracks(request: Request, db: Db):
                 "source_id": t.source_id,
                 "file_size": t.file_size,
                 "play_count": t.play_count,
+                "groups": getattr(t, "groups", []),
+                "group_ids": getattr(t, "group_ids", []),
                 "created_at": t.created_at.strftime("%Y-%m-%d %H:%M") if t.created_at else "",
             }
             for t in tracks
         ]
     }
+
+
+@router.get("/api/radio/groups")
+def api_radio_groups(request: Request, db: Db):
+    if not _is_logged_in(request):
+        return JSONResponse({"ok": False, "error": "未登录"}, status_code=401)
+    return {"ok": True, "groups": list_radio_groups(db)}
+
+
+@router.post("/api/radio/groups/create")
+async def api_radio_group_create(request: Request, db: Db):
+    if not _is_logged_in(request):
+        return JSONResponse({"ok": False, "error": "未登录"}, status_code=401)
+    try:
+        data = await request.json()
+    except Exception:
+        data = {}
+    name = (data.get("name") or "").strip()
+    description = (data.get("description") or "").strip()
+    try:
+        group = create_radio_group(name, description, db)
+        return {
+            "ok": True,
+            "group": {
+                "id": group.id,
+                "name": group.name,
+                "description": group.description or "",
+                "track_count": 0,
+            },
+        }
+    except ValueError as ve:
+        return JSONResponse({"ok": False, "error": str(ve)})
+    except Exception as e:
+        logger.exception("创建分组失败: %s", e)
+        return JSONResponse({"ok": False, "error": "创建分组失败，请稍后重试"})
+
+
+@router.post("/api/radio/groups/{group_id}/update")
+async def api_radio_group_update(request: Request, group_id: int, db: Db):
+    if not _is_logged_in(request):
+        return JSONResponse({"ok": False, "error": "未登录"}, status_code=401)
+    try:
+        data = await request.json()
+    except Exception:
+        data = {}
+    name = (data.get("name") or "").strip()
+    description = (data.get("description") or "").strip()
+    try:
+        group = update_radio_group(group_id, name, description, db)
+        if not group:
+            return JSONResponse({"ok": False, "error": "分组不存在"}, status_code=404)
+        return {
+            "ok": True,
+            "group": {
+                "id": group.id,
+                "name": group.name,
+                "description": group.description or "",
+            },
+        }
+    except ValueError as ve:
+        return JSONResponse({"ok": False, "error": str(ve)})
+    except Exception as e:
+        logger.exception("更新分组失败: %s", e)
+        return JSONResponse({"ok": False, "error": "更新分组失败，请稍后重试"})
+
+
+@router.post("/api/radio/groups/{group_id}/delete")
+def api_radio_group_delete(request: Request, group_id: int, db: Db):
+    if not _is_logged_in(request):
+        return JSONResponse({"ok": False, "error": "未登录"}, status_code=401)
+    success = delete_radio_group(group_id, db)
+    if not success:
+        return JSONResponse({"ok": False, "error": "分组不存在或删除失败"}, status_code=404)
+    return {"ok": True}
+
+
+@router.post("/api/radio/tracks/{track_id}/groups")
+async def api_radio_track_set_groups(request: Request, track_id: int, db: Db):
+    if not _is_logged_in(request):
+        return JSONResponse({"ok": False, "error": "未登录"}, status_code=401)
+    try:
+        data = await request.json()
+    except Exception:
+        data = {}
+    raw_group_ids = data.get("group_ids", [])
+    group_ids: list[int] = []
+    if isinstance(raw_group_ids, list):
+        for gid in raw_group_ids:
+            try:
+                group_ids.append(int(gid))
+            except (TypeError, ValueError):
+                pass
+    try:
+        assigned_groups = set_track_groups(track_id, group_ids, db)
+        return {"ok": True, "groups": assigned_groups}
+    except Exception as e:
+        logger.exception("设置曲目分组失败: %s", e)
+        return JSONResponse({"ok": False, "error": str(e)})
 
 
 @router.post("/api/radio/bilibili/parse")
@@ -1324,6 +1436,13 @@ async def api_radio_bilibili_download(request: Request, db: Db):
         except (TypeError, ValueError):
             cid = None
 
+    group_id = data.get("group_id")
+    if group_id:
+        try:
+            group_id = int(group_id)
+        except (TypeError, ValueError):
+            group_id = None
+
     if not url:
         return JSONResponse({"ok": False, "error": "缺少 B 站链接参数！"})
     try:
@@ -1333,6 +1452,7 @@ async def api_radio_bilibili_download(request: Request, db: Db):
             custom_title=custom_title,
             custom_artist=custom_artist,
             cid_override=cid,
+            group_id=group_id,
         )
         return {
             "ok": True,
@@ -1348,6 +1468,8 @@ async def api_radio_bilibili_download(request: Request, db: Db):
                 "source_id": track.source_id,
                 "file_size": track.file_size,
                 "play_count": track.play_count,
+                "groups": getattr(track, "groups", []),
+                "group_ids": getattr(track, "group_ids", []),
             },
         }
     except Exception as e:
@@ -1362,6 +1484,7 @@ async def api_radio_upload(
     file: UploadFile = File(...),
     title: Annotated[str, Form()] = "",
     artist: Annotated[str, Form()] = "",
+    group_id: Annotated[int | None, Form()] = None,
 ):
     if not _is_logged_in(request):
         return JSONResponse({"ok": False, "error": "未登录"}, status_code=401)
@@ -1377,6 +1500,7 @@ async def api_radio_upload(
             db,
             custom_title=title or None,
             custom_artist=artist or None,
+            group_id=group_id,
         )
         return {
             "ok": True,
@@ -1390,6 +1514,8 @@ async def api_radio_upload(
                 "source_type": track.source_type,
                 "source_id": track.source_id,
                 "file_size": track.file_size,
+                "groups": getattr(track, "groups", []),
+                "group_ids": getattr(track, "group_ids", []),
             },
         }
     except Exception as e:

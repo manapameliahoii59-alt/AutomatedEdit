@@ -17,7 +17,7 @@ if str(SERVER_ROOT) not in sys.path:
 from app.admin_panel import setup_admin
 from app.config import settings
 from app.database import Base
-from app.models import RadioTrack
+from app.models import RadioTrack, RadioGroup, RadioTrackGroup
 from app.services.radio_service import (
     _extract_bvid,
     parse_bilibili_video,
@@ -29,6 +29,12 @@ from app.services.radio_service import (
     delete_radio_track,
     increment_track_play_count,
     get_radio_stats,
+    list_radio_groups,
+    get_radio_group,
+    create_radio_group,
+    update_radio_group,
+    delete_radio_group,
+    set_track_groups,
 )
 
 
@@ -333,3 +339,176 @@ def test_radio_page_and_api(radio_client):
     resp_del = radio_client.post(f"/admin/api/radio/tracks/{uploaded_id}/delete")
     assert resp_del.status_code == 200
     assert resp_del.json().get("ok") is True
+
+
+def test_radio_group_crud(tmp_path):
+    """测试自定义分组基础 CRUD 及重名约束。"""
+    db_path = tmp_path / "radio_group_crud.db"
+    engine = create_engine(f"sqlite:///{db_path.as_posix()}")
+    Base.metadata.create_all(engine)
+    Session = sessionmaker(bind=engine)
+    db = Session()
+
+    # 1. 创建分组
+    g1 = create_radio_group("车载精选", "适合开车听的动感歌曲", db)
+    assert g1.id is not None
+    assert g1.name == "车载精选"
+    assert g1.description == "适合开车听的动感歌曲"
+
+    # 2. 重名防重创建约束
+    with pytest.raises(ValueError, match="已存在"):
+        create_radio_group("车载精选", "重复创建", db)
+
+    # 3. 创建第二个分组
+    g2 = create_radio_group("轻音乐", "睡前放松", db)
+    assert g2.id is not None
+
+    # 4. 获取分组
+    fetched = get_radio_group(g1.id, db)
+    assert fetched is not None
+    assert fetched.name == "车载精选"
+
+    # 5. 更新分组
+    updated = update_radio_group(g1.id, "车载精选V2", "新描述", db)
+    assert updated.name == "车载精选V2"
+    assert updated.description == "新描述"
+
+    # 6. 重名更新冲突检测
+    with pytest.raises(ValueError, match="已被其他分组使用"):
+        update_radio_group(g1.id, "轻音乐", "尝试改为g2的名称", db)
+
+    # 7. 列表查询
+    groups = list_radio_groups(db)
+    assert len(groups) == 2
+    names = [g["name"] for g in groups]
+    assert "车载精选V2" in names
+    assert "轻音乐" in names
+
+    # 8. 删除分组
+    assert delete_radio_group(g1.id, db) is True
+    assert get_radio_group(g1.id, db) is None
+    assert len(list_radio_groups(db)) == 1
+
+
+def test_track_group_association_and_filtering(tmp_path):
+    """测试歌曲分配分组、多对多关联、按分组筛选及级联关系。"""
+    db_path = tmp_path / "radio_track_groups.db"
+    engine = create_engine(f"sqlite:///{db_path.as_posix()}")
+    Base.metadata.create_all(engine)
+    Session = sessionmaker(bind=engine)
+    db = Session()
+
+    # 创建 2 个分组
+    g_rock = create_radio_group("摇滚精选", "Rock", db)
+    g_pop = create_radio_group("流行金曲", "Pop", db)
+
+    # 创建 2 首歌曲
+    t1 = RadioTrack(title="晴天", artist="周杰伦", duration=269, play_count=0, audio_url="/static/radio/tracks/t1.mp3")
+    t2 = RadioTrack(title="It's My Life", artist="Bon Jovi", duration=224, play_count=0, audio_url="/static/radio/tracks/t2.mp3")
+    db.add_all([t1, t2])
+    db.commit()
+    db.refresh(t1)
+    db.refresh(t2)
+
+    # 设置分组：t1 属于 流行金曲；t2 属于 摇滚精选 和 流行金曲
+    assigned_t1 = set_track_groups(t1.id, [g_pop.id], db)
+    assert len(assigned_t1) == 1
+    assert assigned_t1[0]["id"] == g_pop.id
+
+    assigned_t2 = set_track_groups(t2.id, [g_rock.id, g_pop.id], db)
+    assert len(assigned_t2) == 2
+
+    # 查询全部歌曲
+    all_tracks = list_radio_tracks(db)
+    assert len(all_tracks) == 2
+    # 验证 groups 属性自动挂载
+    for trk in all_tracks:
+        if trk.id == t1.id:
+            assert trk.group_ids == [g_pop.id]
+        elif trk.id == t2.id:
+            assert set(trk.group_ids) == {g_rock.id, g_pop.id}
+
+    # 按分组筛选
+    rock_tracks = list_radio_tracks(db, group_id=g_rock.id)
+    assert len(rock_tracks) == 1
+    assert rock_tracks[0].id == t2.id
+
+    pop_tracks = list_radio_tracks(db, group_id=g_pop.id)
+    assert len(pop_tracks) == 2
+
+    # 统计歌曲数
+    groups_data = list_radio_groups(db)
+    counts_map = {g["id"]: g["track_count"] for g in groups_data}
+    assert counts_map[g_rock.id] == 1
+    assert counts_map[g_pop.id] == 2
+
+    # 删除分组测试（仅清理关联，歌曲本身不删）
+    delete_radio_group(g_rock.id, db)
+    remain_t2 = get_radio_track(t2.id, db)
+    assert remain_t2 is not None
+    assert remain_t2.group_ids == [g_pop.id]
+
+    # 删除歌曲测试（级联清理 RadioTrackGroup 关联）
+    delete_radio_track(t1.id, db)
+    assert get_radio_track(t1.id, db) is None
+    pop_after_del = list_radio_tracks(db, group_id=g_pop.id)
+    assert len(pop_after_del) == 1
+    assert pop_after_del[0].id == t2.id
+
+
+def test_radio_group_api(radio_client):
+    """测试电台分组相关的后台 API 接口与页面。"""
+    # 1. 创建分组 API
+    resp = radio_client.post(
+        "/admin/api/radio/groups/create",
+        json={"name": "夜间电台", "description": "深夜放空"},
+    )
+    assert resp.status_code == 200
+    res_data = resp.json()
+    assert res_data["ok"] is True
+    group_id = res_data["group"]["id"]
+    assert res_data["group"]["name"] == "夜间电台"
+
+    # 2. 查询所有分组 API
+    resp_list = radio_client.get("/admin/api/radio/groups")
+    assert resp_list.status_code == 200
+    groups = resp_list.json()["groups"]
+    assert any(g["id"] == group_id for g in groups)
+
+    # 3. 为已有歌曲分配分组 API
+    tracks_resp = radio_client.get("/admin/api/radio/tracks")
+    track_id = tracks_resp.json()["tracks"][0]["id"]
+
+    resp_set = radio_client.post(
+        f"/admin/api/radio/tracks/{track_id}/groups",
+        json={"group_ids": [group_id]},
+    )
+    assert resp_set.status_code == 200
+    assert resp_set.json()["ok"] is True
+    assert len(resp_set.json()["groups"]) == 1
+
+    # 4. 按分组查询曲目列表 API
+    resp_grouped_tracks = radio_client.get(f"/admin/api/radio/tracks?group_id={group_id}")
+    assert resp_grouped_tracks.status_code == 200
+    assert len(resp_grouped_tracks.json()["tracks"]) == 1
+    assert resp_grouped_tracks.json()["tracks"][0]["id"] == track_id
+
+    # 5. 访问带 group_id 的电台管理页
+    page_resp = radio_client.get(f"/admin/radio?group_id={group_id}")
+    assert page_resp.status_code == 200
+    assert "夜间电台" in page_resp.text
+    assert "播放该分组" in page_resp.text
+
+    # 6. 编辑分组 API
+    resp_edit = radio_client.post(
+        f"/admin/api/radio/groups/{group_id}/update",
+        json={"name": "夜间电台PRO", "description": "深夜放空升级版"},
+    )
+    assert resp_edit.status_code == 200
+    assert resp_edit.json()["ok"] is True
+    assert resp_edit.json()["group"]["name"] == "夜间电台PRO"
+
+    # 7. 删除分组 API
+    resp_del = radio_client.post(f"/admin/api/radio/groups/{group_id}/delete")
+    assert resp_del.status_code == 200
+    assert resp_del.json()["ok"] is True
