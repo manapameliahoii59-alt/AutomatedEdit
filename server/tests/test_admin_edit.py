@@ -381,6 +381,7 @@ def test_user_edit_renders_encode_settings(admin_client):
     assert 'id="encode_x264_preset"' in resp.text
     assert 'id="encode_enable_gpu"' in resp.text
     assert 'id="clip_auto_retry_failed"' in resp.text
+    assert 'id="clip_max_transcribe_episodes"' in resp.text
     assert 'id="clip_render_engine"' in resp.text
     assert 'id="clip_export_dir_display"' in resp.text
 
@@ -397,6 +398,7 @@ def test_user_edit_saves_encode_settings(admin_client):
             "clip_trim_ep1_continued": "0",
             "clip_overlay_bake_png": "1",
             "clip_auto_retry_failed": "1",
+            "clip_max_transcribe_episodes": "25",
             "clip_render_engine": "legacy",
             "save": "Save",
         },
@@ -415,6 +417,7 @@ def test_user_edit_saves_encode_settings(admin_client):
     assert '<option value="1" selected>' in check.text
     auto_retry_html = check.text.split('id="clip_auto_retry_failed"')[1].split('</select>')[0]
     assert '<option value="1" selected>' in auto_retry_html
+    assert 'value="25"' in check.text
 
 
 def test_unconfigured_keys_skips_demo_user(admin_client):

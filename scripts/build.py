@@ -342,6 +342,7 @@ def bundle_config() -> None:
             "changdu_password": "",
             "clip_auto_retry_failed": True,
             "clip_auto_select_after_import": True,
+            "clip_max_transcribe_episodes": 15,
             "clip_export_dir": "",
             "clip_export_name_tag": "",
             "clip_export_date_format": "md",

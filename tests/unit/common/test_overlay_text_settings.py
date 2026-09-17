@@ -1248,6 +1248,8 @@ def test_clip_edit_settings_patch_includes_runtime_fields():
     assert clip["clip_overlay_bake_png"] is False
     assert clip["clip_auto_select_after_import"] is True
     assert clip["clip_auto_retry_failed"] is True
+    # 识别集数上限仅后台可控，客户端不上传
+    assert "clip_max_transcribe_episodes" not in clip
     assert clip["clip_export_dir"] == "D:/out"
     assert clip["clip_render_engine"] == "legacy"
     # 编码档位由后台控制，客户端不上传
@@ -1275,6 +1277,7 @@ def test_apply_runtime_settings_from_clip_edit_dict(monkeypatch):
             "encode_x264_preset": "BOGUS",
             "clip_trim_ep1_continued": True,
             "clip_auto_retry_failed": True,
+            "clip_max_transcribe_episodes": 25,
             "clip_overlay_bake_png": None,
             "clip_export_dir": "D:/should-not-apply",
             "clip_render_engine": "legacy",
@@ -1287,6 +1290,7 @@ def test_apply_runtime_settings_from_clip_edit_dict(monkeypatch):
     assert calls[config_mod.cfg.clip_render_engine] == "legacy"
     assert calls[config_mod.cfg.clip_trim_ep1_continued] is True
     assert calls[config_mod.cfg.clip_auto_retry_failed] is True
+    assert calls[config_mod.cfg.clip_max_transcribe_episodes] == 25
     # None（未配置）与只上传字段都不落地
     assert config_mod.cfg.clip_overlay_bake_png not in calls
     assert config_mod.cfg.clip_export_dir not in calls

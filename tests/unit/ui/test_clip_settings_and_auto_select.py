@@ -85,6 +85,13 @@ class TestClipSettingsDialog:
         assert dlg.result_auto_retry_failed() is True
         dlg.deleteLater()
 
+    def test_dialog_hides_max_transcribe_control(self, qapp):
+        # 识别集数上限改为仅后台管理页面可设置，客户端弹框不再暴露该控件
+        dlg = ClipSettingsDialog()
+        assert not hasattr(dlg, "_max_transcribe_spin")
+        assert not hasattr(dlg, "result_max_transcribe_episodes")
+        dlg.deleteLater()
+
 
 class TestClipEditAutoSelectAfterImport:
     def test_import_with_auto_select_enabled(self, qapp, tmp_path, monkeypatch):
@@ -254,6 +261,27 @@ class TestClipEditAutoSelectAfterImport:
 
         page.deleteLater()
 
+    def test_open_clip_settings_keeps_admin_max_transcribe(self, qapp):
+        # 后台下发的识别集数上限不应被客户端设置弹框覆盖
+        page = ClipEditPage()
+        qconfig.set(cfg.clip_max_transcribe_episodes, 30)
+
+        with patch("app.ui.views.clip_edit.view.ClipSettingsDialog") as mock_dlg_cls:
+            mock_dlg = mock_dlg_cls.return_value
+            mock_dlg.exec.return_value = 1  # Accepted
+            mock_dlg.result_enable_gpu.return_value = True
+            mock_dlg.result_trim_ep1_continued.return_value = False
+            mock_dlg.result_auto_select_after_import.return_value = True
+            mock_dlg.result_auto_retry_failed.return_value = True
+            mock_dlg.result_resolution.return_value = "1280x720"
+
+            page._open_clip_settings()
+
+            assert cfg.clip_max_transcribe_episodes.value == 30
+
+        qconfig.set(cfg.clip_max_transcribe_episodes, 15)
+        page.deleteLater()
+
     def test_delete_project_without_confirmation(self, qapp):
         page = ClipEditPage()
         with patch.object(page.vm, "remove_project") as mock_remove, \
@@ -285,6 +313,8 @@ class TestClipEditAutoSelectAfterImport:
         assert fresh_cfg.clip_overlay_bake_png.defaultValue is True
         # 7. 显卡加速检测 默认 关 (False)
         assert fresh_cfg.encode_enable_gpu.defaultValue is False
+        # 8. 识别集数上限 默认为 15 集
+        assert fresh_cfg.clip_max_transcribe_episodes.defaultValue == 15
 
 
 class TestBatchAllAutoRetry:
@@ -387,4 +417,47 @@ class TestBatchAllAutoRetry:
         assert vm._current_batch_summary.success_count == 1
         assert vm._current_batch_summary.fail_count == 1
         assert not any("正在自动重新执行失败项" in m for m in messages)
+
+
+def test_transcription_service_max_episodes_truncation(tmp_path, monkeypatch):
+    import os
+    from unittest.mock import MagicMock
+    from app.data.models.drama_project import DramaProject
+    from app.data.services.transcription_service import TranscriptionService
+
+    folder = tmp_path / "drama_20_eps"
+    folder.mkdir()
+    for i in range(1, 21):
+        (folder / f"ep_{i:02d}.mp4").write_bytes(b"dummy")
+
+    project = DramaProject(id="p_test", name="20集剧目", folder_path=str(folder), episode_count=20)
+
+    generated_inputs = []
+    mock_model = MagicMock()
+
+    def fake_generate(**kwargs):
+        generated_inputs.append(kwargs.get("input"))
+        return [{"words": ["你好"], "timestamp": [[0, 500]]}]
+
+    mock_model.generate = fake_generate
+
+    monkeypatch.setattr(TranscriptionService, "init_model", lambda: None)
+    monkeypatch.setattr(TranscriptionService, "_model", mock_model)
+    monkeypatch.setattr(TranscriptionService, "_torch", MagicMock())
+
+    # 1. 指定 max_episodes=5，应只识别前 5 集
+    TranscriptionService.transcribe(project, max_episodes=5)
+    assert len(generated_inputs) == 5
+    assert os.path.basename(generated_inputs[0]) == "ep_01.mp4"
+    assert os.path.basename(generated_inputs[4]) == "ep_05.mp4"
+
+    # 2. 缺省使用 cfg.clip_max_transcribe_episodes (例如 8)
+    generated_inputs.clear()
+    qconfig.set(cfg.clip_max_transcribe_episodes, 8)
+    TranscriptionService.transcribe(project)
+    assert len(generated_inputs) == 8
+    assert os.path.basename(generated_inputs[7]) == "ep_08.mp4"
+
+    # 还原
+    qconfig.set(cfg.clip_max_transcribe_episodes, 15)
 

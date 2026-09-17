@@ -1823,6 +1823,15 @@ def apply_runtime_settings_from_clip_edit_dict(data: dict | None) -> bool:
         if value is not None:
             _set(item, bool(value))
 
+    raw_episodes = data.get("clip_max_transcribe_episodes")
+    if raw_episodes is not None:
+        try:
+            ep_val = int(raw_episodes)
+            if 1 <= ep_val <= 200:
+                _set(cfg.clip_max_transcribe_episodes, ep_val)
+        except (ValueError, TypeError):
+            pass
+
     preset_map = (
         ("encode_nvenc_preset", cfg.encode_nvenc_preset, "normalize_nvenc_preset"),
         ("encode_amf_preset", cfg.encode_amf_preset, "normalize_amf_preset"),
@@ -1888,6 +1897,7 @@ def clip_edit_settings_patch(
         clip["clip_auto_select_after_import"] = bool(clip_auto_select_after_import)
     if clip_auto_retry_failed is not None:
         clip["clip_auto_retry_failed"] = bool(clip_auto_retry_failed)
+    # 识别集数上限仅由后台管理页面下发，客户端不上传（apply 时仍会接收）
     # 导出目录：只上传不下载
     if clip_export_dir is not None:
         clip["clip_export_dir"] = str(clip_export_dir).strip()[:512]

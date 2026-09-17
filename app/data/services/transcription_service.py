@@ -271,15 +271,19 @@ class TranscriptionService:
         cls,
         project: DramaProject,
         should_cancel: Callable[[], bool] | None = None,
+        max_episodes: int | None = None,
     ) -> str:
         with cls._lock:
-            return cls._transcribe_locked(project, should_cancel=should_cancel)
+            return cls._transcribe_locked(
+                project, should_cancel=should_cancel, max_episodes=max_episodes
+            )
 
     @classmethod
     def _transcribe_locked(
         cls,
         project: DramaProject,
         should_cancel: Callable[[], bool] | None = None,
+        max_episodes: int | None = None,
     ) -> str:
         if should_cancel and should_cancel():
             _safe_print(f"   《{project.name}》检测到用户取消识别，未启动", flush=True)
@@ -297,11 +301,32 @@ class TranscriptionService:
         if not raw_files:
             raise FileNotFoundError(f"项目 {project.name} 中没有找到视频文件")
 
+        total_found = len(raw_files)
+        limit = max_episodes
+        if limit is None:
+            try:
+                from app.common.config import cfg
+
+                limit = int(getattr(cfg.clip_max_transcribe_episodes, "value", 15) or 15)
+            except Exception:
+                limit = 15
+
+        if limit is not None and limit > 0 and len(raw_files) > limit:
+            raw_files = raw_files[:limit]
+            _safe_print(
+                f"开始识别《{project.name}》（检测到共 {total_found} 集，按配置仅识别前 {len(raw_files)} 集，引擎: SenseVoice-Small）",
+                flush=True,
+            )
+        else:
+            _safe_print(
+                f"开始识别《{project.name}》（共 {len(raw_files)} 集，引擎: SenseVoice-Small）",
+                flush=True,
+            )
+
         global_script = []
         start_time = time.time()
         file_errors: list[str] = []
         total_files = len(raw_files)
-        _safe_print(f"开始识别《{project.name}》（共 {total_files} 集，引擎: SenseVoice-Small）", flush=True)
         _safe_print(f"   识别顺序: {' → '.join(raw_files)}", flush=True)
 
         for index, file in enumerate(raw_files, 1):

@@ -1,7 +1,7 @@
 # coding:utf-8
 import datetime
 
-from qfluentwidgets import (qconfig, QConfig, ConfigItem, BoolValidator, ColorConfigItem)
+from qfluentwidgets import (qconfig, QConfig, ConfigItem, BoolValidator, ColorConfigItem, RangeValidator)
 
 
 class MyQConfig(QConfig):
@@ -70,6 +70,10 @@ class Config(MyQConfig):
     clip_auto_retry_failed = ConfigItem(
         "Tools", "clip_auto_retry_failed", True, BoolValidator()
     )
+    # 自动化剪辑：最大识别集数上限（默认 15，超出自动跳过识别）
+    clip_max_transcribe_episodes = ConfigItem(
+        "Tools", "clip_max_transcribe_episodes", 15, RangeValidator(1, 200)
+    )
     # 策划：短片/长片/混合模式；长片条数与最长时长（最短固定 150s）
     plan_mode = ConfigItem("Tools", "plan_mode", "mixed")
     plan_clip_count = ConfigItem("Tools", "plan_clip_count", 15)
@@ -126,7 +130,7 @@ DEV_API_BASE_URL = "http://127.0.0.1:8000"
 YEAR = datetime.datetime.now().year
 AUTHOR = "dragon"
 AUTHOR_EMAIL = "857134647@qq.com"
-VERSION = '0.0.19'
+VERSION = '0.0.20'
 APP_NAME = "剪辑助手"
 FEEDBACK_URL = f"mailto:{AUTHOR_EMAIL}"
 

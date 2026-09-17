@@ -749,6 +749,20 @@
                     <option value="0" {% if clip_edit.clip_auto_retry_failed is sameas false %}selected{% endif %}>关</option>
                   </select>
                 </div>
+
+                <div>
+                  <label class="lbl-strong" for="clip_max_transcribe_episodes">识别集数上限（集，仅后台可控）</label>
+                  <input
+                    type="number"
+                    class="admin-input"
+                    id="clip_max_transcribe_episodes"
+                    name="clip_max_transcribe_episodes"
+                    min="1"
+                    max="200"
+                    placeholder="默认 15"
+                    value="{{ clip_edit.clip_max_transcribe_episodes if clip_edit.clip_max_transcribe_episodes is not none else 15 }}"
+                  />
+                </div>
               </div>
 
               <!-- 子分组 2: 硬件平台编码档位偏好 -->

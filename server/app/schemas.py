@@ -599,6 +599,8 @@ class ClipEditSettings(BaseModel):
     clip_overlay_bake_png: bool | None = None
     clip_auto_select_after_import: bool | None = None
     clip_auto_retry_failed: bool | None = None
+    # 识别集数上限：仅后台管理页面可设置，默认 15，始终下发客户端
+    clip_max_transcribe_episodes: int = 15
     clip_export_dir: str | None = None
     clip_render_engine: str | None = None
 
@@ -629,6 +631,11 @@ class ClipEditSettings(BaseModel):
             self.clip_render_engine = (
                 engine if engine in _RENDER_ENGINE_VALUES else None
             )
+        try:
+            val = int(self.clip_max_transcribe_episodes)
+            self.clip_max_transcribe_episodes = max(1, min(200, val))
+        except (ValueError, TypeError):
+            self.clip_max_transcribe_episodes = 15
         if isinstance(self.overlay_text_library, dict):
             self.overlay_text_library = OverlayTextLibrarySettings.model_validate(
                 self.overlay_text_library
@@ -663,6 +670,7 @@ class ClipEditSettingsPatch(BaseModel):
     clip_overlay_bake_png: bool | None = None
     clip_auto_select_after_import: bool | None = None
     clip_auto_retry_failed: bool | None = None
+    clip_max_transcribe_episodes: int | None = None
     clip_export_dir: str | None = None
     clip_render_engine: str | None = None
 

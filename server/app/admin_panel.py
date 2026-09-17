@@ -643,6 +643,7 @@ def user_edit_save(
     clip_overlay_bake_png: Annotated[str | None, Form()] = None,
     clip_auto_select_after_import: Annotated[str | None, Form()] = None,
     clip_auto_retry_failed: Annotated[str | None, Form()] = None,
+    clip_max_transcribe_episodes: Annotated[str | None, Form()] = None,
     clip_render_engine: Annotated[str | None, Form()] = None,
     plan_mode: Annotated[str | None, Form()] = None,
     plan_mixed_strategy: Annotated[str | None, Form()] = None,
@@ -747,6 +748,13 @@ def user_edit_save(
         text = (raw or "").strip()
         if text and text != "__unset__":
             clip_patch[key] = text
+    if clip_max_transcribe_episodes is not None and str(clip_max_transcribe_episodes).strip() != "":
+        try:
+            ep_val = int(str(clip_max_transcribe_episodes).strip())
+            if 1 <= ep_val <= 200:
+                clip_patch["clip_max_transcribe_episodes"] = ep_val
+        except (ValueError, TypeError):
+            pass
     if clip_patch:
         patch_user_settings(db, user.id, {"clip_edit": clip_patch})
         db.commit()
