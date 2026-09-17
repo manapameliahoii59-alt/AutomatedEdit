@@ -297,19 +297,19 @@ def test_user_settings_two_way_sync():
     db.commit()
     db.refresh(user)
 
-    # 初始默认 v1
+    # 初始默认 v2
     settings = get_user_settings(db, user.id)
-    assert settings.plan.mixed_strategy == "v1"
+    assert settings.plan.mixed_strategy == "v2"
 
-    # 客户端同步修改为 v2
-    patch_user_settings(db, user.id, {"plan": {"mixed_strategy": "v2"}})
-    updated = get_user_settings(db, user.id)
-    assert updated.plan.mixed_strategy == "v2"
-
-    # 管理员改回 v1
+    # 客户端同步修改为 v1
     patch_user_settings(db, user.id, {"plan": {"mixed_strategy": "v1"}})
+    updated = get_user_settings(db, user.id)
+    assert updated.plan.mixed_strategy == "v1"
+
+    # 管理员改回 v2
+    patch_user_settings(db, user.id, {"plan": {"mixed_strategy": "v2"}})
     updated2 = get_user_settings(db, user.id)
-    assert updated2.plan.mixed_strategy == "v1"
+    assert updated2.plan.mixed_strategy == "v2"
 
     db.close()
 

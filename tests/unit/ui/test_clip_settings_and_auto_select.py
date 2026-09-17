@@ -61,6 +61,30 @@ class TestClipSettingsDialog:
         assert dlg.result_auto_select_after_import() is True
         dlg.deleteLater()
 
+    def test_auto_retry_switch_initialization(self, qapp):
+        qconfig.set(cfg.clip_auto_retry_failed, True)
+        dlg = ClipSettingsDialog()
+        assert dlg._auto_retry_switch.isChecked() is True
+        assert dlg.result_auto_retry_failed() is True
+        dlg.deleteLater()
+
+        qconfig.set(cfg.clip_auto_retry_failed, False)
+        dlg = ClipSettingsDialog()
+        assert dlg._auto_retry_switch.isChecked() is False
+        assert dlg.result_auto_retry_failed() is False
+        dlg.deleteLater()
+
+        qconfig.set(cfg.clip_auto_retry_failed, True)
+
+    def test_auto_retry_switch_toggle(self, qapp):
+        dlg = ClipSettingsDialog()
+        dlg._auto_retry_switch.setChecked(False)
+        assert dlg.result_auto_retry_failed() is False
+
+        dlg._auto_retry_switch.setChecked(True)
+        assert dlg.result_auto_retry_failed() is True
+        dlg.deleteLater()
+
 
 class TestClipEditAutoSelectAfterImport:
     def test_import_with_auto_select_enabled(self, qapp, tmp_path, monkeypatch):
@@ -197,6 +221,39 @@ class TestClipEditAutoSelectAfterImport:
 
         page.deleteLater()
 
+    def test_open_clip_settings_saves_auto_retry_setting(self, qapp):
+        page = ClipEditPage()
+        qconfig.set(cfg.clip_auto_retry_failed, True)
+
+        with patch("app.ui.views.clip_edit.view.ClipSettingsDialog") as mock_dlg_cls:
+            mock_dlg = mock_dlg_cls.return_value
+            mock_dlg.exec.return_value = 1  # Accepted
+            mock_dlg.result_enable_gpu.return_value = True
+            mock_dlg.result_trim_ep1_continued.return_value = False
+            mock_dlg.result_auto_select_after_import.return_value = True
+            mock_dlg.result_auto_retry_failed.return_value = False
+            mock_dlg.result_resolution.return_value = "1280x720"
+
+            page._open_clip_settings()
+
+            assert cfg.clip_auto_retry_failed.value is False
+
+        # Test switching back to True
+        with patch("app.ui.views.clip_edit.view.ClipSettingsDialog") as mock_dlg_cls:
+            mock_dlg = mock_dlg_cls.return_value
+            mock_dlg.exec.return_value = 1  # Accepted
+            mock_dlg.result_enable_gpu.return_value = True
+            mock_dlg.result_trim_ep1_continued.return_value = True
+            mock_dlg.result_auto_select_after_import.return_value = True
+            mock_dlg.result_auto_retry_failed.return_value = True
+            mock_dlg.result_resolution.return_value = "1280x720"
+
+            page._open_clip_settings()
+
+            assert cfg.clip_auto_retry_failed.value is True
+
+        page.deleteLater()
+
     def test_delete_project_without_confirmation(self, qapp):
         page = ClipEditPage()
         with patch.object(page.vm, "remove_project") as mock_remove, \
@@ -205,3 +262,129 @@ class TestClipEditAutoSelectAfterImport:
             mock_remove.assert_called_once_with("test-proj-id")
             mock_dialog.assert_not_called()
         page.deleteLater()
+
+    def test_new_user_default_settings(self):
+        """验证新用户开箱默认配置符合业务规范。"""
+        from app.common.config import Config
+        from app.data.services.render_service import RenderService, RENDER_ENGINE_CHOICES
+
+        fresh_cfg = Config()
+        # 1. 混合模式策略版本 默认 "v2"
+        assert fresh_cfg.plan_mixed_strategy.defaultValue == "v2"
+        # 2. 渲染引擎 默认 "current"（UI 映射为 "v2"）
+        assert fresh_cfg.clip_render_engine.defaultValue == "current"
+        assert dict(RENDER_ENGINE_CHOICES).get("current") == "v2"
+        assert RenderService.normalize_render_engine("v2") == "current"
+        # 3. 去掉未完待续 默认为 开 (True)
+        assert fresh_cfg.clip_trim_ep1_continued.defaultValue is True
+        # 4. 导入后自动全选 默认为 开 (True)
+        assert fresh_cfg.clip_auto_select_after_import.defaultValue is True
+        # 5. 流程结束后自动重试失败项 默认为 开 (True)
+        assert fresh_cfg.clip_auto_retry_failed.defaultValue is True
+        # 6. 叠字预渲染提速 默认为 开 (True)
+        assert fresh_cfg.clip_overlay_bake_png.defaultValue is True
+        # 7. 显卡加速检测 默认 关 (False)
+        assert fresh_cfg.encode_enable_gpu.defaultValue is False
+
+
+class TestBatchAllAutoRetry:
+    def test_batch_all_auto_retry_flow(self, qapp, monkeypatch):
+        from types import SimpleNamespace
+        from app.data.models.drama_project import DramaProject
+        from app.ui.views.clip_edit.view_model import ClipEditViewModel
+
+        p1 = DramaProject(id="p1", name="剧目1", folder_path="d1", episode_count=1)
+        p2 = DramaProject(id="p2", name="剧目2", folder_path="d2", episode_count=1)
+
+        monkeypatch.setattr(
+            "app.ui.views.clip_edit.view_model.ClipEditViewModel._load_settings_from_server",
+            lambda self: None,
+        )
+
+        vm = ClipEditViewModel()
+        vm._projects = [p1, p2]
+
+        monkeypatch.setattr(vm, "_ensure_can_plan", lambda *args: True)
+        monkeypatch.setattr(vm, "_ensure_can_clip", lambda *args: True)
+        monkeypatch.setattr(
+            "app.data.services.usage_service.UsageService.report",
+            lambda *args, **kwargs: None,
+        )
+        monkeypatch.setattr(
+            "app.data.services.usage_service.UsageService.report_render",
+            lambda *args, **kwargs: None,
+        )
+
+        def fake_submit_task(fn, on_success=None, on_error=None):
+            try:
+                res = fn()
+                if on_success:
+                    on_success(res)
+            except Exception as e:
+                if on_error:
+                    on_error(str(e))
+
+        monkeypatch.setattr("app.core.task_manager.task_manager.submit_task", fake_submit_task)
+
+        def fake_submit_render(project, on_success, on_error, index=1, total=1):
+            on_success(SimpleNamespace(total_seconds=0.5, success_count=1, error_count=0))
+
+        monkeypatch.setattr(vm, "_submit_render", fake_submit_render)
+
+        transcribe_calls = []
+        def fake_transcribe(proj, **kwargs):
+            transcribe_calls.append(proj.id)
+            return True
+
+        monkeypatch.setattr(
+            "app.data.services.transcription_service.TranscriptionService.transcribe",
+            fake_transcribe,
+        )
+
+        p2_attempt = [0]
+        plan_calls = []
+        def fake_plan(proj, **kwargs):
+            plan_calls.append(proj.id)
+            if proj.id == "p2":
+                p2_attempt[0] += 1
+                if p2_attempt[0] == 1:
+                    raise RuntimeError("模拟策划网络错误")
+            return {"status": "ok"}
+
+        monkeypatch.setattr(
+            "app.data.services.ai_director_service.AIDirectorService.plan",
+            fake_plan,
+        )
+
+        messages = []
+        vm.messageReceived.connect(lambda msg: messages.append(msg))
+
+        # Case 1: clip_auto_retry_failed 为 True
+        qconfig.set(cfg.clip_auto_retry_failed, True)
+        vm.batch_all(["p1", "p2"])
+
+        # 验证断点续跑：p2 在第二轮重试时跳过识别（transcribe_calls 仍然只有 2 次）
+        assert transcribe_calls == ["p1", "p2"]
+        # 策划在第二轮重试了 p2（总共 3 次策划：p1, p2, p2）
+        assert plan_calls == ["p1", "p2", "p2"]
+        # 最终 summary 应该成功 2 部，失败 0 部
+        assert vm._current_batch_summary is not None
+        assert vm._current_batch_summary.success_count == 2
+        assert vm._current_batch_summary.fail_count == 0
+        assert any("正在自动重新执行失败项" in m for m in messages)
+        assert any("含自动重试" in m for m in messages)
+
+        # Case 2: clip_auto_retry_failed 为 False 时不重试
+        transcribe_calls.clear()
+        plan_calls.clear()
+        p2_attempt[0] = 0
+        messages.clear()
+        qconfig.set(cfg.clip_auto_retry_failed, False)
+
+        vm.batch_all(["p1", "p2"])
+        assert transcribe_calls == ["p1", "p2"]
+        assert plan_calls == ["p1", "p2"]
+        assert vm._current_batch_summary.success_count == 1
+        assert vm._current_batch_summary.fail_count == 1
+        assert not any("正在自动重新执行失败项" in m for m in messages)
+

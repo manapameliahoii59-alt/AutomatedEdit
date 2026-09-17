@@ -47,7 +47,7 @@ from app.services.plan_secrets import (
 )
 from app.services.usage_meta import PLAN_MODE_LABELS
 from app.services.user_machine import get_machine
-from app.services.user_settings import get_user_settings, patch_user_settings
+from app.services.user_settings import _load_data, get_user_settings, patch_user_settings
 
 _DRAMA_COL_MAX_WIDTH_PX = 200
 _PAGE_SIZE = 40
@@ -486,7 +486,10 @@ def users_list(
     q: str = "",
     page: int = Query(default=1, ge=1),
 ):
-    stmt = select(User).options(joinedload(User.secrets))
+    stmt = select(User).options(
+        joinedload(User.secrets),
+        joinedload(User.settings),
+    )
     count_stmt = select(func.count(User.id))
     keyword = q.strip()
     if keyword:
@@ -501,8 +504,17 @@ def users_list(
         stmt.order_by(desc(User.id)).offset(offset).limit(_PAGE_SIZE)
     ).all()
     users = []
+    mode_labels = {
+        "mixed": "混合模式",
+        "long": "长片模式",
+        "short": "短片模式",
+    }
     for user in rows:
         preset, label, keys, _dash, _thinking = _user_plan_fields(user)
+        user_settings = getattr(user, "settings", None)
+        raw_settings_data = _load_data(user_settings.data if user_settings else "")
+        plan_mode_raw = raw_settings_data.get("plan", {}).get("mode", "mixed")
+        plan_mode_label = mode_labels.get(str(plan_mode_raw).strip().lower(), "混合模式")
         users.append(
             {
                 "id": user.id,
@@ -515,6 +527,7 @@ def users_list(
                 "plan_limit": user.daily_plan_limit,
                 "clip_limit": user.daily_clip_limit,
                 "download_limit": getattr(user, "daily_download_limit", 30),
+                "plan_mode": plan_mode_label,
                 "plan_label": label,
                 "keys_preview": _keys_preview(keys),
                 "created_at": _fmt_dt(user.created_at),
@@ -629,7 +642,9 @@ def user_edit_save(
     clip_trim_ep1_continued: Annotated[str | None, Form()] = None,
     clip_overlay_bake_png: Annotated[str | None, Form()] = None,
     clip_auto_select_after_import: Annotated[str | None, Form()] = None,
+    clip_auto_retry_failed: Annotated[str | None, Form()] = None,
     clip_render_engine: Annotated[str | None, Form()] = None,
+    plan_mode: Annotated[str | None, Form()] = None,
     plan_mixed_strategy: Annotated[str | None, Form()] = None,
     session_action: Annotated[str | None, Form()] = None,
     save: Annotated[str | None, Form()] = None,
@@ -717,6 +732,7 @@ def user_edit_save(
         ("clip_trim_ep1_continued", clip_trim_ep1_continued),
         ("clip_overlay_bake_png", clip_overlay_bake_png),
         ("clip_auto_select_after_import", clip_auto_select_after_import),
+        ("clip_auto_retry_failed", clip_auto_retry_failed),
     ):
         value = _parse_tristate(raw)
         if value is not None:
@@ -735,10 +751,16 @@ def user_edit_save(
         patch_user_settings(db, user.id, {"clip_edit": clip_patch})
         db.commit()
 
-    # 策划设置：混合模式策略版本
+    # 策划设置：策划模式与混合模式策略版本（双向同步）
+    plan_patch: dict[str, Any] = {}
+    p_mode = (plan_mode or "").strip().lower()
+    if p_mode in ("mixed", "long", "short"):
+        plan_patch["mode"] = p_mode
     strat = (plan_mixed_strategy or "").strip().lower()
     if strat in ("v1", "v2"):
-        patch_user_settings(db, user.id, {"plan": {"mixed_strategy": strat}})
+        plan_patch["mixed_strategy"] = strat
+    if plan_patch:
+        patch_user_settings(db, user.id, {"plan": plan_patch})
         db.commit()
 
     return RedirectResponse(f"/admin/user/edit/{user_id}?saved=1", status_code=302)

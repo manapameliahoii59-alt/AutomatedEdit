@@ -18,6 +18,8 @@ def test_encrypt_decrypt_roundtrip():
 
 def test_client_pycryptodome_compatible():
     """客户端使用 pycryptodome 解密服务端 cryptography 密文。"""
+    import pytest
+    pytest.importorskip("Crypto")
     import base64
     import json
 

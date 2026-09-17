@@ -28,14 +28,23 @@ def write_release_version(
 ) -> Path:
     out_dir = release_dir or (ROOT / "release")
     out_dir.mkdir(parents=True, exist_ok=True)
+    path = out_dir / "version.json"
+    existing_min = ""
+    if path.is_file():
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+            existing_min = str(data.get("min_supported") or "").strip()
+        except Exception:
+            pass
+
+    actual_min = (min_supported or existing_min or VERSION).strip() or VERSION
     installer = f"{APP_NAME}-v{VERSION}-installer.exe"
     payload = {
         "latest": VERSION,
-        "min_supported": (min_supported or VERSION).strip() or VERSION,
+        "min_supported": actual_min,
         "installer": installer,
-        "changelog": changelog.strip(),
+        "changelog": changelog.strip() or "1. 自动化剪辑新增失败项自动断点重试\n2. 优化版本兼容与配置体验",
     }
-    path = out_dir / "version.json"
     path.write_text(
         json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
         encoding="utf-8",

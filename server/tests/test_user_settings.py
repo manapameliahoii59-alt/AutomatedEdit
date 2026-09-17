@@ -168,6 +168,7 @@ def test_build_settings_out_encode_defaults_none():
     assert out.clip_edit.encode_nvenc_preset is None
     assert out.clip_edit.encode_amf_preset is None
     assert out.clip_edit.clip_trim_ep1_continued is None
+    assert out.clip_edit.clip_auto_retry_failed is None
     assert out.clip_edit.clip_export_dir is None
     assert out.clip_edit.clip_render_engine is None
 
@@ -184,6 +185,7 @@ def test_patch_clip_edit_encode_settings(monkeypatch):
                 "encode_nvenc_preset": "p7",
                 "encode_x264_preset": "BOGUS",
                 "clip_trim_ep1_continued": True,
+                "clip_auto_retry_failed": True,
                 "clip_export_dir": "D:/out",
                 "clip_render_engine": "legacy",
             }
@@ -194,10 +196,12 @@ def test_patch_clip_edit_encode_settings(monkeypatch):
     assert ce.encode_nvenc_preset == "p7"
     assert ce.encode_x264_preset is None  # 非法值被丢弃
     assert ce.clip_trim_ep1_continued is True
+    assert ce.clip_auto_retry_failed is True
     assert ce.clip_export_dir == "D:/out"
     assert ce.clip_render_engine == "legacy"
     stored = json.loads(db.rows[1].data)
     assert stored["clip_edit"]["encode_nvenc_preset"] == "p7"
+    assert stored["clip_edit"]["clip_auto_retry_failed"] is True
     assert stored["clip_edit"]["clip_render_engine"] == "legacy"
     assert "encode_x264_preset" not in stored["clip_edit"]
 

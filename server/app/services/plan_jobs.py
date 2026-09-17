@@ -254,11 +254,11 @@ def create_plan_job(db: Session, user_id: int, payload: dict[str, Any]) -> PlanJ
     if not plan_strategy:
         try:
             user_settings = get_user_settings(db, user_id)
-            plan_strategy = getattr(user_settings.plan, "mixed_strategy", "v1")
+            plan_strategy = getattr(user_settings.plan, "mixed_strategy", "v2")
         except Exception:
-            plan_strategy = "v1"
+            plan_strategy = "v2"
     payload["plan_strategy"] = (
-        "v2" if str(plan_strategy or "").strip().lower() == "v2" else "v1"
+        "v1" if str(plan_strategy or "").strip().lower() == "v1" else "v2"
     )
     progress = {
         "phase": "plan",

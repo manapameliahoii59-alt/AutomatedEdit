@@ -341,3 +341,16 @@ def test_admin_errors_batch_resolve(monkeypatch, test_setup):
         assert page_resp2.status_code == 200
         assert "is-disabled" in page_resp2.text
 
+        # 7. 验证页面脚本中避免了顶层 const 声明，防止 PJAX 重复执行引发 SyntaxError
+        assert "const errorRows =" not in page_resp2.text
+        assert "window.errorRows =" in page_resp2.text
+        assert "window.openDetailModal =" in page_resp2.text
+        assert "window.openBatchResolveModal =" in page_resp2.text
+
+        # 验证个人中心 /admin/profile 同样没有顶层 const presetsData
+        profile_resp = client.get("/admin/profile")
+        assert profile_resp.status_code == 200
+        assert "const presetsData =" not in profile_resp.text
+        assert "var presetsData =" in profile_resp.text
+
+

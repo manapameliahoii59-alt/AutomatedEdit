@@ -162,25 +162,26 @@
 {% endblock %}
 {% block scripts %}
 <script>
-  const errorRows = {{ rows | tojson }};
+  var errorRows = window.errorRows = {{ rows | tojson }};
 
-  function openBatchResolveModal() {
+  window.openBatchResolveModal = function openBatchResolveModal() {
     const m = document.getElementById("batch-resolve-modal");
     if (m) m.style.display = "flex";
-  }
+  };
 
-  function closeBatchResolveModal() {
+  window.closeBatchResolveModal = function closeBatchResolveModal() {
     const m = document.getElementById("batch-resolve-modal");
     if (m) m.style.display = "none";
-  }
+  };
 
-  function submitBatchResolve() {
+  window.submitBatchResolve = function submitBatchResolve() {
     const form = document.getElementById("batchResolveForm");
     if (form) form.submit();
-  }
+  };
 
-  function openDetailModal(index) {
-    const row = errorRows[index];
+  window.openDetailModal = function openDetailModal(index) {
+    const rows = window.errorRows || [];
+    const row = rows[index];
     if (!row) return;
     document.getElementById("modal-title").innerHTML = `<span style="color: #f56c6c; margin-right: 6px;">●</span>错误详情 #${row.id} · ${row.drama_name}`;
     document.getElementById("modal-username").innerText = row.username;
@@ -220,13 +221,13 @@
     actionContainer.innerHTML = actionHtml;
 
     document.getElementById("error-detail-modal").classList.add("is-open");
-  }
+  };
 
-  function closeDetailModal() {
+  window.closeDetailModal = function closeDetailModal() {
     document.getElementById("error-detail-modal").classList.remove("is-open");
-  }
+  };
 
-  function copyRawStack() {
+  window.copyRawStack = function copyRawStack() {
     const text = document.getElementById("modal-raw").innerText;
     const btn = document.getElementById("copy-stack-btn");
     navigator.clipboard.writeText(text).then(() => {
@@ -246,12 +247,12 @@
         btn.innerText = orig;
       }, 1800);
     });
-  }
+  };
 
   if (window.Vue && window.VXETable) {
     mountAdminGrid("#errors-grid", {
       fallback: "#errors-ssr-table",
-      data: errorRows,
+      data: window.errorRows,
       columns: [
         { field: "id", title: "ID", width: 60 },
         { field: "created_at", title: "时间", width: 130 },

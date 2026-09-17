@@ -46,7 +46,7 @@ class Config(MyQConfig):
     encode_qsv_preset = ConfigItem("Tools", "encode_qsv_preset", "veryfast")
     # 显卡加速检测（开启后自动检测并使用 NVIDIA / AMD / Intel 硬件加速；关闭后使用 CPU 软编码）
     encode_enable_gpu = ConfigItem(
-        "Tools", "encode_enable_gpu", True, BoolValidator()
+        "Tools", "encode_enable_gpu", False, BoolValidator()
     )
     # 成片分辨率：720p / 1080p / source（跟随原片）；默认 720p
     encode_output_resolution = ConfigItem(
@@ -66,6 +66,10 @@ class Config(MyQConfig):
     clip_auto_select_after_import = ConfigItem(
         "Tools", "clip_auto_select_after_import", True, BoolValidator()
     )
+    # 自动化剪辑：一键执行全部跑完后，自动重试失败项（识别/策划/渲染）
+    clip_auto_retry_failed = ConfigItem(
+        "Tools", "clip_auto_retry_failed", True, BoolValidator()
+    )
     # 策划：短片/长片/混合模式；长片条数与最长时长（最短固定 150s）
     plan_mode = ConfigItem("Tools", "plan_mode", "mixed")
     plan_clip_count = ConfigItem("Tools", "plan_clip_count", 15)
@@ -81,7 +85,7 @@ class Config(MyQConfig):
         "Tools", "plan_mixed_max_duration_sec", 720
     )
     # 混合模式策略版本：v1=经典稳定（旧逻辑）；v2=实验增强（新逻辑）
-    plan_mixed_strategy = ConfigItem("Tools", "plan_mixed_strategy", "v1")
+    plan_mixed_strategy = ConfigItem("Tools", "plan_mixed_strategy", "v2")
     # 成片全局倍速（默认 1.15）
     plan_global_speed = ConfigItem("Tools", "plan_global_speed", 1.15)
     video_download_dir = ConfigItem("Tools", "video_download_dir", "")
@@ -122,7 +126,7 @@ DEV_API_BASE_URL = "http://127.0.0.1:8000"
 YEAR = datetime.datetime.now().year
 AUTHOR = "dragon"
 AUTHOR_EMAIL = "857134647@qq.com"
-VERSION = '0.0.17'
+VERSION = '0.0.19'
 APP_NAME = "剪辑助手"
 FEEDBACK_URL = f"mailto:{AUTHOR_EMAIL}"
 

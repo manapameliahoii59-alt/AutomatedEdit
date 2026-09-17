@@ -37,7 +37,17 @@
         <td>{{ row.username }}</td>
         <td><span class="tag">{{ row.status }}</span></td>
         <td>{{ row.project_name }}</td>
-        <td>{{ row.plan_mode }}</td>
+        <td>
+          {% if row.plan_mode == 'mixed' %}
+          <span class="tag" style="background:#e8f4ff; color:#1e62c9; border-color:#d0e7ff;">混合模式</span>
+          {% elif row.plan_mode == 'short' %}
+          <span class="tag" style="background:#f0f9eb; color:#67c23a; border-color:#e1f3d8;">短片模式</span>
+          {% elif row.plan_mode == 'long' %}
+          <span class="tag" style="background:#fdf6ec; color:#e6a23c; border-color:#faecd8;">长片模式</span>
+          {% else %}
+          <span class="tag">{{ row.plan_mode }}</span>
+          {% endif %}
+        </td>
         <td class="ellipsis" title="{{ row.error }}">{{ row.error }}</td>
         <td>{{ row.created_at }}</td>
         <td>{{ row.updated_at }}</td>
@@ -62,7 +72,15 @@
         { field: "username", title: "账号", minWidth: 140 },
         { field: "status", title: "状态", width: 110 },
         { field: "project_name", title: "剧目", minWidth: 140 },
-        { field: "plan_mode", title: "模式", width: 90 },
+        {
+          field: "plan_mode",
+          title: "模式",
+          width: 105,
+          formatter: ({ cellValue }) => {
+            const map = { mixed: "混合模式", long: "长片模式", short: "短片模式" };
+            return map[cellValue] || cellValue || "混合模式";
+          },
+        },
         { field: "error", title: "错误", minWidth: 180, showOverflow: true },
         { field: "created_at", title: "创建", width: 160 },
         { field: "updated_at", title: "更新", width: 160 },

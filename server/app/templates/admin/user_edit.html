@@ -649,6 +649,17 @@
                 </div>
 
                 <div>
+                  <label class="lbl-strong" for="plan_mode">策划模式（双向同步）</label>
+                  <select class="admin-select" id="plan_mode" name="plan_mode">
+                    <option value="" {% if not plan or plan.mode is none %}selected{% endif %}>不设置（保持客户端本地值）</option>
+                    <option value="mixed" {% if plan and plan.mode == 'mixed' %}selected{% endif %}>混合模式（主流推荐 / A+B组装箱）</option>
+                    <option value="long" {% if plan and plan.mode == 'long' %}selected{% endif %}>长片模式（历史旧版）</option>
+                    <option value="short" {% if plan and plan.mode == 'short' %}selected{% endif %}>短片模式（历史旧版）</option>
+                  </select>
+                  <p class="hint-compact">客户端当前生效的策划模式；当前客户端已全面收敛默认使用混合模式。</p>
+                </div>
+
+                <div>
                   <label class="lbl-strong" for="plan_mixed_strategy">混合模式策略版本（双向同步）</label>
                   <select class="admin-select" id="plan_mixed_strategy" name="plan_mixed_strategy">
                     <option value="" {% if not plan or plan.mixed_strategy is none %}selected{% endif %}>不设置（保持客户端本地值）</option>
@@ -727,6 +738,15 @@
                     <option value="" {% if clip_edit.clip_overlay_bake_png is none %}selected{% endif %}>不设置</option>
                     <option value="1" {% if clip_edit.clip_overlay_bake_png is sameas true %}selected{% endif %}>开</option>
                     <option value="0" {% if clip_edit.clip_overlay_bake_png is sameas false %}selected{% endif %}>关</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label class="lbl-strong" for="clip_auto_retry_failed">流程结束后自动重试失败项（双向）</label>
+                  <select class="admin-select" id="clip_auto_retry_failed" name="clip_auto_retry_failed">
+                    <option value="" {% if clip_edit.clip_auto_retry_failed is none %}selected{% endif %}>不设置</option>
+                    <option value="1" {% if clip_edit.clip_auto_retry_failed is sameas true %}selected{% endif %}>开</option>
+                    <option value="0" {% if clip_edit.clip_auto_retry_failed is sameas false %}selected{% endif %}>关</option>
                   </select>
                 </div>
               </div>

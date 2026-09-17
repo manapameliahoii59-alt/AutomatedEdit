@@ -1817,6 +1817,7 @@ def apply_runtime_settings_from_clip_edit_dict(data: dict | None) -> bool:
         ("clip_trim_ep1_continued", cfg.clip_trim_ep1_continued),
         ("clip_overlay_bake_png", cfg.clip_overlay_bake_png),
         ("clip_auto_select_after_import", cfg.clip_auto_select_after_import),
+        ("clip_auto_retry_failed", cfg.clip_auto_retry_failed),
     ):
         value = data.get(key)
         if value is not None:
@@ -1855,6 +1856,7 @@ def clip_edit_settings_patch(
     clip_trim_ep1_continued: bool | None = None,
     clip_overlay_bake_png: bool | None = None,
     clip_auto_select_after_import: bool | None = None,
+    clip_auto_retry_failed: bool | None = None,
     clip_export_dir: str | None = None,
     clip_render_engine: str | None = None,
 ) -> dict:
@@ -1884,6 +1886,8 @@ def clip_edit_settings_patch(
         clip["clip_overlay_bake_png"] = bool(clip_overlay_bake_png)
     if clip_auto_select_after_import is not None:
         clip["clip_auto_select_after_import"] = bool(clip_auto_select_after_import)
+    if clip_auto_retry_failed is not None:
+        clip["clip_auto_retry_failed"] = bool(clip_auto_retry_failed)
     # 导出目录：只上传不下载
     if clip_export_dir is not None:
         clip["clip_export_dir"] = str(clip_export_dir).strip()[:512]

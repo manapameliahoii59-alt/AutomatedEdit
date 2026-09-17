@@ -340,25 +340,33 @@ def bundle_config() -> None:
         "Tools": {
             "changdu_email": "",
             "changdu_password": "",
+            "clip_auto_retry_failed": True,
+            "clip_auto_select_after_import": True,
             "clip_export_dir": "",
             "clip_export_name_tag": "",
             "clip_export_date_format": "md",
             "clip_export_seq_format": "pad2",
             "clip_last_import_dir": "",
+            "clip_overlay_bake_png": True,
+            "clip_render_engine": "current",
             "clip_trim_ep1_continued": True,
             "overlay_title_json": "",
             "overlay_disclaimer_json": "",
             "overlay_text_library_json": "",
+            "encode_amf_preset": "speed",
+            "encode_enable_gpu": False,
             "encode_nvenc_preset": "p3",
+            "encode_output_resolution": "720p",
+            "encode_qsv_preset": "veryfast",
             "encode_x264_preset": "superfast",
-            "plan_mode": "long",
+            "plan_mode": "mixed",
             "plan_clip_count": 15,
             "plan_max_duration_sec": 720,
             "plan_short_clip_count": 15,
             "plan_short_max_duration_sec": 300,
             "plan_mixed_clip_count": 15,
             "plan_mixed_max_duration_sec": 720,
-            "plan_mixed_strategy": "v1",
+            "plan_mixed_strategy": "v2",
             "plan_global_speed": 1.15,
             "deepseek_api_keys": "",
             "ffmpeg_path": "",
@@ -372,6 +380,7 @@ def bundle_config() -> None:
         },
         "Update": {
             "dismissed_version": "",
+            "machine_info_reported_date": "",
         },
         "QFluentWidgets": {
             "FontFamilies": [
@@ -401,6 +410,28 @@ def cleanup_dist() -> None:
         elif path.is_file():
             path.unlink()
             print(f"Removed unused: {name}")
+
+    # 清理残留的 Python 字节码、日志及诊断转储文件，保持 dist 纯净
+    for pycache in list(DIST_DIR.rglob("__pycache__")):
+        if pycache.is_dir():
+            try:
+                shutil.rmtree(pycache)
+            except Exception:
+                pass
+    for ext in ("*.pyc", "*.pyo", "*.log", "*.aedump"):
+        for f in list(DIST_DIR.rglob(ext)):
+            if f.is_file():
+                try:
+                    f.unlink()
+                except Exception:
+                    pass
+    for dirty_dir in (DIST_DIR / "logs", DIST_DIR / "changdu_data"):
+        if dirty_dir.is_dir():
+            try:
+                shutil.rmtree(dirty_dir)
+            except Exception:
+                pass
+    print("Cleaned up residual cache and temp files in dist")
 
 
 def bundle_outro() -> None:
@@ -563,6 +594,7 @@ def sync_app_layer() -> None:
     bundle_outro()
     bundle_ffmpeg()
     bundle_config()
+    cleanup_dist()
     print("业务层装配完成！\n")
 
 

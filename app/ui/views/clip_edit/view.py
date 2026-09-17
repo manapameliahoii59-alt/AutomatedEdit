@@ -960,6 +960,8 @@ class ClipEditPage(ScrollArea):
         qconfig.set(cfg.clip_overlay_bake_png, bake_png)
         auto_select = dlg.result_auto_select_after_import()
         qconfig.set(cfg.clip_auto_select_after_import, auto_select)
+        auto_retry = dlg.result_auto_retry_failed()
+        qconfig.set(cfg.clip_auto_retry_failed, auto_retry)
         resolution = dlg.result_resolution()
         qconfig.set(cfg.encode_output_resolution, resolution)
         self.vm.save_output_resolution(resolution)
@@ -970,13 +972,14 @@ class ClipEditPage(ScrollArea):
             clip_trim_ep1_continued=enabled,
             clip_overlay_bake_png=bake_png,
             clip_auto_select_after_import=auto_select,
+            clip_auto_retry_failed=auto_retry,
             clip_render_engine=render_engine,
         )
         resolution_label = dict(RESOLUTION_CHOICES).get(resolution, resolution)
         engine_label = dict(RENDER_ENGINE_CHOICES).get(render_engine, render_engine)
         show_toast(
             self,
-            f"显卡加速检测：{'开' if enable_gpu else '关'} · 导入后自动全选：{'开' if auto_select else '关'} · 去掉未完待续：{'开' if enabled else '关'} · 成片分辨率：{resolution_label} · 渲染引擎：{engine_label}",
+            f"显卡加速检测：{'开' if enable_gpu else '关'} · 导入后自动全选：{'开' if auto_select else '关'} · 自动重试失败项：{'开' if auto_retry else '关'} · 去掉未完待续：{'开' if enabled else '关'} · 成片分辨率：{resolution_label} · 渲染引擎：{engine_label}",
             title="设置",
         )
 

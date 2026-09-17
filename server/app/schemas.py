@@ -224,14 +224,14 @@ class VideoDownloadSettingsPatch(BaseModel):
 class PlanSettings(BaseModel):
     """自动化剪辑「策划设置」（短片/长片/混合模式 + 条数 / 最长时长）。"""
 
-    mode: str = Field(default="long")
+    mode: str = Field(default="mixed")
     clip_count: int = Field(default=15, ge=5, le=15)
     max_duration_sec: int = Field(default=720, ge=300, le=900)
     short_clip_count: int = Field(default=15, ge=5, le=15)
     short_max_duration_sec: int = Field(default=300, ge=120, le=360)
     mixed_clip_count: int = Field(default=15, ge=5, le=20)
     mixed_max_duration_sec: int = Field(default=720, ge=360, le=900)
-    mixed_strategy: str = Field(default="v1")
+    mixed_strategy: str = Field(default="v2")
     global_speed: float = Field(default=1.15, ge=1.0, le=3.0)
 
     model_config = {"extra": "allow"}
@@ -241,18 +241,18 @@ class PlanSettings(BaseModel):
         mode = str(self.mode or "").strip().lower()
         if mode == "short":
             self.mode = "short"
-        elif mode == "mixed":
-            self.mode = "mixed"
-        else:
+        elif mode == "long":
             self.mode = "long"
+        else:
+            self.mode = "mixed"
         self.clip_count = max(5, min(15, int(self.clip_count)))
         self.max_duration_sec = max(300, min(900, int(self.max_duration_sec)))
         self.short_clip_count = max(5, min(15, int(self.short_clip_count)))
         self.short_max_duration_sec = max(120, min(360, int(self.short_max_duration_sec)))
         self.mixed_clip_count = max(5, min(20, int(self.mixed_clip_count)))
         self.mixed_max_duration_sec = max(360, min(900, int(self.mixed_max_duration_sec)))
-        strat = str(getattr(self, "mixed_strategy", "v1") or "").strip().lower()
-        self.mixed_strategy = "v2" if strat == "v2" else "v1"
+        strat = str(getattr(self, "mixed_strategy", "v2") or "").strip().lower()
+        self.mixed_strategy = "v1" if strat == "v1" else "v2"
         try:
             spd = float(self.global_speed)
         except (TypeError, ValueError):
@@ -598,6 +598,7 @@ class ClipEditSettings(BaseModel):
     clip_trim_ep1_continued: bool | None = None
     clip_overlay_bake_png: bool | None = None
     clip_auto_select_after_import: bool | None = None
+    clip_auto_retry_failed: bool | None = None
     clip_export_dir: str | None = None
     clip_render_engine: str | None = None
 
@@ -661,6 +662,7 @@ class ClipEditSettingsPatch(BaseModel):
     clip_trim_ep1_continued: bool | None = None
     clip_overlay_bake_png: bool | None = None
     clip_auto_select_after_import: bool | None = None
+    clip_auto_retry_failed: bool | None = None
     clip_export_dir: str | None = None
     clip_render_engine: str | None = None
 

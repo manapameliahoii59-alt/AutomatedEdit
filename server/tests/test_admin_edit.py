@@ -214,6 +214,8 @@ def test_user_list_shows_deepseek_column(admin_client):
     assert response.status_code == 200
     assert "策划 API Keys" in response.text
     assert "策划模型" in response.text
+    assert "策划模式" in response.text
+    assert "混合模式" in response.text
     assert "a@b.com" in response.text
     assert "ssr-table" in response.text
     assert "<td>a@b.com</td>" in response.text
@@ -378,6 +380,7 @@ def test_user_edit_renders_encode_settings(admin_client):
     assert 'id="encode_qsv_preset"' in resp.text
     assert 'id="encode_x264_preset"' in resp.text
     assert 'id="encode_enable_gpu"' in resp.text
+    assert 'id="clip_auto_retry_failed"' in resp.text
     assert 'id="clip_render_engine"' in resp.text
     assert 'id="clip_export_dir_display"' in resp.text
 
@@ -393,6 +396,7 @@ def test_user_edit_saves_encode_settings(admin_client):
             "encode_x264_preset": "BOGUS",
             "clip_trim_ep1_continued": "0",
             "clip_overlay_bake_png": "1",
+            "clip_auto_retry_failed": "1",
             "clip_render_engine": "legacy",
             "save": "Save",
         },
@@ -407,8 +411,10 @@ def test_user_edit_saves_encode_settings(admin_client):
     assert '<option value="legacy" selected>' in check.text
     # 非法档位被丢弃，退回“不设置”
     assert '<option value="BOGUS" selected>' not in check.text
-    # 三态布尔：显卡加速开
+    # 三态布尔：显卡加速开 / 自动重试开
     assert '<option value="1" selected>' in check.text
+    auto_retry_html = check.text.split('id="clip_auto_retry_failed"')[1].split('</select>')[0]
+    assert '<option value="1" selected>' in auto_retry_html
 
 
 def test_unconfigured_keys_skips_demo_user(admin_client):
@@ -764,6 +770,55 @@ def test_missing_plan_keys_with_strategy_groups(monkeypatch, tmp_path):
     assert u2.id not in missing_after_ids
 
     db.close()
+
+
+def test_user_edit_saves_plan_mode(admin_client):
+    # 1. 检查页面上渲染了策划模式下拉选项
+    resp = admin_client.get("/admin/user/edit/1")
+    assert resp.status_code == 200
+    assert '策划模式（双向同步）' in resp.text
+    assert 'id="plan_mode"' in resp.text
+    assert '混合模式（主流推荐 / A+B组装箱）' in resp.text
+
+    # 2. 保存策划模式为 short
+    save_resp = admin_client.post(
+        "/admin/user/edit/1",
+        data={
+            "username": "a@b.com",
+            "role": "user",
+            "plan_mode": "short",
+            "save": "Save",
+        },
+        follow_redirects=False,
+    )
+    assert save_resp.status_code == 302
+
+    # 3. 验证编辑页回显为 short 并且用户列表显示短片模式
+    check_resp = admin_client.get("/admin/user/edit/1")
+    assert check_resp.status_code == 200
+    assert '<option value="short" selected>短片模式（历史旧版）</option>' in check_resp.text
+
+    list_resp = admin_client.get("/admin/users")
+    assert list_resp.status_code == 200
+    assert "短片模式" in list_resp.text
+
+    # 4. 改回 mixed 混合模式
+    save_resp2 = admin_client.post(
+        "/admin/user/edit/1",
+        data={
+            "username": "a@b.com",
+            "role": "user",
+            "plan_mode": "mixed",
+            "save": "Save",
+        },
+        follow_redirects=False,
+    )
+    assert save_resp2.status_code == 302
+
+    list_resp2 = admin_client.get("/admin/users")
+    assert list_resp2.status_code == 200
+    assert "混合模式" in list_resp2.text
+
 
 
 

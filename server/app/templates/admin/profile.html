@@ -554,21 +554,21 @@
 
 {% block scripts %}
 <script>
-  const presetsData = {{ presets | tojson }};
-  const currentTheme = {{ theme | tojson }};
+  var presetsData = {{ presets | tojson }};
+  var currentTheme = {{ theme | tojson }};
 
-  let activeMode = currentTheme.mode || "preset";
-  let activePresetKey = currentTheme.preset_key || "default";
-  let activeCustomUrl = currentTheme.custom_url || "";
-  let isGlass = currentTheme.glass !== false;
+  var activeMode = currentTheme.mode || "preset";
+  var activePresetKey = currentTheme.preset_key || "default";
+  var activeCustomUrl = currentTheme.custom_url || "";
+  var isGlass = currentTheme.glass !== false;
 
-  const modeInput = document.getElementById("themeModeInput");
-  const presetKeyInput = document.getElementById("presetKeyInput");
-  const previewStage = document.getElementById("previewStage");
-  const previewOverlay = document.getElementById("previewOverlay");
-  const previewCard = document.getElementById("previewCardMock");
-  const customUrlInput = document.getElementById("customUrlInput");
-  const glassCheckbox = document.getElementById("glassCheckbox");
+  var modeInput = document.getElementById("themeModeInput");
+  var presetKeyInput = document.getElementById("presetKeyInput");
+  var previewStage = document.getElementById("previewStage");
+  var previewOverlay = document.getElementById("previewOverlay");
+  var previewCard = document.getElementById("previewCardMock");
+  var customUrlInput = document.getElementById("customUrlInput");
+  var glassCheckbox = document.getElementById("glassCheckbox");
 
   function switchMode(mode) {
     activeMode = mode;
@@ -749,7 +749,7 @@
   }
 
   // 绑定表单提交校验
-  const themeForm = document.getElementById("themeForm");
+  var themeForm = document.getElementById("themeForm");
   if (themeForm) {
     themeForm.addEventListener("submit", function(e) {
       if (activeMode === "url") {

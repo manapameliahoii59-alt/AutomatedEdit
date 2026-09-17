@@ -79,6 +79,19 @@ class ClipSettingsDialog(QDialog):
         row_auto_select.addStretch(1)
         form.addRow("导入后自动全选：", row_auto_select)
 
+        row_auto_retry = QHBoxLayout()
+        self._auto_retry_switch = SwitchButton(self)
+        self._auto_retry_switch.setOnText("开")
+        self._auto_retry_switch.setOffText("关")
+        self._auto_retry_switch.setChecked(bool(cfg.clip_auto_retry_failed.value))
+        self._auto_retry_switch.setToolTip(
+            "开启后，「一键执行」跑完整批剧目流程后，若有识别、策划或渲染失败的剧目，将自动返回并对失败阶段重新执行一次；\n"
+            "关闭后遇失败直接跳过，流程结束后不进行二次重试。"
+        )
+        row_auto_retry.addWidget(self._auto_retry_switch)
+        row_auto_retry.addStretch(1)
+        form.addRow("流程结束后自动重试失败项：", row_auto_retry)
+
         self._resolution_combo = ComboBox(self)
         for value, label in RESOLUTION_CHOICES:
             self._resolution_combo.addItem(label, userData=value)
@@ -130,6 +143,9 @@ class ClipSettingsDialog(QDialog):
 
     def result_auto_select_after_import(self) -> bool:
         return bool(self._auto_select_switch.isChecked())
+
+    def result_auto_retry_failed(self) -> bool:
+        return bool(self._auto_retry_switch.isChecked())
 
     def result_resolution(self) -> str:
         data = self._resolution_combo.currentData()
