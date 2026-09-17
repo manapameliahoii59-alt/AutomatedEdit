@@ -196,11 +196,94 @@
     .el-button:hover { color: #409eff; border-color: #c6e2ff; background: #ecf5ff; }
     .el-button--primary { background: #409eff; border-color: #409eff; color: #fff; }
     .el-button--primary:hover { background: #79bbff; border-color: #79bbff; color: #fff; }
+    .el-button--danger { background: #f56c6c; border-color: #f56c6c; color: #fff; }
+    .el-button--danger:hover { background: #f78989; border-color: #f78989; color: #fff; }
     .el-button.is-disabled, .el-button:disabled {
       cursor: not-allowed;
       color: #c0c4cc;
       background: #fff;
       border-color: #ebeef5;
+    }
+
+    /* 全局统一确认弹窗 (Element Plus 风格) */
+    .admin-confirm-mask {
+      position: fixed;
+      inset: 0;
+      z-index: 999998;
+      background: rgba(0, 0, 0, 0.48);
+      backdrop-filter: blur(3px);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+    }
+    .admin-confirm-mask.is-open {
+      opacity: 1;
+      pointer-events: auto;
+    }
+    .admin-confirm-dialog {
+      width: min(440px, 92vw);
+      background: #ffffff;
+      border-radius: 10px;
+      box-shadow: 0 16px 40px rgba(0, 0, 0, 0.2), 0 2px 8px rgba(0, 0, 0, 0.06);
+      overflow: hidden;
+      transform: scale(0.92);
+      transition: transform 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+      display: flex;
+      flex-direction: column;
+    }
+    .admin-confirm-mask.is-open .admin-confirm-dialog {
+      transform: scale(1);
+    }
+    .admin-confirm-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 16px 20px 14px;
+      border-bottom: 1px solid #f0f2f5;
+      background: #fafbfc;
+    }
+    .admin-confirm-title {
+      margin: 0;
+      font-size: 15px;
+      font-weight: 650;
+      color: #303133;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .admin-confirm-close {
+      border: none;
+      background: transparent;
+      font-size: 20px;
+      line-height: 1;
+      color: #909399;
+      cursor: pointer;
+      padding: 2px 6px;
+      border-radius: 4px;
+      transition: color 0.15s, background 0.15s;
+    }
+    .admin-confirm-close:hover {
+      background: #f2f3f5;
+      color: #303133;
+    }
+    .admin-confirm-body {
+      padding: 20px;
+      font-size: 14px;
+      line-height: 1.6;
+      color: #606266;
+    }
+    .admin-confirm-foot {
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+      gap: 10px;
+      padding: 12px 20px;
+      border-top: 1px solid #f0f2f5;
+      background: #fafbfc;
     }
     .el-input { width: 100%; }
     .el-input__wrapper {
@@ -1097,7 +1180,7 @@
       </div>
       <div class="radio-dock-ctrls">
         <button type="button" class="radio-btn-ctrl" id="radioDockPrev" title="上一首">⏮</button>
-        <button type="button" class="radio-btn-play" id="radioDockToggle" title="播放 / 暂停">▶</button>
+        <button type="button" class="radio-btn-play" id="radioDockToggle" title="播放 / 暂停 (空格 Space)">▶</button>
         <button type="button" class="radio-btn-ctrl" id="radioDockNext" title="下一首">⏭</button>
         <button type="button" class="radio-btn-ctrl" id="radioDockMode" title="列表循环">🔁</button>
       </div>
@@ -1110,7 +1193,7 @@
         <div class="radio-dock-cover-placeholder" id="radioDockMiniCoverPlaceholder" style="font-size: 14px;">🎵</div>
       </div>
       <div class="radio-dock-title" id="radioDockMiniTitle" style="flex: 1; min-width: 0; font-size: 11px;">未播放音乐</div>
-      <button type="button" class="radio-btn-play" id="radioDockMiniToggle" style="width: 24px; height: 24px; font-size: 10px;" title="播放 / 暂停">▶</button>
+      <button type="button" class="radio-btn-play" id="radioDockMiniToggle" style="width: 24px; height: 24px; font-size: 10px;" title="播放 / 暂停 (空格 Space)">▶</button>
     </div>
   </div>
 
@@ -1158,7 +1241,103 @@
       }, 2600);
     };
 
-    // 2. 全局音乐电台播放器控制器 (RadioPlayer)
+    // 2. 全局统一确认操作弹窗 (Promise 异步交互，替代浏览器原生 alert / confirm)
+    window.showAdminConfirm = function (options = {}) {
+      const {
+        title = "操作确认",
+        content = "此操作不可撤销，是否继续？",
+        confirmText = "确定",
+        cancelText = "取消",
+        type = "danger", // "danger" | "warning" | "info"
+      } = typeof options === "string" ? { content: options } : options;
+
+      return new Promise((resolve) => {
+        // 移除可能未清理的同类弹窗
+        const existing = document.getElementById("adminConfirmMask");
+        if (existing) existing.remove();
+
+        const mask = document.createElement("div");
+        mask.id = "adminConfirmMask";
+        mask.className = "admin-confirm-mask";
+
+        const typeIcons = {
+          danger: '<span style="display:inline-flex;align-items:center;justify-content:center;width:24px;height:24px;border-radius:50%;background:#fef0f0;color:#f56c6c;font-size:13px;font-weight:bold;">✕</span>',
+          warning: '<span style="display:inline-flex;align-items:center;justify-content:center;width:24px;height:24px;border-radius:50%;background:#fdf6ec;color:#e6a23c;font-size:13px;font-weight:bold;">!</span>',
+          info: '<span style="display:inline-flex;align-items:center;justify-content:center;width:24px;height:24px;border-radius:50%;background:#ecf5ff;color:#409eff;font-size:13px;font-weight:bold;">ℹ</span>',
+        };
+        const iconHtml = typeIcons[type] || typeIcons.info;
+        const okBtnClass = type === "danger" ? "el-button el-button--danger" : "el-button el-button--primary";
+
+        mask.innerHTML = `
+          <div class="admin-confirm-dialog" role="dialog" aria-modal="true">
+            <div class="admin-confirm-head">
+              <div class="admin-confirm-title">
+                ${iconHtml}
+                <span>${title}</span>
+              </div>
+              <button type="button" class="admin-confirm-close" id="adminConfirmClose" aria-label="关闭">×</button>
+            </div>
+            <div class="admin-confirm-body">
+              ${content}
+            </div>
+            <div class="admin-confirm-foot">
+              <button type="button" class="el-button" id="adminConfirmCancel">${cancelText}</button>
+              <button type="button" class="${okBtnClass}" id="adminConfirmOk">${confirmText}</button>
+            </div>
+          </div>
+        `;
+
+        document.body.appendChild(mask);
+
+        const btnOk = mask.querySelector("#adminConfirmOk");
+        const btnCancel = mask.querySelector("#adminConfirmCancel");
+        const btnClose = mask.querySelector("#adminConfirmClose");
+
+        let closed = false;
+        const cleanup = (result) => {
+          if (closed) return;
+          closed = true;
+          document.removeEventListener("keydown", handleKey);
+          mask.classList.remove("is-open");
+          setTimeout(() => {
+            mask.remove();
+          }, 200);
+          resolve(result);
+        };
+
+        const handleKey = (e) => {
+          if (e.key === "Escape") {
+            e.preventDefault();
+            cleanup(false);
+          } else if (e.key === "Enter") {
+            // 如果焦点在取消按钮上，回车视为取消；否则确认
+            if (document.activeElement === btnCancel) {
+              e.preventDefault();
+              cleanup(false);
+            } else {
+              e.preventDefault();
+              cleanup(true);
+            }
+          }
+        };
+
+        document.addEventListener("keydown", handleKey);
+
+        btnOk.onclick = () => cleanup(true);
+        btnCancel.onclick = () => cleanup(false);
+        btnClose.onclick = () => cleanup(false);
+        mask.onclick = (e) => {
+          if (e.target === mask) cleanup(false);
+        };
+
+        requestAnimationFrame(() => {
+          mask.classList.add("is-open");
+          if (btnCancel) btnCancel.focus();
+        });
+      });
+    };
+
+    // 3. 全局音乐电台播放器控制器 (RadioPlayer)
     window.RadioPlayer = {
       audio: null,
       playlist: [],
@@ -1177,11 +1356,13 @@
 
         this.audio.addEventListener("play", () => {
           this.isPlaying = true;
+          this.saveState();
           this.updateUI();
           this.broadcast("play");
         });
         this.audio.addEventListener("pause", () => {
           this.isPlaying = false;
+          this.saveState();
           this.updateUI();
           this.broadcast("pause");
         });
@@ -1205,11 +1386,58 @@
         });
 
         this.bindDockEvents();
+        this.bindGlobalShortcuts();
         this.restoreState();
         initDraggableDock();
 
         // 尝试加载远程曲库列表补全播放列表
         this.fetchPlaylistIfEmpty();
+      },
+
+      bindGlobalShortcuts() {
+        if (this._shortcutsBound) return;
+        this._shortcutsBound = true;
+
+        document.addEventListener("keydown", (e) => {
+          // 仅响应独立空格键（兼容 e.code、e.key 及 keyCode）
+          const isSpace = (e.code === "Space" || e.key === " " || e.key === "Spacebar" || e.keyCode === 32);
+          if (!isSpace) return;
+
+          // 忽略所有修饰组合键（Ctrl、Alt、Meta、Shift），避免影响系统快捷键与输入法选词
+          if (e.ctrlKey || e.altKey || e.metaKey || e.shiftKey) return;
+
+          // 弹窗保护：若有任何弹窗遮罩处于开启状态，不响应空格切歌
+          if (document.getElementById("adminConfirmMask") || document.querySelector(".admin-modal-mask.is-open, .modal-mask.is-open, .missing-keys-dialog-mask.is-open")) {
+            return;
+          }
+
+          // 输入保护：当焦点处于输入框、文本域、选择框或富文本编辑区时，放行正常输入
+          const target = e.target;
+          if (target) {
+            const tag = target.tagName ? target.tagName.toUpperCase() : "";
+            if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
+            if (target.isContentEditable || (target.getAttribute && target.getAttribute("contenteditable") === "true") || (target.closest && target.closest("[contenteditable='true']"))) return;
+          }
+          const activeEl = document.activeElement;
+          if (activeEl) {
+            const activeTag = activeEl.tagName ? activeEl.tagName.toUpperCase() : "";
+            if (activeTag === "INPUT" || activeTag === "TEXTAREA" || activeTag === "SELECT" || activeEl.isContentEditable) return;
+          }
+
+          // 阻止空格键引发的页面向下跳动滚动
+          e.preventDefault();
+
+          // 如果当前焦点位于按钮或链接（如刚刚点击了暂停、播放、下一首、页面Tab或表格操作按钮），使之失焦，防止触发该按钮的二次原生按键点击
+          if (activeEl && typeof activeEl.blur === "function") {
+            const activeTag = activeEl.tagName ? activeEl.tagName.toUpperCase() : "";
+            if (activeTag === "BUTTON" || activeTag === "A") {
+              activeEl.blur();
+            }
+          }
+
+          // 执行电台播放 / 暂停切换
+          this.togglePlay();
+        });
       },
 
       bindDockEvents() {
@@ -1484,7 +1712,7 @@
 
         if (toggleBtn) {
           toggleBtn.innerHTML = this.isPlaying ? "❚❚" : "▶";
-          toggleBtn.title = this.isPlaying ? "暂停" : "播放";
+          toggleBtn.title = this.isPlaying ? "暂停 (空格 Space)" : "播放 (空格 Space)";
         }
 
         if (modeBtn) {
@@ -1522,7 +1750,7 @@
         }
         if (miniToggleBtn) {
           miniToggleBtn.innerHTML = this.isPlaying ? "❚❚" : "▶";
-          miniToggleBtn.title = this.isPlaying ? "暂停" : "播放";
+          miniToggleBtn.title = this.isPlaying ? "暂停 (空格 Space)" : "播放 (空格 Space)";
         }
       },
 
@@ -1575,6 +1803,7 @@
               currentIndex: this.currentIndex,
               currentGroup: this.currentGroup,
               mode: this.mode,
+              isPlaying: this.isPlaying,
               currentTime: this.audio ? this.audio.currentTime : 0,
               volume: this.audio ? this.audio.volume : 0.7,
             })
@@ -1607,6 +1836,18 @@
                 this.audio.src = data.track.audio_url;
                 if (data.currentTime) this.audio.currentTime = data.currentTime;
                 if (typeof data.volume === "number") this.audio.volume = data.volume;
+                if (data.isPlaying) {
+                  const playPromise = this.audio.play();
+                  if (playPromise && typeof playPromise.then === "function") {
+                    playPromise.then(() => {
+                      this.isPlaying = true;
+                      this.updateUI();
+                    }).catch(() => {
+                      this.isPlaying = false;
+                      this.updateUI();
+                    });
+                  }
+                }
               }
             }
             this.updateUI();
@@ -1775,24 +2016,110 @@
         }
       });
 
-      // 拦截 GET 类型的搜索/过滤表单
+      // 拦截表单提交 (GET 检索与 POST 保存)
       document.addEventListener("submit", function (e) {
+        if (e.defaultPrevented) return;
         const form = e.target;
-        if (form.method && form.method.toLowerCase() === "get") {
-          const action = form.getAttribute("action") || window.location.pathname;
-          if (action.startsWith("/admin") && !form.getAttribute("data-no-pjax")) {
-            e.preventDefault();
-            const formData = new FormData(form);
-            const params = new URLSearchParams(formData);
-            const targetUrl = action.split("?")[0] + (params.toString() ? "?" + params.toString() : "");
-            window.pjaxNavigate(targetUrl);
-          }
+        if (!form) return;
+        if (form.getAttribute("data-no-pjax") === "1") return;
+
+        const action = form.getAttribute("action") || window.location.pathname;
+        if (!action.startsWith("/admin") || action.startsWith("/admin/logout") || action.startsWith("/admin/login")) {
+          return;
+        }
+
+        const method = (form.method || "get").toLowerCase();
+        if (method === "get") {
+          e.preventDefault();
+          const formData = new FormData(form);
+          const params = new URLSearchParams(formData);
+          const targetUrl = action.split("?")[0] + (params.toString() ? "?" + params.toString() : "");
+          window.pjaxNavigate(targetUrl);
+        } else if (method === "post") {
+          e.preventDefault();
+          const formData = new FormData(form);
+          window.pjaxSubmit(action, formData, form);
         }
       });
 
       window.addEventListener("popstate", function () {
         window.pjaxNavigate(window.location.href, false);
       });
+    };
+
+    window._applyPjaxHTML = function (html, url, push = true) {
+      const parser = new DOMParser();
+      const newDoc = parser.parseFromString(html, "text/html");
+
+      const newMain = newDoc.querySelector(".admin-main");
+      if (!newMain) {
+        window.location.href = url;
+        return;
+      }
+
+      // 更新页面标题
+      if (newDoc.title) {
+        document.title = newDoc.title;
+      }
+
+      // 更新路由历史
+      if (push) {
+        history.pushState({ pjax: true, url }, newDoc.title, url);
+      }
+
+      // 更新侧边栏高亮项
+      const currentPath = new URL(url, window.location.origin).pathname;
+      document.querySelectorAll(".admin-aside .el-menu-item").forEach((item) => {
+        const href = item.getAttribute("href") || "";
+        const itemPath = href.split("?")[0];
+        if (itemPath === currentPath || (itemPath !== "/admin" && currentPath.startsWith(itemPath))) {
+          item.classList.add("is-active");
+        } else {
+          item.classList.remove("is-active");
+        }
+      });
+
+      // 仅置换内容区域，保留播放器及母版
+      if (window._currentAdminGridApp) {
+        try {
+          window._currentAdminGridApp.unmount();
+        } catch (e) {}
+        window._currentAdminGridApp = null;
+      }
+      const currentMain = document.querySelector(".admin-main");
+      currentMain.innerHTML = newMain.innerHTML;
+      currentMain.scrollTop = 0;
+
+      // 执行新页面的专属脚本
+      const newScripts = [];
+      newMain.querySelectorAll("script").forEach((s) => newScripts.push(s));
+      newDoc.querySelectorAll("body > script").forEach((s) => {
+        const src = s.getAttribute("src") || "";
+        const id = s.id || "";
+        if (
+          id !== "admin-base-script" &&
+          !src.includes("vue.global") &&
+          !src.includes("xe-utils") &&
+          !src.includes("vxe-table")
+        ) {
+          newScripts.push(s);
+        }
+      });
+
+      for (const oldScript of newScripts) {
+        const script = document.createElement("script");
+        Array.from(oldScript.attributes).forEach((attr) => {
+          script.setAttribute(attr.name, attr.value);
+        });
+        script.textContent = oldScript.textContent;
+        document.body.appendChild(script);
+        if (!script.src) {
+          script.remove();
+        }
+      }
+
+      // 派发页面加载完成事件
+      window.dispatchEvent(new CustomEvent("pjax:complete", { detail: { url } }));
     };
 
     window.pjaxNavigate = async function (url, push = true) {
@@ -1818,75 +2145,7 @@
         }
 
         const html = await response.text();
-        const parser = new DOMParser();
-        const newDoc = parser.parseFromString(html, "text/html");
-
-        const newMain = newDoc.querySelector(".admin-main");
-        if (!newMain) {
-          window.location.href = url;
-          return;
-        }
-
-        // 更新页面标题
-        if (newDoc.title) {
-          document.title = newDoc.title;
-        }
-
-        // 更新路由历史
-        if (push) {
-          history.pushState({ pjax: true, url }, newDoc.title, url);
-        }
-
-        // 更新侧边栏高亮项
-        const currentPath = new URL(url, window.location.origin).pathname;
-        document.querySelectorAll(".admin-aside .el-menu-item").forEach((item) => {
-          const href = item.getAttribute("href") || "";
-          const itemPath = href.split("?")[0];
-          if (itemPath === currentPath || (itemPath !== "/admin" && currentPath.startsWith(itemPath))) {
-            item.classList.add("is-active");
-          } else {
-            item.classList.remove("is-active");
-          }
-        });
-
-        // 仅置换内容区域，保留播放器及母版
-        if (window._currentAdminGridApp) {
-          try {
-            window._currentAdminGridApp.unmount();
-          } catch (e) {}
-          window._currentAdminGridApp = null;
-        }
-        const currentMain = document.querySelector(".admin-main");
-        currentMain.innerHTML = newMain.innerHTML;
-        currentMain.scrollTop = 0;
-
-        // 执行新页面的专属脚本
-        const newScripts = [];
-        newMain.querySelectorAll("script").forEach((s) => newScripts.push(s));
-        newDoc.querySelectorAll("body > script").forEach((s) => {
-          const src = s.getAttribute("src") || "";
-          const id = s.id || "";
-          if (
-            id !== "admin-base-script" &&
-            !src.includes("vue.global") &&
-            !src.includes("xe-utils") &&
-            !src.includes("vxe-table")
-          ) {
-            newScripts.push(s);
-          }
-        });
-
-        for (const oldScript of newScripts) {
-          const script = document.createElement("script");
-          Array.from(oldScript.attributes).forEach((attr) => {
-            script.setAttribute(attr.name, attr.value);
-          });
-          script.textContent = oldScript.textContent;
-          document.body.appendChild(script);
-          if (!script.src) {
-            script.remove();
-          }
-        }
+        window._applyPjaxHTML(html, url, push);
 
         // 完成进度条
         pjaxBar.style.width = "100%";
@@ -1896,12 +2155,69 @@
             pjaxBar.style.width = "0%";
           }, 300);
         }, 200);
-
-        // 派发页面加载完成事件
-        window.dispatchEvent(new CustomEvent("pjax:complete", { detail: { url } }));
       } catch (err) {
         console.error("PJAX 导航失败，退回普通加载:", err);
         window.location.href = url;
+      }
+    };
+
+    window.pjaxSubmit = async function (action, formData, form) {
+      let pjaxBar = document.getElementById("pjax-bar");
+      if (!pjaxBar) {
+        pjaxBar = document.createElement("div");
+        pjaxBar.id = "pjax-bar";
+        pjaxBar.style.cssText = "position:fixed;top:0;left:0;height:2px;background:#409eff;z-index:999999;transition:width 0.2s ease, opacity 0.3s ease;width:0%;box-shadow:0 0 8px rgba(64,158,255,0.6);";
+        document.body.appendChild(pjaxBar);
+      }
+      pjaxBar.style.opacity = "1";
+      pjaxBar.style.width = "35%";
+
+      const submitBtns = form ? form.querySelectorAll("button[type='submit'], input[type='submit']") : [];
+      submitBtns.forEach((b) => (b.disabled = true));
+
+      try {
+        const response = await fetch(action, {
+          method: "POST",
+          body: formData,
+          headers: { "X-Requested-With": "Pjax" },
+          redirect: "follow",
+        });
+
+        pjaxBar.style.width = "75%";
+
+        if (response.redirected && response.url.includes("/login")) {
+          window.location.href = response.url;
+          return;
+        }
+
+        const finalUrl = response.url || action;
+        const html = await response.text();
+
+        if (!response.ok && !html.includes("admin-main")) {
+          window.location.href = finalUrl;
+          return;
+        }
+
+        window._applyPjaxHTML(html, finalUrl, true);
+
+        pjaxBar.style.width = "100%";
+        setTimeout(() => {
+          pjaxBar.style.opacity = "0";
+          setTimeout(() => {
+            pjaxBar.style.width = "0%";
+          }, 300);
+        }, 200);
+      } catch (err) {
+        console.error("PJAX 表单提交异常，退回普通提交:", err);
+        if (form) {
+          submitBtns.forEach((b) => (b.disabled = false));
+          form.setAttribute("data-no-pjax", "1");
+          form.submit();
+        } else {
+          window.location.href = action;
+        }
+      } finally {
+        submitBtns.forEach((b) => (b.disabled = false));
       }
     };
 

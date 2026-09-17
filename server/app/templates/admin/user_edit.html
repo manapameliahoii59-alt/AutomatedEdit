@@ -508,6 +508,15 @@
                   <p class="hint-compact">单位：集/日</p>
                 </div>
               </div>
+              <div style="margin-top: 14px; padding: 10px 14px; background: #f8fafc; border-radius: 6px; border: 1px dashed #dcdfe6; font-size: 13px; display: flex; align-items: center; justify-content: space-between;">
+                <div>
+                  <span style="color: #606266;">专属邀请码：</span>
+                  <strong style="font-family: monospace; color: #409eff; font-size: 14px;">{{ user.invite_code or '未生成' }}</strong>
+                </div>
+                <div>
+                  <span style="color: #909399; font-size: 12px;">绑定邀请人：{{ inviter_username or '无' }}</span>
+                </div>
+              </div>
             </div>
           </div>
 
@@ -574,23 +583,68 @@
             </div>
             <div class="panel-card-body">
               <div class="form-grid-1">
+                <!-- 调度策略组（核心模式分流器） -->
                 <div>
-                  <label class="lbl-strong" for="plan_llm_preset">策划模型</label>
-                  <select class="admin-select" id="plan_llm_preset" name="plan_llm_preset">
-                    {% for value, label in plan_choices %}
-                    <option value="{{ value }}" {% if value == plan_llm_preset %}selected{% endif %}>{{ label }}</option>
+                  <label class="lbl-strong" for="plan_group_id">混合模式调度策略组（多模型协同）</label>
+                  <select class="admin-select" id="plan_group_id" name="plan_group_id" onchange="updatePlanModelModeUI()">
+                    <option value="" {% if current_plan_group_id is none %}selected{% endif %}>跟随系统默认组（智能多模型调度）</option>
+                    {% for grp in llm_groups %}
+                    <option value="{{ grp.id }}" {% if current_plan_group_id == grp.id %}selected{% endif %}>{{ grp.name }} ({{ '并发融合' if grp.dispatch_mode == 'parallel' else '串行接力' }})</option>
                     {% endfor %}
+                    <option value="0" {% if current_plan_group_id == 0 %}selected{% endif %}>独立单模型模式（仅使用下方配置的单独模型与Key）</option>
                   </select>
-                  <p class="hint-compact">官方填 DeepSeek Key；OpenCode Go 填 Zen/Go Key；小米 MiMo 填 MiMo API Key；智谱 GLM 填智谱 API Key</p>
+                  <p class="hint-compact">混合模式调度方式：串行接力可在切点不足时无缝切换下一家模型补齐条数；独立单模型则仅使用指定单一模型。</p>
                 </div>
 
-                <div style="background: #fafbfc; border: 1px solid #edf0f5; border-radius: 6px; padding: 10px 14px; display: flex; align-items: center; justify-content: space-between;">
-                  <div>
-                    <label class="lbl-strong m-0" for="plan_thinking_enabled" style="cursor: pointer;">深度思考模式（Thinking）</label>
-                    <p class="hint-compact m-0">默认关闭以大幅提速；开启后输出思维链（智谱 Flash 模型始终思考不受此限）</p>
+                <!-- 模式提示卡片：多模型策略组调度中 (plan_group_id != 0) -->
+                <div id="group-mode-notice" style="background: linear-gradient(135deg, #f0f7ff 0%, #f6faff 100%); border: 1px solid #c8e1fa; border-radius: 8px; padding: 14px 16px;">
+                  <div style="display: flex; align-items: flex-start; gap: 10px;">
+                    <span style="font-size: 18px; line-height: 1.2;">⚡</span>
+                    <div style="flex: 1;">
+                      <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px;">
+                        <strong style="color: #1e62c9; font-size: 13px;">多模型策略组调度已生效</strong>
+                        <a href="/admin/channels" target="_blank" style="color: #409eff; font-size: 12px; text-decoration: none; font-weight: 500;">前往模型渠道池 ➔</a>
+                      </div>
+                      <p style="margin: 0; font-size: 12px; color: #5f7188; line-height: 1.5;">
+                        当前用户执行 AI 策划任务时，由全局<strong>「模型渠道池」</strong>统筹调度各家厂商模型与 API Keys（支持并发融合或串行接力补齐）。无需在此配置单一模型与密钥。
+                      </p>
+                    </div>
                   </div>
-                  <div class="form-check form-switch m-0">
-                    <input class="form-check-input" id="plan_thinking_enabled" type="checkbox" role="switch" name="plan_thinking_enabled" value="y"{% if plan_thinking_enabled %} checked{% endif %}>
+                </div>
+
+                <!-- 独立单模型模式专属配置容器 (plan_group_id == 0 时展开) -->
+                <div id="single-model-section" style="display: flex; flex-direction: column; gap: 14px; background: #fafbfc; border: 1px dashed #dcdfe6; border-radius: 8px; padding: 14px;">
+                  <div style="display: flex; align-items: center; gap: 6px; padding-bottom: 8px; border-bottom: 1px solid #ebeef5;">
+                    <span style="font-size: 14px;">🎯</span>
+                    <strong style="font-size: 13px; color: #303133;">独立单模型专属配置</strong>
+                    <span style="font-size: 11px; color: #909399; margin-left: auto;">仅在独立单模型模式下生效</span>
+                  </div>
+
+                  <div>
+                    <label class="lbl-strong" for="plan_llm_preset">策划模型</label>
+                    <select class="admin-select" id="plan_llm_preset" name="plan_llm_preset">
+                      {% for value, label in plan_choices %}
+                      <option value="{{ value }}" {% if value == plan_llm_preset %}selected{% endif %}>{{ label }}</option>
+                      {% endfor %}
+                    </select>
+                    <p class="hint-compact">官方填 DeepSeek Key；OpenCode Go 填 Zen/Go Key；小米 MiMo 填 MiMo API Key；智谱 GLM 填智谱 API Key；硅基流动填 SiliconFlow Key；通义千问填 DashScope Key</p>
+                  </div>
+
+                  <div style="background: #ffffff; border: 1px solid #edf0f5; border-radius: 6px; padding: 10px 14px; display: flex; align-items: center; justify-content: space-between;">
+                    <div>
+                      <label class="lbl-strong m-0" for="plan_thinking_enabled" style="cursor: pointer;">深度思考模式（Thinking）</label>
+                      <p class="hint-compact m-0">默认关闭以大幅提速；开启后输出思维链（智谱 Flash 模型始终思考不受此限）</p>
+                    </div>
+                    <div class="form-check form-switch m-0">
+                      <input class="form-check-input" id="plan_thinking_enabled" type="checkbox" role="switch" name="plan_thinking_enabled" value="y"{% if plan_thinking_enabled %} checked{% endif %}>
+                    </div>
+                  </div>
+
+                  <div>
+                    <label class="lbl-strong" for="deepseek_keys">策划 API Keys（逗号分隔支持轮询负载）</label>
+                    <div class="el-textarea">
+                      <textarea class="el-textarea__inner" id="deepseek_keys" name="deepseek_keys" style="min-height: 90px; font-family: monospace; font-size: 13px;">{{ deepseek_keys }}</textarea>
+                    </div>
                   </div>
                 </div>
 
@@ -605,19 +659,13 @@
                 </div>
 
                 <div>
-                  <label class="lbl-strong" for="deepseek_keys">策划 API Keys（逗号分隔支持轮询负载）</label>
-                  <div class="el-textarea">
-                    <textarea class="el-textarea__inner" id="deepseek_keys" name="deepseek_keys" style="min-height: 90px; font-family: monospace; font-size: 13px;">{{ deepseek_keys }}</textarea>
-                  </div>
-                </div>
-
-                <div>
-                  <label class="lbl-strong" for="dashscope_key">DashScope Key（可选）</label>
+                  <label class="lbl-strong" for="dashscope_key">DashScope Key（可选通用备用）</label>
                   <div class="el-input">
                     <div class="el-input__wrapper">
                       <input class="el-input__inner" id="dashscope_key" name="dashscope_key" value="{{ dashscope_key }}">
                     </div>
                   </div>
+                  <p class="hint-compact">通义千问 / 语音识别 / TTS 备用 Key，若未配置则使用服务端环境变量默认值。</p>
                 </div>
               </div>
             </div>
@@ -841,10 +889,30 @@ function initAdminToast() {
   }
 }
 
+function updatePlanModelModeUI() {
+  const groupSelect = document.getElementById("plan_group_id");
+  const groupNotice = document.getElementById("group-mode-notice");
+  const singleSection = document.getElementById("single-model-section");
+  if (!groupSelect || !groupNotice || !singleSection) return;
+
+  const isSingle = String(groupSelect.value).trim() === "0";
+  if (isSingle) {
+    groupNotice.style.display = "none";
+    singleSection.style.display = "flex";
+  } else {
+    groupNotice.style.display = "block";
+    singleSection.style.display = "none";
+  }
+}
+
 if (document.readyState === "loading") {
-  document.addEventListener("DOMContentLoaded", initAdminToast);
+  document.addEventListener("DOMContentLoaded", function() {
+    initAdminToast();
+    updatePlanModelModeUI();
+  });
 } else {
   initAdminToast();
+  updatePlanModelModeUI();
 }
 </script>
 {% endblock %}

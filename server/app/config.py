@@ -27,6 +27,14 @@ class Settings(BaseSettings):
     zhipu_api_url: str = "https://open.bigmodel.cn/api/paas/v4/chat/completions"
     zhipu_model: str = "glm-5.3-flash"
 
+    # 硅基流动 SiliconFlow 策划通道
+    siliconflow_api_url: str = "https://api.siliconflow.cn/v1/chat/completions"
+    siliconflow_model: str = "deepseek-ai/DeepSeek-V4-Flash"
+
+    # 通义千问 Tongyi 策划通道
+    tongyi_api_url: str = "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions"
+    tongyi_model: str = "qwen3.7-flash"
+
     # 对外访问根地址（反代后建议配置，用于拼安装包下载链接）
     # 例：https://api.example.com
     public_base_url: str = ""

@@ -643,19 +643,16 @@ class ClipEditPage(ScrollArea):
         short_radio = QRadioButton("短片模式", dlg)
         long_radio = QRadioButton("长片模式", dlg)
         mixed_radio = QRadioButton("混合模式", dlg)
+        short_radio.setVisible(False)
+        long_radio.setVisible(False)
         mode_group = QButtonGroup(dlg)
         mode_group.addButton(short_radio)
         mode_group.addButton(long_radio)
         mode_group.addButton(mixed_radio)
-        initial_mode = clamp_plan_mode(cfg.plan_mode.value)
-        if initial_mode == PLAN_MODE_SHORT:
-            short_radio.setChecked(True)
-        elif initial_mode == PLAN_MODE_MIXED:
-            mixed_radio.setChecked(True)
-        else:
-            long_radio.setChecked(True)
-        mode_row.addWidget(short_radio)
-        mode_row.addWidget(long_radio)
+        initial_mode = PLAN_MODE_MIXED
+        mixed_radio.setChecked(True)
+        mode_label = BodyLabel("策划模式：", dlg)
+        mode_row.addWidget(mode_label)
         mode_row.addWidget(mixed_radio)
         mode_row.addStretch(1)
         layout.addLayout(mode_row)
@@ -771,7 +768,7 @@ class ClipEditPage(ScrollArea):
                 return PLAN_MODE_SHORT
             if mixed_radio.isChecked():
                 return PLAN_MODE_MIXED
-            return PLAN_MODE_LONG
+            return PLAN_MODE_MIXED
 
         def _persist_current():
             mode = current_mode["value"]

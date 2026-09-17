@@ -20,8 +20,21 @@ from starlette.middleware.sessions import SessionMiddleware
 
 from app.config import settings
 from app.database import engine
-from app.models import ErrorReport, PlanJob, UsageEvent, User, UserDailyActivity, UserMachine, UserSettings
+from app.models import (
+    ErrorReport,
+    LlmChannel,
+    LlmGroup,
+    PlanJob,
+    SystemSetting,
+    UsageEvent,
+    User,
+    UserDailyActivity,
+    UserInviteRecord,
+    UserMachine,
+    UserSettings,
+)
 from app.services import client_version as client_version_service
+from app.services.invite_service import get_invite_config, set_invite_config
 from app.services.plan_secrets import (
     PLAN_LLM_PRESET_CHOICES,
     PLAN_LLM_PROVIDER_DEEPSEEK,
@@ -276,6 +289,8 @@ def _nav(active: str) -> list[dict[str, str]]:
         ("activity", "/admin/activity", "每日活动"),
         ("usage", "/admin/usage", "使用记录"),
         ("jobs", "/admin/jobs", "策划任务"),
+        ("channels", "/admin/channels", "模型渠道"),
+        ("invites", "/admin/invites", "邀请管理"),
         ("settings", "/admin/settings", "用户配置"),
         ("errors", "/admin/errors", "错误反馈"),
         ("radio", "/admin/radio", "音乐电台"),
@@ -289,16 +304,28 @@ def _nav(active: str) -> list[dict[str, str]]:
 
 
 def _get_users_missing_plan_keys(db: Session) -> list[dict[str, Any]]:
-    """查询所有尚未配置「策划 API Keys」的用户（启用与禁用均包含，启用排在前面）。"""
+    """查询所有尚未配置可用「策划 API Keys」且无法正常使用策划功能的用户。
+
+    若系统存在默认策略组或用户已绑定有效策略组，任务将走渠道池调度，不视为缺失 Key；
+    仅当用户明确处于独立单模型模式（plan_group_id == 0）或无可用策略组且未填 Key 时预警。
+    """
     stmt = (
         select(User)
         .options(joinedload(User.secrets))
         .order_by(desc(User.is_active), desc(User.id))
     )
     rows = db.scalars(stmt).unique().all()
+    from app.models import LlmGroup
+    has_default_group = db.query(LlmGroup).filter(LlmGroup.is_default == True).first() is not None
     missing = []
     for user in rows:
         if (user.username or "").strip().lower() == "demo":
+            continue
+        sec = user.secrets
+        gid = getattr(sec, "plan_group_id", None) if sec else None
+        if gid and gid > 0:
+            continue
+        if gid is None and has_default_group:
             continue
         _preset, _label, keys, _dash, _thinking = _user_plan_fields(user)
         if not (keys or "").strip():
@@ -533,6 +560,17 @@ def user_edit_page(
     )
     if not getattr(user, "download_enabled", True):
         enabled_tabs = [t for t in enabled_tabs if t != "video_download"]
+    from app.models import LlmGroup
+    llm_groups = db.query(LlmGroup).order_by(LlmGroup.id.asc()).all()
+    user_secret_obj = getattr(user, "secrets", None)
+    current_plan_group_id = getattr(user_secret_obj, "plan_group_id", None) if user_secret_obj else None
+
+    inviter_username = None
+    if user.invited_by_id:
+        inviter_user = db.get(User, user.invited_by_id)
+        if inviter_user:
+            inviter_username = inviter_user.username
+
     return templates.TemplateResponse(
         request,
         "admin/user_edit.html",
@@ -547,6 +585,9 @@ def user_edit_page(
             dashscope_key=dashscope,
             plan_thinking_enabled=thinking_enabled,
             plan_choices=list(PLAN_LLM_PRESET_CHOICES),
+            llm_groups=llm_groups,
+            current_plan_group_id=current_plan_group_id,
+            inviter_username=inviter_username,
             saved=bool(saved),
             msg=msg,
             machine=_machine_to_dict(get_machine(db, user.id)),
@@ -579,6 +620,7 @@ def user_edit_save(
     plan_thinking_enabled: Annotated[str | None, Form()] = None,
     deepseek_keys: Annotated[str | None, Form()] = None,
     dashscope_key: Annotated[str | None, Form()] = None,
+    plan_group_id: Annotated[str | None, Form()] = None,
     encode_enable_gpu: Annotated[str | None, Form()] = None,
     encode_nvenc_preset: Annotated[str | None, Form()] = None,
     encode_amf_preset: Annotated[str | None, Form()] = None,
@@ -649,6 +691,23 @@ def user_edit_save(
     secret.plan_llm_provider = provider
     secret.plan_llm_model = llm_model
     secret.plan_thinking_enabled = bool(plan_thinking_enabled)
+    cached_form = getattr(request, "_form", None)
+    if cached_form is not None and "plan_group_id" in cached_form:
+        raw_gid = str(cached_form.get("plan_group_id") or "").strip()
+        if raw_gid == "0":
+            secret.plan_group_id = 0
+        elif raw_gid.isdigit() and int(raw_gid) > 0:
+            secret.plan_group_id = int(raw_gid)
+        else:
+            secret.plan_group_id = None
+    elif plan_group_id is not None:
+        raw_gid = str(plan_group_id).strip()
+        if raw_gid == "0":
+            secret.plan_group_id = 0
+        elif raw_gid.isdigit() and int(raw_gid) > 0:
+            secret.plan_group_id = int(raw_gid)
+        else:
+            secret.plan_group_id = None
     db.commit()
 
     # 编码/渲染设置：仅提交显式选择的值；空/未设置表示“不下发、不改动”
@@ -1642,6 +1701,356 @@ async def admin_api_version_save(request: Request, db: Db):
         installer=installer,
     )
     return {"ok": True, "data": saved, "message": "版本配置已保存，实时生效"}
+
+
+@router.get("/channels")
+def channels_page(
+    request: Request,
+    db: Db,
+    msg: str = "",
+    error: str = "",
+):
+    from app.models import LlmChannel, LlmGroup
+
+    channels = (
+        db.query(LlmChannel)
+        .order_by(LlmChannel.priority.asc(), LlmChannel.id.asc())
+        .all()
+    )
+    groups = db.query(LlmGroup).order_by(LlmGroup.id.asc()).all()
+
+    PROVIDER_LABELS = {
+        "deepseek": "官方 DeepSeek",
+        "zhipu": "智谱 GLM",
+        "xiaomi": "小米 MiMo",
+        "opencode_go": "OpenCode Go",
+        "siliconflow": "硅基流动",
+        "tongyi": "通义千问",
+    }
+
+    def _channel_to_dict(c: LlmChannel) -> dict:
+        return {
+            "id": c.id,
+            "name": c.name,
+            "provider": c.provider,
+            "provider_label": PROVIDER_LABELS.get(c.provider, c.provider),
+            "model_name": c.model_name,
+            "api_url": c.api_url or "",
+            "api_keys": c.api_keys or "",
+            "thinking_enabled": bool(c.thinking_enabled),
+            "priority": c.priority,
+            "is_active": bool(c.is_active),
+        }
+
+    def _group_to_dict(g: LlmGroup) -> dict:
+        return {
+            "id": g.id,
+            "name": g.name,
+            "dispatch_mode": g.dispatch_mode,
+            "channel_ids": g.channel_ids or "",
+            "max_loops_per_channel": g.max_loops_per_channel,
+            "is_default": bool(g.is_default),
+        }
+
+    channels_dict = [_channel_to_dict(c) for c in channels]
+    ch_dict = {c["id"]: c for c in channels_dict}
+    group_items = []
+    for g in groups:
+        c_ids = [
+            int(x.strip())
+            for x in (g.channel_ids or "").split(",")
+            if x.strip().isdigit()
+        ]
+        assigned_chs = [ch_dict[cid] for cid in c_ids if cid in ch_dict]
+        group_items.append(
+            {
+                "group": _group_to_dict(g),
+                "channels": assigned_chs,
+            }
+        )
+
+    return templates.TemplateResponse(
+        request,
+        "admin/llm_channels.html",
+        _ctx(
+            request,
+            active="channels",
+            db=db,
+            channels=channels_dict,
+            groups=group_items,
+            preset_choices=list(PLAN_LLM_PRESET_CHOICES),
+            msg=msg,
+            error=error,
+        ),
+    )
+
+
+@router.post("/channels/channel/save")
+def channel_save(
+    request: Request,
+    db: Db,
+    channel_id: Annotated[str | None, Form()] = None,
+    name: Annotated[str, Form()] = "",
+    provider: Annotated[str, Form()] = "deepseek",
+    model_name: Annotated[str, Form()] = "",
+    api_url: Annotated[str, Form()] = "",
+    api_keys: Annotated[str, Form()] = "",
+    thinking_enabled: Annotated[str | None, Form()] = None,
+    priority: Annotated[int, Form()] = 1,
+    is_active: Annotated[str | None, Form()] = None,
+):
+    from app.models import LlmChannel
+    from app.services.plan_secrets import (
+        normalize_plan_llm_model,
+        normalize_plan_llm_provider,
+    )
+
+    c_name = (name or "").strip()
+    if not c_name:
+        return RedirectResponse("/admin/channels?error=渠道名称不能为空", status_code=302)
+
+    prov = normalize_plan_llm_provider(provider)
+    model = (model_name or "").strip() or normalize_plan_llm_model("", provider=prov)
+    cid = int(channel_id) if channel_id and channel_id.isdigit() else 0
+
+    if cid > 0:
+        ch = db.get(LlmChannel, cid)
+        if ch is None:
+            return RedirectResponse("/admin/channels?error=渠道不存在", status_code=302)
+    else:
+        ch = LlmChannel()
+        db.add(ch)
+
+    ch.name = c_name
+    ch.provider = prov
+    ch.model_name = model
+    ch.api_url = (api_url or "").strip()
+    ch.api_keys = (api_keys or "").strip()
+    ch.thinking_enabled = bool(thinking_enabled)
+    ch.priority = int(priority) if priority else 1
+    ch.is_active = bool(is_active)
+    db.commit()
+    return RedirectResponse("/admin/channels?msg=channel_saved", status_code=302)
+
+
+@router.post("/channels/channel/delete/{channel_id}")
+def channel_delete(
+    channel_id: int,
+    db: Db,
+):
+    from app.models import LlmChannel
+
+    ch = db.get(LlmChannel, channel_id)
+    if ch:
+        db.delete(ch)
+        db.commit()
+    return RedirectResponse("/admin/channels?msg=channel_deleted", status_code=302)
+
+
+@router.post("/channels/channel/test")
+def channel_test(
+    request: Request,
+    provider: Annotated[str, Form()] = "deepseek",
+    api_url: Annotated[str, Form()] = "",
+    model_name: Annotated[str, Form()] = "",
+    api_key: Annotated[str, Form()] = "",
+    thinking_enabled: Annotated[str | None, Form()] = None,
+):
+    from app.services.plan_secrets import test_channel_connection
+
+    success, message, elapsed_ms = test_channel_connection(
+        provider=provider,
+        api_url=api_url,
+        model_name=model_name,
+        api_key=api_key,
+        thinking_enabled=bool(thinking_enabled),
+    )
+    return JSONResponse({"success": success, "msg": message, "elapsed_ms": elapsed_ms})
+
+
+@router.post("/channels/group/save")
+def group_save(
+    request: Request,
+    db: Db,
+    group_id: Annotated[str | None, Form()] = None,
+    name: Annotated[str, Form()] = "",
+    dispatch_mode: Annotated[str, Form()] = "serial",
+    channel_ids: Annotated[list[str] | None, Form()] = None,
+    max_loops_per_channel: Annotated[int, Form()] = 2,
+    is_default: Annotated[str | None, Form()] = None,
+):
+    from app.models import LlmGroup
+
+    g_name = (name or "").strip()
+    if not g_name:
+        return RedirectResponse("/admin/channels?error=策略组名称不能为空", status_code=302)
+
+    gid = int(group_id) if group_id and group_id.isdigit() else 0
+    if gid > 0:
+        grp = db.get(LlmGroup, gid)
+        if grp is None:
+            return RedirectResponse("/admin/channels?error=策略组不存在", status_code=302)
+    else:
+        grp = LlmGroup()
+        db.add(grp)
+
+    selected_cids: list[int] = []
+    if channel_ids:
+        for cid_str in channel_ids:
+            for piece in str(cid_str).split(","):
+                piece = piece.strip()
+                if piece.isdigit() and int(piece) not in selected_cids:
+                    selected_cids.append(int(piece))
+
+    default_val = bool(is_default)
+    if default_val:
+        db.query(LlmGroup).update({LlmGroup.is_default: False})
+
+    grp.name = g_name
+    grp.dispatch_mode = "parallel" if dispatch_mode == "parallel" else "serial"
+    grp.channel_ids = ",".join(str(x) for x in selected_cids)
+    grp.max_loops_per_channel = max(1, min(10, int(max_loops_per_channel or 2)))
+    grp.is_default = default_val
+    db.commit()
+    return RedirectResponse("/admin/channels?msg=group_saved", status_code=302)
+
+
+@router.post("/channels/group/delete/{group_id}")
+def group_delete(
+    group_id: int,
+    db: Db,
+):
+    from app.models import LlmGroup
+
+    grp = db.get(LlmGroup, group_id)
+    if grp:
+        db.delete(grp)
+        db.commit()
+    return RedirectResponse("/admin/channels?msg=group_deleted", status_code=302)
+
+
+@router.get("/invites", response_class=HTMLResponse)
+def invites_page(
+    request: Request,
+    db: Db,
+    page: int = 1,
+    q: str = "",
+    msg: str = "",
+):
+    config = get_invite_config(db)
+
+    # 统计数据
+    total_users = int(db.scalar(select(func.count(User.id))) or 0)
+    users_with_code = int(
+        db.scalar(
+            select(func.count(User.id)).where(
+                User.invite_code != "", User.invite_code.is_not(None)
+            )
+        )
+        or 0
+    )
+    total_records = int(db.scalar(select(func.count(UserInviteRecord.id))) or 0)
+    total_rewarded_clips = (
+        int(
+            db.scalar(
+                select(func.coalesce(func.sum(UserInviteRecord.reward_clip_limit), 0))
+            )
+            or 0
+        )
+        * 2
+    )
+
+    # 查询邀请流水
+    query = select(UserInviteRecord).options(
+        joinedload(UserInviteRecord.inviter),
+        joinedload(UserInviteRecord.invitee),
+    )
+    if q.strip():
+        search = f"%{q.strip()}%"
+        from sqlalchemy.orm import aliased
+
+        InviterUser = aliased(User)
+        InviteeUser = aliased(User)
+        query = (
+            query.join(InviterUser, UserInviteRecord.inviter_id == InviterUser.id)
+            .join(InviteeUser, UserInviteRecord.invitee_id == InviteeUser.id)
+            .where(
+                or_(
+                    InviterUser.username.like(search),
+                    InviteeUser.username.like(search),
+                    InviterUser.invite_code.like(search),
+                )
+            )
+        )
+
+    count_stmt = select(func.count()).select_from(query.subquery())
+    record_count = int(db.scalar(count_stmt) or 0)
+    page, total_pages, offset = _paginate(record_count, page)
+
+    records = (
+        db.scalars(
+            query.order_by(desc(UserInviteRecord.id))
+            .offset(offset)
+            .limit(_PAGE_SIZE)
+        )
+        .unique()
+        .all()
+    )
+
+    items = []
+    for r in records:
+        items.append(
+            {
+                "id": r.id,
+                "inviter_username": r.inviter.username if r.inviter else "已注销用户",
+                "inviter_code": r.inviter.invite_code if r.inviter else "-",
+                "invitee_username": r.invitee.username if r.invitee else "已注销用户",
+                "reward_clip_limit": r.reward_clip_limit,
+                "created_at": r.created_at.strftime("%Y-%m-%d %H:%M:%S")
+                if r.created_at
+                else "-",
+            }
+        )
+
+    ctx = _ctx(
+        request,
+        active="invites",
+        db=db,
+        config=config,
+        stats={
+            "total_users": total_users,
+            "users_with_code": users_with_code,
+            "total_records": total_records,
+            "total_rewarded_clips": total_rewarded_clips,
+        },
+        records=items,
+        page=page,
+        total_pages=total_pages,
+        total_count=record_count,
+        q=q,
+        msg=msg,
+    )
+    return templates.TemplateResponse(request, "admin/invites.html", ctx)
+
+
+@router.post("/invites/settings")
+def save_invite_settings(
+    db: Db,
+    reward_clip_limit: Annotated[str | None, Form()] = None,
+    max_rewards_per_user: Annotated[str | None, Form()] = None,
+    is_enabled: Annotated[str | None, Form()] = None,
+):
+    reward = _parse_int(reward_clip_limit, 5)
+    max_rewards = _parse_int(max_rewards_per_user, 0)
+    enabled = is_enabled == "1" or is_enabled == "true" or is_enabled == "on"
+    set_invite_config(
+        db,
+        reward_clip_limit=reward,
+        max_rewards_per_user=max_rewards,
+        is_enabled=enabled,
+    )
+    return RedirectResponse("/admin/invites?msg=settings_saved", status_code=302)
+
 
 
 def setup_admin(app: Starlette):

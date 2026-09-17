@@ -1,0 +1,319 @@
+{% extends "admin/base.html" %}
+{% block title %}邀请管理与裂变激励 · {{ app_name }}{% endblock %}
+{% block body %}
+<style>
+  .invites-container {
+    width: 100%;
+    margin: 0;
+    padding: 0;
+  }
+  .invites-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 16px;
+    margin-bottom: 20px;
+  }
+  .invites-head h1 {
+    margin: 0 0 8px 0;
+    font-size: 20px;
+    font-weight: 600;
+    color: #303133;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .invites-head p {
+    margin: 0;
+    font-size: 13px;
+    color: #909399;
+    line-height: 1.5;
+  }
+  .notice-banner {
+    padding: 12px 16px;
+    border-radius: 6px;
+    margin-bottom: 20px;
+    font-size: 13px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+  .notice-banner.success { background: #f0f9eb; color: #67c23a; border: 1px solid #e1f3d8; }
+
+  /* 统计指标卡 */
+  .stat-cards {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 16px;
+    margin-bottom: 20px;
+  }
+  @media (max-width: 1200px) {
+    .stat-cards { grid-template-columns: repeat(2, 1fr); }
+  }
+  @media (max-width: 640px) {
+    .stat-cards { grid-template-columns: 1fr; }
+  }
+  .stat-card {
+    background: #fff;
+    border-radius: 8px;
+    padding: 16px 20px;
+    border: 1px solid #e4e7ed;
+    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.03);
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .stat-card__title { font-size: 13px; color: #909399; }
+  .stat-card__value { font-size: 22px; font-weight: 700; color: #303133; }
+  .stat-card__sub { font-size: 12px; color: #a8abb2; }
+
+  /* 配置面板卡片 */
+  .config-card {
+    background: #fff;
+    border-radius: 8px;
+    padding: 20px;
+    border: 1px solid #e4e7ed;
+    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.03);
+    margin-bottom: 24px;
+  }
+  .config-card-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 16px;
+    padding-bottom: 12px;
+    border-bottom: 1px solid #ebeef5;
+  }
+  .config-card-title {
+    font-size: 15px;
+    font-weight: 600;
+    color: #303133;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .config-form-row {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr) auto;
+    gap: 20px;
+    align-items: flex-end;
+  }
+  @media (max-width: 1000px) {
+    .config-form-row { grid-template-columns: 1fr; }
+  }
+  .form-item {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .form-item label {
+    font-size: 13px;
+    font-weight: 500;
+    color: #606266;
+  }
+  .form-item .hint {
+    font-size: 12px;
+    color: #909399;
+  }
+
+  /* 邀请列表表格卡片 */
+  .table-card {
+    background: #fff;
+    border-radius: 8px;
+    border: 1px solid #e4e7ed;
+    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.03);
+    overflow: hidden;
+  }
+  .table-card-head {
+    padding: 16px 20px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    border-bottom: 1px solid #ebeef5;
+    background: #fafbfc;
+  }
+  .table-card-title {
+    font-size: 15px;
+    font-weight: 600;
+    color: #303133;
+    margin: 0;
+  }
+  .invite-badge {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-family: monospace;
+    font-weight: 600;
+    font-size: 12px;
+    background: #ecf5ff;
+    color: #409eff;
+    border: 1px solid #d9ecff;
+  }
+</style>
+
+<div class="invites-container">
+  {% if msg == "settings_saved" %}
+  <div class="notice-banner success">
+    <span>✓ 邀请裂变动态配置已成功保存并即时生效！</span>
+    <span style="cursor: pointer;" onclick="this.parentElement.remove()">✕</span>
+  </div>
+  {% endif %}
+
+  <div class="invites-head">
+    <div class="invites-head-title">
+      <h1>
+        <span style="color: #e6a23c;">🎁</span>
+        <span>邀请管理与裂变激励</span>
+      </h1>
+      <p>配置用户专属邀请码裂变规则，动态调整双方每日剪辑上限奖励，实时审计邀请关系与流水明细。</p>
+    </div>
+  </div>
+
+  <!-- 顶部统计看板 -->
+  <div class="stat-cards">
+    <div class="stat-card">
+      <div class="stat-card__title">累计成功邀请</div>
+      <div class="stat-card__value" style="color: #409eff;">{{ stats.total_records }} <small style="font-size: 14px; font-weight: normal; color: #909399;">次</small></div>
+      <div class="stat-card__sub">全站用户互绑对数</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-card__title">累计赠送剪辑上限</div>
+      <div class="stat-card__value" style="color: #67c23a;">+{{ stats.total_rewarded_clips }} <small style="font-size: 14px; font-weight: normal; color: #909399;">首/天</small></div>
+      <div class="stat-card__sub">双方实际累计提升配额总和</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-card__title">当前单次奖励</div>
+      <div class="stat-card__value" style="color: #e6a23c;">+{{ config.reward_clip_limit }} <small style="font-size: 14px; font-weight: normal; color: #909399;">首/人</small></div>
+      <div class="stat-card__sub">每成功邀请 1 人双方均增加</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-card__title">单人奖励人数上限</div>
+      <div class="stat-card__value">
+        {% if config.max_rewards_per_user > 0 %}
+        {{ config.max_rewards_per_user }} <small style="font-size: 14px; font-weight: normal; color: #909399;">人</small>
+        {% else %}
+        <span style="color: #67c23a; font-size: 18px;">不限上限</span>
+        {% endif %}
+      </div>
+      <div class="stat-card__sub">超过后邀请人不再无限叠加</div>
+    </div>
+  </div>
+
+  <!-- 全局规则动态配置面板 -->
+  <div class="config-card">
+    <div class="config-card-head">
+      <div class="config-card-title">
+        <span>⚙️</span>
+        <span>动态裂变奖励规则配置</span>
+      </div>
+      <span style="font-size: 12px; color: #909399;">修改后即刻生效，无需重启服务</span>
+    </div>
+    <form method="post" action="/admin/invites/settings">
+      <div class="config-form-row">
+        <div class="form-item">
+          <label for="reward_clip_limit">单次双方奖励每日剪辑上限 (首):</label>
+          <div class="el-input">
+            <div class="el-input__wrapper">
+              <input class="el-input__inner" id="reward_clip_limit" name="reward_clip_limit" type="number" min="1" max="100" value="{{ config.reward_clip_limit }}" required />
+            </div>
+          </div>
+          <div class="hint">被邀请人成功兑换后，邀请人与被邀请人各增加此数值（如 5 或 10）</div>
+        </div>
+
+        <div class="form-item">
+          <label for="max_rewards_per_user">单人最大可获奖励人数 (0 为不限制):</label>
+          <div class="el-input">
+            <div class="el-input__wrapper">
+              <input class="el-input__inner" id="max_rewards_per_user" name="max_rewards_per_user" type="number" min="0" max="1000" value="{{ config.max_rewards_per_user }}" required />
+            </div>
+          </div>
+          <div class="hint">防止个别用户无限刷配额。填 0 表示不限制邀请奖励人数</div>
+        </div>
+
+        <div class="form-item">
+          <label>功能启用状态:</label>
+          <div style="padding-top: 6px;">
+            <label style="display: inline-flex; align-items: center; gap: 8px; cursor: pointer; font-size: 13px;">
+              <input type="checkbox" name="is_enabled" value="1" {% if config.is_enabled %}checked{% endif %} style="width: 16px; height: 16px;" />
+              <span>开启客户端邀请码兑换功能</span>
+            </label>
+          </div>
+          <div class="hint">取消勾选将临时暂停桌面端邀请码绑定通道</div>
+        </div>
+
+        <div>
+          <button type="submit" class="el-button el-button--primary" style="height: 36px; padding: 0 20px;">
+            <span>保存配置</span>
+          </button>
+        </div>
+      </div>
+    </form>
+  </div>
+
+  <!-- 邀请记录明细卡片 -->
+  <div class="table-card">
+    <div class="table-card-head">
+      <h3 class="table-card-title">邀请流水记录 (共 {{ total_count }} 条)</h3>
+      <form class="search" method="get" action="/admin/invites" style="margin: 0;">
+        <div class="el-input" style="width: 260px;">
+          <div class="el-input__wrapper">
+            <input class="el-input__inner" name="q" value="{{ q }}" placeholder="搜索邀请人/被邀请人/邀请码..." />
+          </div>
+        </div>
+        <button class="el-button el-button--primary" type="submit">搜索</button>
+      </form>
+    </div>
+
+    <table class="ssr-table is-fallback" style="display: table; width: 100%;">
+      <thead>
+        <tr>
+          <th style="width: 60px;">ID</th>
+          <th style="min-width: 160px; text-align: left; padding-left: 14px;">邀请人账号</th>
+          <th style="width: 120px;">使用的邀请码</th>
+          <th style="min-width: 160px; text-align: left; padding-left: 14px;">被邀请新用户</th>
+          <th style="width: 140px;">双方奖励剪辑数</th>
+          <th style="width: 180px;">绑定兑换时间</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for r in records %}
+        <tr>
+          <td style="color: #909399;">#{{ r.id }}</td>
+          <td style="text-align: left; padding-left: 14px;">
+            <strong style="color: #303133;">{{ r.inviter_username }}</strong>
+          </td>
+          <td>
+            <span class="invite-badge">{{ r.inviter_code }}</span>
+          </td>
+          <td style="text-align: left; padding-left: 14px;">
+            <strong style="color: #409eff;">{{ r.invitee_username }}</strong>
+          </td>
+          <td>
+            <span style="color: #67c23a; font-weight: 600;">+{{ r.reward_clip_limit }} 首/天</span>
+          </td>
+          <td style="color: #909399; font-size: 12px;">{{ r.created_at }}</td>
+        </tr>
+        {% else %}
+        <tr>
+          <td colspan="6" style="text-align: center; padding: 40px; color: #909399;">
+            暂无邀请记录数据
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+
+    {% if total_pages > 1 %}
+    <div style="padding: 12px 20px; display: flex; justify-content: flex-end; align-items: center; gap: 8px; border-top: 1px solid #ebeef5;">
+      <span style="font-size: 12px; color: #909399;">第 {{ page }} / {{ total_pages }} 页</span>
+      {% if page > 1 %}
+      <a href="/admin/invites?page={{ page - 1 }}{% if q %}&q={{ q|urlencode }}{% endif %}" class="el-button btn-sm">上一页</a>
+      {% endif %}
+      {% if page < total_pages %}
+      <a href="/admin/invites?page={{ page + 1 }}{% if q %}&q={{ q|urlencode }}{% endif %}" class="el-button btn-sm">下一页</a>
+      {% endif %}
+    </div>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}

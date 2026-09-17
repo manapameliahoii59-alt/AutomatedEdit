@@ -22,6 +22,8 @@ class User(Base):
     daily_plan_limit: Mapped[int] = mapped_column(Integer, default=30)
     daily_clip_limit: Mapped[int] = mapped_column(Integer, default=30)
     daily_download_limit: Mapped[int] = mapped_column(Integer, default=30)
+    invite_code: Mapped[str | None] = mapped_column(String(16), unique=True, index=True, nullable=True, default=None)
+    invited_by_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True, default=None)
     valid_until: Mapped[date | None] = mapped_column(Date, nullable=True, default=None)
     token_version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
@@ -39,16 +41,18 @@ class UserSecret(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), unique=True, index=True)
-    # 策划 LLM 密钥（官方 DeepSeek / OpenCode Go / 小米 MiMo / 智谱 GLM，由 plan_llm_provider 决定）
+    # 策划 LLM 密钥（官方 DeepSeek / OpenCode Go / 小米 MiMo / 智谱 GLM / 硅基流动 / 通义千问，由 plan_llm_provider 决定）
     deepseek_keys: Mapped[str] = mapped_column(Text, default="")
     dashscope_key: Mapped[str] = mapped_column(Text, default="")
     plan_decrypt_key: Mapped[str] = mapped_column(String(64), default="")
-    # deepseek | opencode_go | xiaomi | zhipu
+    # deepseek | opencode_go | xiaomi | zhipu | siliconflow | tongyi
     plan_llm_provider: Mapped[str] = mapped_column(String(32), default="deepseek")
     # 空=通道默认模型
     plan_llm_model: Mapped[str] = mapped_column(String(64), default="")
     # 深度思考模式（默认关闭提速；智谱 GLM-5.3 等强制思考模型不受此限制）
     plan_thinking_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
+    # 混合模式调度策略组（关联 LlmGroup.id；为 NULL 或 0 时跟随默认组或回退单模型）
+    plan_group_id: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, server_default=func.now(), onupdate=func.now()
     )
@@ -227,3 +231,65 @@ class RadioTrackGroup(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
 
+class LlmChannel(Base):
+    """大模型渠道配置（支持 deepseek / zhipu / xiaomi / opencode_go / siliconflow / tongyi 等）。"""
+
+    __tablename__ = "llm_channels"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    name: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    provider: Mapped[str] = mapped_column(String(32), default="deepseek")
+    model_name: Mapped[str] = mapped_column(String(64), default="")
+    api_url: Mapped[str] = mapped_column(String(255), default="")
+    api_keys: Mapped[str] = mapped_column(Text, default="")
+    thinking_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
+    priority: Mapped[int] = mapped_column(Integer, default=1)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+
+class LlmGroup(Base):
+    """大模型策略调度组（支持串行接力 serial / 并发融合 parallel）。"""
+
+    __tablename__ = "llm_groups"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    name: Mapped[str] = mapped_column(String(64), nullable=False, unique=True, index=True)
+    # serial (串行接力) | parallel (并行融合)
+    dispatch_mode: Mapped[str] = mapped_column(String(32), default="serial")
+    # 逗号分隔的 LlmChannel.id 列表，按执行优先级排序（如 "1,2,3"）
+    channel_ids: Mapped[str] = mapped_column(String(255), default="")
+    # 串行模式下单渠道最大尝试轮次（遇到切点不满足或停滞时切换下一个渠道）
+    max_loops_per_channel: Mapped[int] = mapped_column(Integer, default=2)
+    # 是否为混合模式系统默认调度组
+    is_default: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+
+class SystemSetting(Base):
+    """全局系统配置（键值对，供后台动态调整）。"""
+
+    __tablename__ = "system_settings"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    key: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    value: Mapped[str] = mapped_column(Text, default="")
+    description: Mapped[str] = mapped_column(String(255), default="")
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, server_default=func.now(), onupdate=func.now()
+    )
+
+
+class UserInviteRecord(Base):
+    """用户邀请裂变流水记录表（记录谁邀请了谁，以及当时奖励的额度）。"""
+
+    __tablename__ = "user_invite_records"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    inviter_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    invitee_id: Mapped[int] = mapped_column(ForeignKey("users.id"), unique=True, index=True)
+    reward_clip_limit: Mapped[int] = mapped_column(Integer, default=5)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), index=True)
+
+    inviter: Mapped["User"] = relationship("User", foreign_keys=[inviter_id])
+    invitee: Mapped["User"] = relationship("User", foreign_keys=[invitee_id])

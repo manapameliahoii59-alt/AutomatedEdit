@@ -11,6 +11,9 @@ from app.schemas import (
     DailyActivityOut,
     DailyQuotaOut,
     ErrorReportCreate,
+    InviteBindRequest,
+    InviteBindResponse,
+    InviteInfoOut,
     MachineInfoReport,
     PlanJobCreateRequest,
     PlanJobCreateResponse,
@@ -32,6 +35,7 @@ from app.services.daily_quota import (
     can_download_drama,
     can_plan_drama,
 )
+from app.services.invite_service import bind_invite_code, get_user_invite_info
 from app.services.plan_jobs import create_plan_job, get_plan_job, user_facing_plan_error
 from app.services.plan_secrets import ensure_user_secret
 from app.services.user_machine import upsert_machine
@@ -302,4 +306,23 @@ def submit_error_report(
     db.commit()
     db.refresh(report)
     return {"ok": True, "id": report.id}
+
+
+@router.get("/invite/info", response_model=InviteInfoOut)
+def get_client_invite_info(
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """获取当前用户的邀请码、已邀请人数、奖励累计与规则。"""
+    return get_user_invite_info(db, user)
+
+
+@router.post("/invite/bind", response_model=InviteBindResponse)
+def bind_client_invite(
+    body: InviteBindRequest,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """兑换绑定他人的邀请码，双方增加每日剪辑上限。"""
+    return bind_invite_code(db, user, body.invite_code)
 

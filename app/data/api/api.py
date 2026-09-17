@@ -305,6 +305,13 @@ class RemoteApi:
             return {}
         return self._request('POST', '/api/client/machine', json=payload) or {}
 
+    def fetch_invite_info(self) -> dict:
+        return self._request('GET', '/api/client/invite/info') or {}
+
+    def bind_invite_code(self, invite_code: str) -> dict:
+        return self._request('POST', '/api/client/invite/bind', json={'invite_code': invite_code}) or {}
+
+
 
 def _resolve_base_url() -> str:
     custom = (

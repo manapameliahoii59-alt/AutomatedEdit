@@ -122,6 +122,30 @@ def test_plan_llm_preset_roundtrip():
     assert zm47 == "glm-4.7-flash"
     assert plan_llm_preset_label(zp47, zm47) == "智谱 GLM / glm-4.7-flash"
 
+    sf_qwen = encode_plan_llm_preset("siliconflow", "Qwen/Qwen3.8-27B")
+    sfp1, sfm1 = decode_plan_llm_preset(sf_qwen)
+    assert sfp1 == "siliconflow"
+    assert sfm1 == "Qwen/Qwen3.8-27B"
+    assert plan_llm_preset_label(sfp1, sfm1) == "硅基流动 / Qwen/Qwen3.8-27B"
+
+    sf_v4 = encode_plan_llm_preset("siliconflow", "deepseek-ai/DeepSeek-V4-Flash")
+    sfp2, sfm2 = decode_plan_llm_preset(sf_v4)
+    assert sfp2 == "siliconflow"
+    assert sfm2 == "deepseek-ai/DeepSeek-V4-Flash"
+    assert plan_llm_preset_label(sfp2, sfm2) == "硅基流动 / deepseek-ai/DeepSeek-V4-Flash"
+
+    sf_v3 = encode_plan_llm_preset("siliconflow", "deepseek-ai/DeepSeek-V3.2")
+    sfp3, sfm3 = decode_plan_llm_preset(sf_v3)
+    assert sfp3 == "siliconflow"
+    assert sfm3 == "deepseek-ai/DeepSeek-V3.2"
+    assert plan_llm_preset_label(sfp3, sfm3) == "硅基流动 / deepseek-ai/DeepSeek-V3.2"
+
+    ty_qwen = encode_plan_llm_preset("tongyi", "qwen3.7-flash")
+    typ, tym = decode_plan_llm_preset(ty_qwen)
+    assert typ == "tongyi"
+    assert tym == "qwen3.7-flash"
+    assert plan_llm_preset_label(typ, tym) == "通义千问 / qwen3.7-flash"
+
 
 def test_plan_llm_preset_deepseek_flash_normalized():
     from app.services.plan_secrets import (
@@ -390,4 +414,114 @@ def test_call_deepseek_payload_by_provider(monkeypatch):
     assert err7 is None
     assert captured["json"].get("thinking") == {"type": "enabled"}
     assert captured["json"].get("reasoning_effort") == "low"
+
+    # 硅基流动: 默认不传 thinking，开启时传 enabled
+    content8, _e8, err8 = plan_director._call_deepseek(
+        api_url="https://api.siliconflow.cn/v1/chat/completions",
+        model_name="Qwen/Qwen3.8-27B",
+        compressed_script="x",
+        count=1,
+        group_type="U",
+        key_pool=pool,
+        min_duration_seconds=150,
+        max_duration_seconds=300,
+        plan_mode="long",
+        provider="siliconflow",
+        llm_session_id="",
+        thinking_enabled=False,
+    )
+    assert err8 is None
+    assert "thinking" not in captured["json"]
+    assert captured["headers"]["Authorization"] == "Bearer sk-x"
+
+    content9, _e9, err9 = plan_director._call_deepseek(
+        api_url="https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions",
+        model_name="qwen3.7-flash",
+        compressed_script="x",
+        count=1,
+        group_type="U",
+        key_pool=pool,
+        min_duration_seconds=150,
+        max_duration_seconds=300,
+        plan_mode="long",
+        provider="tongyi",
+        llm_session_id="",
+        thinking_enabled=True,
+    )
+    assert err9 is None
+    assert captured["json"].get("thinking") == {"type": "enabled"}
+    assert captured["headers"]["Authorization"] == "Bearer sk-x"
+
+
+def test_resolve_plan_llm_config_siliconflow_and_tongyi():
+    from app.services.plan_secrets import (
+        normalize_plan_llm_provider,
+        normalize_plan_llm_model,
+        default_api_url_for_provider,
+        resolve_plan_llm_config,
+    )
+
+    # 别名归一化
+    assert normalize_plan_llm_provider("siliconflow") == "siliconflow"
+    assert normalize_plan_llm_provider("silicon") == "siliconflow"
+    assert normalize_plan_llm_provider("sf") == "siliconflow"
+    assert normalize_plan_llm_provider("tongyi") == "tongyi"
+    assert normalize_plan_llm_provider("qwen") == "tongyi"
+    assert normalize_plan_llm_provider("dashscope") == "tongyi"
+    assert normalize_plan_llm_provider("aliyun") == "tongyi"
+
+    # 默认模型与 URL
+    assert "siliconflow.cn" in default_api_url_for_provider("siliconflow")
+    assert "dashscope.aliyuncs.com" in default_api_url_for_provider("tongyi")
+    assert normalize_plan_llm_model("", provider="siliconflow") == "deepseek-ai/DeepSeek-V4-Flash"
+    assert normalize_plan_llm_model("", provider="tongyi") == "qwen3.7-flash"
+    assert normalize_plan_llm_model("Qwen/Qwen3.8-27B", provider="siliconflow") == "Qwen/Qwen3.8-27B"
+    assert normalize_plan_llm_model("deepseek-ai/DeepSeek-V3.2", provider="siliconflow") == "deepseek-ai/DeepSeek-V3.2"
+
+    class _MockSFSecret:
+        plan_decrypt_key = "abc"
+        plan_llm_provider = "siliconflow"
+        plan_llm_model = "Qwen/Qwen3.8-27B"
+        deepseek_keys = "sf-key-123"
+        dashscope_key = ""
+        plan_thinking_enabled = False
+
+    class _MockDbSF:
+        def query(self, *_args):
+            return self
+        def filter(self, *_args):
+            return self
+        def first(self):
+            return _MockSFSecret()
+
+    cfg_sf = resolve_plan_llm_config(_MockDbSF(), 1)
+    assert cfg_sf["provider"] == "siliconflow"
+    assert cfg_sf["model"] == "Qwen/Qwen3.8-27B"
+    assert cfg_sf["keys"] == "sf-key-123"
+    assert "siliconflow.cn" in cfg_sf["api_url"]
+
+    # 通义千问：deepseek_keys 为空时回退到 dashscope_key
+    class _MockTYSecret:
+        plan_decrypt_key = "abc"
+        plan_llm_provider = "tongyi"
+        plan_llm_model = "qwen3.7-flash"
+        deepseek_keys = ""
+        dashscope_key = "ds-fallback-key"
+        plan_thinking_enabled = True
+
+    class _MockDbTY:
+        def query(self, *_args):
+            return self
+        def filter(self, *_args):
+            return self
+        def first(self):
+            return _MockTYSecret()
+
+    cfg_ty = resolve_plan_llm_config(_MockDbTY(), 2)
+    assert cfg_ty["provider"] == "tongyi"
+    assert cfg_ty["model"] == "qwen3.7-flash"
+    assert cfg_ty["keys"] == "ds-fallback-key"
+    assert cfg_ty["thinking_enabled"] is True
+    assert "dashscope.aliyuncs.com" in cfg_ty["api_url"]
+
 

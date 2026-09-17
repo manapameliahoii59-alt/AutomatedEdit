@@ -67,7 +67,7 @@ class Config(MyQConfig):
         "Tools", "clip_auto_select_after_import", True, BoolValidator()
     )
     # 策划：短片/长片/混合模式；长片条数与最长时长（最短固定 150s）
-    plan_mode = ConfigItem("Tools", "plan_mode", "long")
+    plan_mode = ConfigItem("Tools", "plan_mode", "mixed")
     plan_clip_count = ConfigItem("Tools", "plan_clip_count", 15)
     plan_max_duration_sec = ConfigItem("Tools", "plan_max_duration_sec", 720)
     # 短片：条数 5~15；最长时长秒（最短固定 120s，最长 120~360）

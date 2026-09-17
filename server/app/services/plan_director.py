@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import concurrent.futures
 import json
 import queue
 import re
@@ -1300,7 +1301,8 @@ def _thinking_params(
     """thinking 参数策略：
     - 智谱 GLM-5.x 为始终思考模型，不支持 disabled（HTTP 400 code=1210），
       须显式 enabled 并用 reasoning_effort 压到 low 档；
-    - 其余模型按用户开关控制：开启则 enabled，未开启则 disabled（默认关闭以提速）。
+    - 其余模型按用户开关控制：开启则 enabled，未开启则 disabled（默认关闭以提速）；
+    - 硅基流动 / 通义千问在未开启思考时不传 thinking 参数，避免网关入参校验报错。
     """
     if provider_key == "zhipu" and str(model_name).strip().lower().startswith("glm-5"):
         return {
@@ -1309,6 +1311,8 @@ def _thinking_params(
         }
     if thinking_enabled:
         return {"thinking": {"type": "enabled"}}
+    if provider_key in ("siliconflow", "tongyi"):
+        return {}
     return {"thinking": {"type": "disabled"}}
 
 
@@ -1387,6 +1391,100 @@ def _call_deepseek(
         key_pool.put(api_key)
 
 
+def _extract_starts_ends_from_res(
+    raw_res: str,
+    mode: str,
+    strategy: str,
+    g_type: str,
+    ordered_files: list[str],
+) -> tuple[list[dict], list[dict]]:
+    """统一从大模型响应中提取 starts 与 ends 候选。"""
+    if mode == "mixed" and strategy == "v2" and g_type == "A":
+        first_ep = (
+            "1.mp4"
+            if "1.mp4" in ordered_files
+            else (ordered_files[0] if ordered_files else "1.mp4")
+        )
+        starts_raw = [{"se": first_ep, "st": 0.0, "score": 100.0}]
+        data = _parse_plan_json(raw_res)
+        ends_raw = data.get("ends") if isinstance(data.get("ends"), list) else []
+        if not ends_raw and data.get("clips"):
+            ends_raw = [
+                {
+                    "le": c.get("le") or c.get("cut_text_source_file"),
+                    "ct": c.get("ct") or c.get("cut_text", ""),
+                    "hook": c.get("hook") or c.get("hk") or "点击查看大结局",
+                }
+                for c in data.get("clips")
+                if isinstance(c, dict)
+            ]
+        return starts_raw, ends_raw
+    return _parse_short_starts_ends(raw_res)
+
+
+def _compose_mixed_plans(
+    *,
+    starts_raw: list[dict],
+    ends_raw: list[dict],
+    mode: str,
+    strategy: str,
+    g_type: str,
+    need: int,
+    steps: list[dict],
+    step_texts: list[str],
+    ordered_files: list[str],
+    episode_end_times: dict,
+    min_dur: float,
+    max_dur: float,
+    used_fingerprints: set[str],
+    used_short_starts: dict[str, int],
+    project_name: str,
+    date_str: str,
+    speed: float,
+    target_total: int,
+) -> list[dict]:
+    """统一包装装箱算法组合成片。"""
+    if mode == "mixed" and strategy == "v2":
+        return _compose_short_plans_from_starts_ends_v2(
+            starts_raw=starts_raw,
+            ends_raw=ends_raw,
+            steps=steps,
+            step_texts=step_texts,
+            ordered_files=ordered_files,
+            episode_end_times=episode_end_times,
+            min_dur=min_dur,
+            max_dur=max_dur,
+            target_count=need,
+            used_fingerprints=used_fingerprints,
+            used_short_starts=used_short_starts,
+            project_name=project_name,
+            date_str=date_str,
+            speed=speed,
+            supplement_asr_starts=True,
+            same_start_limit=4,
+            group_type=g_type,
+        )
+    return _compose_short_plans_from_starts_ends(
+        starts_raw=starts_raw,
+        ends_raw=ends_raw,
+        steps=steps,
+        step_texts=step_texts,
+        ordered_files=ordered_files,
+        episode_end_times=episode_end_times,
+        min_dur=min_dur,
+        max_dur=max_dur,
+        target_count=need,
+        used_fingerprints=used_fingerprints,
+        used_short_starts=used_short_starts,
+        project_name=project_name,
+        date_str=date_str,
+        speed=speed,
+        supplement_asr_starts=True,
+        same_start_limit=max_same_short_start(target_total),
+        group_type=None if g_type == "U" else g_type,
+    )
+
+
 def run_plan(
     *,
     project_name: str,
@@ -1406,6 +1504,7 @@ def run_plan(
     llm_session_id: str = "",
     thinking_enabled: bool = False,
     plan_strategy: str | None = None,
+    llm_group: dict | None = None,
 ) -> list[dict]:
     if not api_keys_raw.strip():
         raise ValueError("服务端未配置策划 API 密钥")
@@ -1494,6 +1593,23 @@ def run_plan(
                 }
             )
 
+    # 仅针对混合模式配置多模型调度组
+    multi_channels = []
+    channel_pools: list[queue.Queue] = []
+    dispatch_mode = "serial"
+    max_loops_per_channel = 2
+    if mode == "mixed" and llm_group and llm_group.get("channels"):
+        multi_channels = list(llm_group["channels"])
+        dispatch_mode = str(llm_group.get("dispatch_mode", "serial")).strip().lower()
+        max_loops_per_channel = max(1, int(llm_group.get("max_loops_per_channel", 2)))
+        for ch in multi_channels:
+            ch_raw = ch.get("keys", "") or api_keys_raw
+            ch_keys = [k.strip() for k in ch_raw.split(",") if k.strip()]
+            q: queue.Queue = queue.Queue()
+            for k in ch_keys:
+                q.put(k)
+            channel_pools.append(q)
+
     _emit("准备剧本…")
 
     for g_type, total_count in task_groups:
@@ -1507,6 +1623,190 @@ def run_plan(
             group_buffer = GROUP_B_BUFFER
         else:
             group_buffer = GROUP_U_BUFFER
+
+        # 仅针对混合模式且配置了多渠道时，启用多模型协同引擎（串行接力 / 并发融合）
+        if mode == "mixed" and multi_channels:
+            if dispatch_mode == "parallel":
+                # --- 并发融合模式 (Parallel Merge) ---
+                consecutive_empty = 0
+                while completed_in_group < total_count and loop_count < MAX_GROUP_LOOPS:
+                    loop_count += 1
+                    need = total_count - completed_in_group
+                    if g_type == "B":
+                        need = max(need, target_total - len(final_plans))
+                    extra = group_buffer + (group_buffer if consecutive_empty >= 1 else 0)
+                    request_count = need + extra
+                    _emit(f"{g_type}组 {completed_in_group}/{total_count} · 多渠道并发生成中…")
+
+                    def _fetch_one_channel(c_idx: int, c_info: dict):
+                        return _call_deepseek(
+                            api_url=c_info.get("api_url") or api_url,
+                            model_name=c_info.get("model_name") or model_name,
+                            compressed_script=compressed_script,
+                            count=request_count,
+                            group_type=g_type,
+                            key_pool=channel_pools[c_idx],
+                            min_duration_seconds=min_dur,
+                            max_duration_seconds=max_dur,
+                            plan_mode=mode,
+                            provider=c_info.get("provider") or llm_provider,
+                            llm_session_id=session_id,
+                            thinking_enabled=bool(c_info.get("thinking_enabled", False)),
+                            plan_strategy=strategy,
+                        )
+
+                    all_starts_raw: list[dict] = []
+                    all_ends_raw: list[dict] = []
+                    with concurrent.futures.ThreadPoolExecutor(max_workers=min(len(multi_channels), 8)) as executor:
+                        future_to_ch = {
+                            executor.submit(_fetch_one_channel, idx, ch): ch
+                            for idx, ch in enumerate(multi_channels)
+                        }
+                        for fut in concurrent.futures.as_completed(future_to_ch):
+                            try:
+                                raw_res, _, api_err = fut.result()
+                                if raw_res and not api_err:
+                                    s_raw, e_raw = _extract_starts_ends_from_res(
+                                        raw_res, mode, strategy, g_type, ordered_files
+                                    )
+                                    if s_raw:
+                                        all_starts_raw.extend(s_raw)
+                                    if e_raw:
+                                        all_ends_raw.extend(e_raw)
+                                elif api_err:
+                                    last_api_error = api_err
+                            except Exception as exc:
+                                last_api_error = str(exc)
+
+                    if not all_ends_raw:
+                        last_parse_error = "并发模型响应中均无有效 ends 切点"
+                        consecutive_empty += 1
+                        continue
+
+                    need = total_count - completed_in_group
+                    if g_type == "B":
+                        need = max(need, target_total - len(final_plans))
+
+                    paired = _compose_mixed_plans(
+                        starts_raw=all_starts_raw,
+                        ends_raw=all_ends_raw,
+                        mode=mode,
+                        strategy=strategy,
+                        g_type=g_type,
+                        need=need,
+                        steps=steps,
+                        step_texts=step_texts,
+                        ordered_files=ordered_files,
+                        episode_end_times=episode_end_times,
+                        min_dur=min_dur,
+                        max_dur=max_dur,
+                        used_fingerprints=used_fingerprints,
+                        used_short_starts=used_short_starts,
+                        project_name=project_name,
+                        date_str=date_str,
+                        speed=speed,
+                        target_total=target_total,
+                    )
+                    for plan in paired:
+                        final_plans.append(plan)
+                        plan["title"] = f"{project_name}-{date_str}-{len(final_plans):02d}"
+                    batch_ok = len(paired)
+                    if batch_ok <= 0:
+                        consecutive_empty += 1
+                    else:
+                        consecutive_empty = 0
+                    completed_in_group += batch_ok
+                    _emit(f"{g_type}组 · 已通过 {len(final_plans)}/{target_total} 条")
+                    if len(final_plans) >= target_total:
+                        break
+            else:
+                # --- 串行接力模式 (Serial Cascade) ---
+                for ch_idx, ch in enumerate(multi_channels):
+                    if completed_in_group >= total_count:
+                        break
+                    ch_loops = 0
+                    ch_consecutive_empty = 0
+                    ch_name = ch.get("name") or ch.get("provider", f"渠道{ch_idx + 1}")
+
+                    while completed_in_group < total_count and ch_loops < max_loops_per_channel:
+                        ch_loops += 1
+                        loop_count += 1
+                        need = total_count - completed_in_group
+                        if g_type == "B":
+                            need = max(need, target_total - len(final_plans))
+                        extra = group_buffer + (group_buffer if ch_consecutive_empty >= 1 else 0)
+                        request_count = need + extra
+                        _emit(f"{g_type}组 {completed_in_group}/{total_count} · [{ch_name}] 生成中…")
+
+                        raw_res, _elapsed, api_error = _call_deepseek(
+                            api_url=ch.get("api_url") or api_url,
+                            model_name=ch.get("model_name") or model_name,
+                            compressed_script=compressed_script,
+                            count=request_count,
+                            group_type=g_type,
+                            key_pool=channel_pools[ch_idx],
+                            min_duration_seconds=min_dur,
+                            max_duration_seconds=max_dur,
+                            plan_mode=mode,
+                            provider=ch.get("provider") or llm_provider,
+                            llm_session_id=session_id,
+                            thinking_enabled=bool(ch.get("thinking_enabled", False)),
+                            plan_strategy=strategy,
+                        )
+                        if api_error or not raw_res:
+                            last_api_error = api_error or "模型响应为空"
+                            ch_consecutive_empty += 1
+                            # 发生错误，停滞切换下一个渠道接力
+                            break
+
+                        starts_raw, ends_raw = _extract_starts_ends_from_res(
+                            raw_res, mode, strategy, g_type, ordered_files
+                        )
+                        if not ends_raw:
+                            last_parse_error = f"[{ch_name}] 响应中无 ends 切点候选"
+                            ch_consecutive_empty += 1
+                            # 切点为空，切换下一个渠道接力
+                            break
+
+                        need = total_count - completed_in_group
+                        if g_type == "B":
+                            need = max(need, target_total - len(final_plans))
+
+                        paired = _compose_mixed_plans(
+                            starts_raw=starts_raw,
+                            ends_raw=ends_raw,
+                            mode=mode,
+                            strategy=strategy,
+                            g_type=g_type,
+                            need=need,
+                            steps=steps,
+                            step_texts=step_texts,
+                            ordered_files=ordered_files,
+                            episode_end_times=episode_end_times,
+                            min_dur=min_dur,
+                            max_dur=max_dur,
+                            used_fingerprints=used_fingerprints,
+                            used_short_starts=used_short_starts,
+                            project_name=project_name,
+                            date_str=date_str,
+                            speed=speed,
+                            target_total=target_total,
+                        )
+                        for plan in paired:
+                            final_plans.append(plan)
+                            plan["title"] = f"{project_name}-{date_str}-{len(final_plans):02d}"
+                        batch_ok = len(paired)
+                        completed_in_group += batch_ok
+                        _emit(f"{g_type}组 · 已通过 {len(final_plans)}/{target_total} 条")
+                        if batch_ok <= 0:
+                            ch_consecutive_empty += 1
+                            # 停滞熔断：本轮该渠道新增为 0，不再盲目重试，立即切换下一个渠道接力！
+                            break
+                        else:
+                            ch_consecutive_empty = 0
+            if len(final_plans) >= target_total:
+                break
+            continue
 
         consecutive_empty = 0
         while completed_in_group < total_count and loop_count < MAX_GROUP_LOOPS:

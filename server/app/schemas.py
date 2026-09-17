@@ -758,3 +758,27 @@ class MachineInfoReport(BaseModel):
     gpu_summary: str = Field(default="", max_length=1024)
     client_version: str = Field(default="", max_length=32)
 
+
+class InviteInfoOut(BaseModel):
+    invite_code: str
+    has_used_invite: bool
+    invited_by: str | None = None
+    invitee_count: int
+    total_reward_clips: int
+    current_reward_per_invite: int
+    max_rewards_per_user: int
+    is_enabled: bool
+    daily_clip_limit: int
+
+
+class InviteBindRequest(BaseModel):
+    invite_code: str = Field(min_length=1, max_length=32)
+
+
+class InviteBindResponse(BaseModel):
+    ok: bool
+    reward: int
+    new_clip_limit: int
+    inviter_username: str
+    message: str
+

@@ -155,6 +155,7 @@ def _run_job(
     payload: dict[str, Any],
     plan_key: str,
     llm: PlanLlmConfig,
+    llm_group: dict | None = None,
 ) -> None:
     _persist_job(job_id, status="running")
     last_progress_at = 0.0
@@ -186,6 +187,7 @@ def _run_job(
             provider=llm["provider"],
             llm_session_id=job_id,
             thinking_enabled=bool(llm.get("thinking_enabled", False)),
+            llm_group=llm_group,
         )
         from app.services.plan_director import clamp_clip_count
 
@@ -240,6 +242,12 @@ def create_plan_job(db: Session, user_id: int, payload: dict[str, Any]) -> PlanJ
         use_ab = True if split_ab is None else bool(split_ab)
         plan_mode = "short" if not use_ab else "long"
 
+    llm_group: dict | None = None
+    if plan_mode == "mixed":
+        from app.services.plan_secrets import resolve_plan_llm_group
+
+        llm_group = resolve_plan_llm_group(db, user_id)
+
     from app.services.user_settings import get_user_settings
 
     plan_strategy = payload.get("plan_strategy")
@@ -279,7 +287,7 @@ def create_plan_job(db: Session, user_id: int, payload: dict[str, Any]) -> PlanJ
 
     thread = threading.Thread(
         target=_run_job,
-        args=(job_id, payload, plan_key, llm),
+        args=(job_id, payload, plan_key, llm, llm_group),
         daemon=True,
         name=f"plan-job-{job_id[:8]}",
     )

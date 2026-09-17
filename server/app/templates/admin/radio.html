@@ -889,7 +889,7 @@
         <div class="stage-ctrl-row">
           <button type="button" class="btn-round-ctrl" id="stageModeBtn" title="切换播放模式">🔁</button>
           <button type="button" class="btn-round-ctrl" id="stagePrevBtn" title="上一首">⏮</button>
-          <button type="button" class="btn-play-large" id="stagePlayBtn" title="播放 / 暂停">▶</button>
+          <button type="button" class="btn-play-large" id="stagePlayBtn" title="播放 / 暂停 (空格 Space)">▶</button>
           <button type="button" class="btn-round-ctrl" id="stageNextBtn" title="下一首">⏭</button>
         </div>
 
@@ -898,6 +898,10 @@
           <span style="font-size: 13px; color: #909399;">🔈</span>
           <input type="range" class="vol-slider" id="stageVolumeSlider" min="0" max="100" value="70" title="调整音量">
           <span style="font-size: 13px; color: #909399;">🔊</span>
+        </div>
+
+        <div style="text-align: center; margin-top: 2px;">
+          <span style="font-size: 11px; color: #a8abb2; user-select: none;">💡 提示：按 <kbd style="font-family: inherit; background: #f0f2f5; border: 1px solid #dcdfe6; border-radius: 3px; padding: 1px 5px; font-size: 11px; color: #606266; box-shadow: 0 1px 0 rgba(0,0,0,0.08);">Space 空格</kbd> 快捷播放 / 暂停</span>
         </div>
       </div>
     </div>
@@ -1277,12 +1281,12 @@
         stageCard.classList.add("stage-playing");
         stageCard.classList.remove("stage-paused");
         stagePlayBtn.innerHTML = "❚❚";
-        stagePlayBtn.title = "暂停";
+        stagePlayBtn.title = "暂停 (空格 Space)";
       } else {
         stageCard.classList.remove("stage-playing");
         stageCard.classList.add("stage-paused");
         stagePlayBtn.innerHTML = "▶";
-        stagePlayBtn.title = "播放";
+        stagePlayBtn.title = "播放 (空格 Space)";
       }
 
       if (track) {
@@ -1406,6 +1410,12 @@
           window.showAdminToast("已开启电台随机播放 🔀", "success");
         }
       };
+    }
+
+    // 确保移除旧版本可能挂载的局部空格监听器，交由母版 base.html 全局统一管理
+    if (window._radioSpaceKeyHandler) {
+      document.removeEventListener("keydown", window._radioSpaceKeyHandler);
+      window._radioSpaceKeyHandler = null;
     }
 
     // 播放单曲快捷方法挂载到 window
@@ -1767,9 +1777,22 @@
     }
 
     window.deleteTrack = async function (trackId, title) {
-      if (!confirm(`确定要从曲库中永久删除歌曲《${title}》吗？关联的音频文件也将被删除。`)) {
-        return;
-      }
+      const confirmed = await window.showAdminConfirm({
+        title: "从曲库删除歌曲",
+        content: `
+          <div style="font-size: 14px; color: #303133; margin-bottom: 12px;">
+            确定要从曲库中永久删除歌曲 <strong style="color: #409eff;">《${title}》</strong> 吗？
+          </div>
+          <div style="display: flex; align-items: flex-start; gap: 8px; padding: 10px 12px; background: #fef0f0; border-radius: 6px; border: 1px solid #fde2e2; color: #f56c6c; font-size: 12px; line-height: 1.5;">
+            <span style="font-size: 14px; line-height: 1;">⚠️</span>
+            <span>此操作不可撤销，服务器本地关联的音频文件也将被彻底清除。</span>
+          </div>
+        `,
+        confirmText: "彻底删除",
+        cancelText: "取消",
+        type: "danger",
+      });
+      if (!confirmed) return;
       try {
         const resp = await fetch(`/admin/api/radio/tracks/${trackId}/delete`, { method: "POST" });
         const res = await resp.json();
@@ -1871,9 +1894,22 @@
     };
 
     window.deleteGroup = async function (id, name) {
-      if (!confirm(`确定要删除分组「${name}」吗？\n\n提示：删除分组仅移除该分类，组内的歌曲依然会保留在曲库中。`)) {
-        return;
-      }
+      const confirmed = await window.showAdminConfirm({
+        title: "删除自定义分组",
+        content: `
+          <div style="font-size: 14px; color: #303133; margin-bottom: 12px;">
+            确定要删除分组 <strong style="color: #409eff;">「${name}」</strong> 吗？
+          </div>
+          <div style="display: flex; align-items: flex-start; gap: 8px; padding: 10px 12px; background: #ecf5ff; border-radius: 6px; border: 1px solid #d9ecff; color: #409eff; font-size: 12px; line-height: 1.5;">
+            <span style="font-size: 14px; line-height: 1;">💡</span>
+            <span>提示：删除分组仅移除此歌单分类，组内的所有歌曲依然会完整保留在曲库中。</span>
+          </div>
+        `,
+        confirmText: "确认删除",
+        cancelText: "取消",
+        type: "danger",
+      });
+      if (!confirmed) return;
       try {
         const resp = await fetch(`/admin/api/radio/groups/${id}/delete`, { method: "POST" });
         const res = await resp.json();

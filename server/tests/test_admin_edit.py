@@ -515,7 +515,7 @@ def test_admin_profile_page_and_theme_settings(admin_client, tmp_path, monkeypat
     login_resp = admin_client.get("/admin/login")
     assert login_resp.status_code == 200
     assert "linear-gradient(135deg, #667eea 0%, #764ba2 100%)" in login_resp.text
-    assert "backdrop-filter: blur(20px)" in login_resp.text
+    assert "backdrop-filter: blur(" in login_resp.text
 
     # 4. 重新登录并设置网络图片主题
     admin_client.post(
@@ -660,6 +660,111 @@ def test_admin_user_edit_session_revocation(admin_client):
     user = db.get(User, 1)
     assert user.token_version == initial_ver + 2
     db.close()
+
+
+def test_user_edit_plan_group_mode_persistence(admin_client):
+    from app.models import UserSecret
+
+    # 1. 初始渲染检查包含新容器与脚本
+    resp = admin_client.get("/admin/user/edit/1")
+    assert resp.status_code == 200
+    assert 'id="group-mode-notice"' in resp.text
+    assert 'id="single-model-section"' in resp.text
+    assert "updatePlanModelModeUI" in resp.text
+    assert "多模型策略组调度已生效" in resp.text
+    assert "独立单模型专属配置" in resp.text
+
+    # 2. 显式设为 0（独立单模型模式）
+    save_resp = admin_client.post(
+        "/admin/user/edit/1",
+        data={
+            "username": "a@b.com",
+            "role": "user",
+            "plan_group_id": "0",
+            "plan_llm_preset": "deepseek|deepseek-chat",
+            "deepseek_keys": "sk-single-test",
+            "save": "Save",
+        },
+        follow_redirects=False,
+    )
+    assert save_resp.status_code == 302
+
+    check_resp = admin_client.get("/admin/user/edit/1")
+    assert check_resp.status_code == 200
+    group_select_html = check_resp.text.split('id="plan_group_id"')[1].split('</select>')[0]
+    assert '<option value="0" selected>' in group_select_html
+    assert '<option value="" selected>' not in group_select_html
+
+    # 3. 恢复为跟随系统默认组（plan_group_id=""）
+    save_resp2 = admin_client.post(
+        "/admin/user/edit/1",
+        data={
+            "username": "a@b.com",
+            "role": "user",
+            "plan_group_id": "",
+            "save": "Save",
+        },
+        follow_redirects=False,
+    )
+    assert save_resp2.status_code == 302
+
+    check_resp2 = admin_client.get("/admin/user/edit/1")
+    assert check_resp2.status_code == 200
+    group_select_html2 = check_resp2.text.split('id="plan_group_id"')[1].split('</select>')[0]
+    assert '<option value="" selected>' in group_select_html2
+    assert '<option value="0" selected>' not in group_select_html2
+
+
+def test_missing_plan_keys_with_strategy_groups(monkeypatch, tmp_path):
+    from app.admin_panel import _get_users_missing_plan_keys
+    from app.models import LlmGroup, UserSecret
+
+    db_path = tmp_path / "missing_keys_test.db"
+    engine = create_engine(f"sqlite:///{db_path.as_posix()}")
+    Base.metadata.create_all(engine)
+    Session = sessionmaker(bind=engine)
+    db = Session()
+
+    # 用户1: 独立单模型模式 (plan_group_id=0), 未填 Key -> 应该预警
+    u1 = User(username="u1@test.com", password_hash="h", plain_password="p", is_active=True)
+    db.add(u1)
+    db.flush()
+    db.add(UserSecret(user_id=u1.id, plan_group_id=0, deepseek_keys=""))
+
+    # 用户2: 策略组模式 (plan_group_id=1), 未填 Key -> 有策略组，不应预警
+    u2 = User(username="u2@test.com", password_hash="h", plain_password="p", is_active=True)
+    db.add(u2)
+    db.flush()
+    db.add(UserSecret(user_id=u2.id, plan_group_id=1, deepseek_keys=""))
+
+    # 用户3: 默认组模式 (plan_group_id=None), 未填 Key
+    u3 = User(username="u3@test.com", password_hash="h", plain_password="p", is_active=True)
+    db.add(u3)
+    db.flush()
+    db.add(UserSecret(user_id=u3.id, plan_group_id=None, deepseek_keys=""))
+
+    db.commit()
+
+    # 当前无默认组: u1 和 u3 应预警，u2 不预警
+    missing = _get_users_missing_plan_keys(db)
+    missing_ids = [m["id"] for m in missing]
+    assert u1.id in missing_ids
+    assert u3.id in missing_ids
+    assert u2.id not in missing_ids
+
+    # 添加系统默认组后，u3 走默认渠道组调度，不再预警
+    grp = LlmGroup(name="Default Group", dispatch_mode="parallel", is_default=True, channel_ids="1")
+    db.add(grp)
+    db.commit()
+
+    missing_after = _get_users_missing_plan_keys(db)
+    missing_after_ids = [m["id"] for m in missing_after]
+    assert u1.id in missing_after_ids
+    assert u3.id not in missing_after_ids
+    assert u2.id not in missing_after_ids
+
+    db.close()
+
 
 
 

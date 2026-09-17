@@ -349,7 +349,7 @@ def test_create_plan_job_fallback_strategy():
     }
     captured_payload = {}
 
-    def _fake_run_job(job_id, payload_arg, plan_key, llm):
+    def _fake_run_job(job_id, payload_arg, plan_key, llm, *args, **kwargs):
         captured_payload.update(payload_arg)
 
     with patch.object(

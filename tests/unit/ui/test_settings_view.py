@@ -15,6 +15,10 @@ class TestSettingInterface:
         """Test initialization"""
         assert settings_view.scrollWidget is not None
         assert settings_view.personalGroup is not None
+        assert settings_view.inviteGroup is not None
+        assert settings_view.inviteGroup.isHidden()
+        assert settings_view.my_invite_card is not None
+        assert settings_view.bind_invite_card is not None
         assert settings_view.aboutGroup is not None
 
     def test_logout_signal(self, settings_view, qtbot, mocker):
