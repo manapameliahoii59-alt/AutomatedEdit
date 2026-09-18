@@ -572,8 +572,8 @@ _ENCODE_PRESET_SETS: dict[str, set[str]] = {
     },
 }
 
-# 渲染引擎合法取值（current=新优化；legacy=兼容旧逻辑）
-_RENDER_ENGINE_VALUES = {"current", "legacy"}
+# 渲染引擎合法取值（v3=三段式分块流复用；current=v2动态前缀优化；legacy=v1兼容旧逻辑）
+_RENDER_ENGINE_VALUES = {"v3", "current", "legacy"}
 
 
 class ClipEditSettings(BaseModel):

@@ -81,8 +81,9 @@ RESOLUTION_CHOICES: tuple[tuple[str, str], ...] = (
 _DEFAULT_RESOLUTION = "720p"
 _RESOLUTION_SET = {k for k, _ in RESOLUTION_CHOICES}
 
-# 渲染引擎：current=动态公共前缀复用+叠字预渲(v2)；legacy=兼容旧逻辑全量重编(v1)
+# 渲染引擎：v3=三段式分块流复用(高频集极速流拷贝)；current=动态公共前缀复用(v2)；legacy=兼容旧逻辑全量重编(v1)
 RENDER_ENGINE_CHOICES: tuple[tuple[str, str], ...] = (
+    ("v3", "v3"),
     ("current", "v2"),
     ("legacy", "v1"),
 )
@@ -198,6 +199,12 @@ class RenderContext:
     prefix_keys: set = field(default_factory=set)
     # 本次渲染的临时目录，用于存放公共前缀/尾部片段
     prefix_dir: str = ""
+    # 阶段B.2(v3)：三段式流复用中间完整集缓存 (ep, speed, overlay_digest) -> mp4 路径
+    v3_mid_cache: dict[tuple[str, float, str], str] = field(default_factory=dict)
+    # v3：首集切片缓存 (ep, cut_start, speed, overlay_digest) -> mp4 路径
+    v3_head_cache: dict[tuple[str, float, float, str], str] = field(default_factory=dict)
+    # v3：末集切片缓存 (ep, cut_end, speed, overlay_digest, outro_path) -> mp4 路径
+    v3_tail_cache: dict[tuple[str, float, float, str, str], str] = field(default_factory=dict)
 
 
 class RenderService:
@@ -333,7 +340,7 @@ class RenderService:
             success = 0
             prefix_dir_ctx = tempfile.TemporaryDirectory(prefix="ae_bench_prefix_")
             try:
-                if ctx.prefix_keys:
+                if ctx.prefix_keys or RenderService.is_v3_engine():
                     ctx.prefix_dir = prefix_dir_ctx.name
                 for i, plan in enumerate(plans):
                     if should_cancel and should_cancel():
@@ -548,7 +555,7 @@ class RenderService:
 
         prefix_dir_ctx = tempfile.TemporaryDirectory(prefix="ae_prefix_")
         try:
-            if ctx.prefix_keys:
+            if ctx.prefix_keys or RenderService.is_v3_engine():
                 ctx.prefix_dir = prefix_dir_ctx.name
             for i, plan in enumerate(plans):
                 if should_cancel and should_cancel():
@@ -842,8 +849,8 @@ class RenderService:
 
     @staticmethod
     def _prefix_keys_for(plans: list) -> set:
-        """供渲染使用的前缀 key；legacy 引擎不使用公共前缀复用。"""
-        if RenderService._is_legacy_engine():
+        """供渲染使用的前缀 key；legacy 引擎与 v3 引擎不使用 v2 前缀复用。"""
+        if RenderService._is_legacy_engine() or RenderService.is_v3_engine():
             return set()
         return RenderService._reusable_prefix_keys(plans)
 
@@ -1446,6 +1453,8 @@ class RenderService:
     @staticmethod
     def normalize_render_engine(value: str | None) -> str:
         v = (value or _DEFAULT_RENDER_ENGINE).strip().lower()
+        if v in ("v3", "stream_chunk", "chunk"):
+            return "v3"
         if v == "v2":
             return "current"
         if v == "v1":
@@ -1459,6 +1468,10 @@ class RenderService:
         return RenderService.normalize_render_engine(
             str(cfg.clip_render_engine.value)
         )
+
+    @staticmethod
+    def is_v3_engine() -> bool:
+        return RenderService.configured_render_engine() == "v3"
 
     @staticmethod
     def _is_legacy_engine() -> bool:
@@ -1927,6 +1940,280 @@ class RenderService:
                     pass
 
     @staticmethod
+    def _try_v3_compose(
+        ffmpeg,
+        ffprobe,
+        ctx: RenderContext,
+        speed: float,
+        segments: list[ClipSegment],
+        outro_path: str | None,
+        overlay_filters: list[str],
+        image_overlays: list[dict],
+        output_path: str,
+        ffmpeg_kwargs: dict,
+    ) -> tuple[bool, float]:
+        """v3 三段式分块流复用引擎：
+        [首集入点切片] + [中间高频完整集序列(带水印)] + [末集卡点切片 + 片尾]
+        中间完整集直接复用持久化带水印流块，首尾极速重编，最后通过 ffmpeg concat -c copy 极速流拷贝拼接。
+        任一步失败或拼接异常自动回退整段全量合成。
+        """
+        if len(segments) < 2 or not ctx.prefix_dir:
+            return False, 0.0
+
+        key_src = "|".join(
+            [
+                f"{ctx.target_w}x{ctx.target_h}",
+                *overlay_filters,
+                *(s.get("path", "") for s in image_overlays),
+            ]
+        )
+        overlay_digest = hashlib.sha1(key_src.encode("utf-8")).hexdigest()[:12]
+
+        # 1. 首集切片 (head)
+        head_seg = segments[0]
+        head_in = ctx.episode_cache.get((head_seg.episode, speed))
+        if not head_in or not os.path.isfile(head_in):
+            return False, 0.0
+
+        head_key = (
+            head_seg.episode,
+            round(float(head_seg.start), 3),
+            float(speed),
+            overlay_digest,
+        )
+        head_path = ctx.v3_head_cache.get(head_key)
+        if not (
+            head_path
+            and os.path.isfile(head_path)
+            and RenderService._validate_output(ffprobe, head_path, ctx.probe_cache)
+        ):
+            fd, head_path = tempfile.mkstemp(
+                prefix="ae_v3_head_", suffix=".mp4", dir=ctx.prefix_dir
+            )
+            os.close(fd)
+            ok, err = RenderService._render_segments_output(
+                ffmpeg,
+                ffprobe,
+                ctx,
+                [head_seg],
+                [head_in],
+                speed,
+                None,
+                overlay_filters,
+                image_overlays,
+                head_path,
+                "v3首段合成",
+                ffmpeg_kwargs,
+            )
+            if not ok or not RenderService._validate_output(
+                ffprobe, head_path, ctx.probe_cache
+            ):
+                _safe_print(f"   ⚠️ v3首段合成失败，回退整段合成: {err}", flush=True)
+                if os.path.exists(head_path):
+                    try:
+                        os.remove(head_path)
+                    except OSError:
+                        pass
+                return False, 0.0
+            ctx.v3_head_cache[head_key] = head_path
+
+        # 2. 中间高频完整集序列 (mid)
+        mid_segs = segments[1:-1] if len(segments) > 2 else []
+        mid_paths: list[str] = []
+        for mid_seg in mid_segs:
+            ep = mid_seg.episode
+            mid_key = (ep, float(speed), overlay_digest)
+            mid_path = ctx.v3_mid_cache.get(mid_key)
+            if not (
+                mid_path
+                and os.path.isfile(mid_path)
+                and RenderService._validate_output(ffprobe, mid_path, ctx.probe_cache)
+            ):
+                src_path = os.path.join(ctx.project_path, ep)
+                mtime = (
+                    int(os.path.getmtime(src_path)) if os.path.isfile(src_path) else 0
+                )
+                enc_tag = RenderService._cache_enc_tag(
+                    ctx.use_gpu, ctx.enc_v if ctx.use_gpu else ""
+                )
+                stem = os.path.splitext(os.path.basename(ep))[0]
+                spd_tag = str(speed).replace(".", "p")
+                mid_filename = (
+                    f"v3_mid_{stem}_spd{spd_tag}_{ctx.target_w}x{ctx.target_h}"
+                    f"_{enc_tag}_{overlay_digest}_m{mtime}.mp4"
+                )
+                mid_path = os.path.join(
+                    RenderService._cache_dir(ctx.project_path), mid_filename
+                )
+
+                if not (
+                    os.path.isfile(mid_path)
+                    and RenderService._validate_output(ffprobe, mid_path, ctx.probe_cache)
+                ):
+                    mid_in = ctx.episode_cache.get((ep, speed))
+                    if not mid_in or not os.path.isfile(mid_in):
+                        return False, 0.0
+                    ok, err = RenderService._render_segments_output(
+                        ffmpeg,
+                        ffprobe,
+                        ctx,
+                        [mid_seg],
+                        [mid_in],
+                        speed,
+                        None,
+                        overlay_filters,
+                        image_overlays,
+                        mid_path,
+                        f"v3完整集[{ep}]合成",
+                        ffmpeg_kwargs,
+                    )
+                    if not ok or not RenderService._validate_output(
+                        ffprobe, mid_path, ctx.probe_cache
+                    ):
+                        _safe_print(
+                            f"   ⚠️ v3完整集[{ep}]合成失败，回退整段合成: {err}",
+                            flush=True,
+                        )
+                        if os.path.exists(mid_path):
+                            try:
+                                os.remove(mid_path)
+                            except OSError:
+                                pass
+                        return False, 0.0
+                ctx.v3_mid_cache[mid_key] = mid_path
+            mid_paths.append(mid_path)
+
+        # 3. 尾集切片 + 片尾 (tail)
+        tail_seg = segments[-1]
+        tail_in = ctx.episode_cache.get((tail_seg.episode, speed))
+        if not tail_in or not os.path.isfile(tail_in):
+            return False, 0.0
+
+        tail_key = (
+            tail_seg.episode,
+            round(float(tail_seg.end or 0.0), 3),
+            float(speed),
+            overlay_digest,
+            outro_path or "",
+        )
+        tail_path = ctx.v3_tail_cache.get(tail_key)
+        if not (
+            tail_path
+            and os.path.isfile(tail_path)
+            and RenderService._validate_output(ffprobe, tail_path, ctx.probe_cache)
+        ):
+            fd, tail_path = tempfile.mkstemp(
+                prefix="ae_v3_tail_", suffix=".mp4", dir=ctx.prefix_dir
+            )
+            os.close(fd)
+            ok, err = RenderService._render_segments_output(
+                ffmpeg,
+                ffprobe,
+                ctx,
+                [tail_seg],
+                [tail_in],
+                speed,
+                outro_path,
+                overlay_filters,
+                image_overlays,
+                tail_path,
+                "v3尾部+片尾合成",
+                ffmpeg_kwargs,
+            )
+            if not ok or not RenderService._validate_output(
+                ffprobe, tail_path, ctx.probe_cache
+            ):
+                _safe_print(f"   ⚠️ v3尾部合成失败，回退整段合成: {err}", flush=True)
+                if os.path.exists(tail_path):
+                    try:
+                        os.remove(tail_path)
+                    except OSError:
+                        pass
+                return False, 0.0
+            ctx.v3_tail_cache[tail_key] = tail_path
+
+        # 4. ffmpeg concat -c copy 极速流拷贝缝合
+        all_parts = [head_path] + mid_paths + [tail_path]
+        fd, list_path = tempfile.mkstemp(
+            prefix="ae_v3_concat_", suffix=".txt", dir=ctx.prefix_dir
+        )
+        os.close(fd)
+        try:
+            with open(list_path, "w", encoding="utf-8", newline="\n") as f:
+                for p in all_parts:
+                    f.write(f"file '{p.replace(os.sep, '/')}'\n")
+
+            expected_dur = sum(
+                RenderService._probe_duration(ffprobe, p, ctx.probe_cache)
+                for p in all_parts
+            )
+
+            ok, err = RenderService._run_ffmpeg(
+                [
+                    ffmpeg,
+                    "-y",
+                    "-fflags",
+                    "+genpts",
+                    "-f",
+                    "concat",
+                    "-safe",
+                    "0",
+                    "-i",
+                    list_path,
+                    "-c",
+                    "copy",
+                    "-avoid_negative_ts",
+                    "make_zero",
+                    output_path,
+                ],
+                f"v3流拷贝拼接({len(mid_paths)}个中间集)",
+                **ffmpeg_kwargs,
+            )
+            if not ok:
+                _safe_print(f"   ⚠️ v3流拷贝拼接失败，回退整段合成: {err}", flush=True)
+                if os.path.exists(output_path):
+                    try:
+                        os.remove(output_path)
+                    except OSError:
+                        pass
+                return False, 0.0
+
+            if not RenderService._validate_output(ffprobe, output_path, ctx.probe_cache):
+                _safe_print("   ⚠️ v3拼接产物无效，回退整段合成", flush=True)
+                if os.path.exists(output_path):
+                    try:
+                        os.remove(output_path)
+                    except OSError:
+                        pass
+                return False, 0.0
+
+            duration = RenderService._probe_duration(
+                ffprobe, output_path, ctx.probe_cache
+            )
+            # 防流拷贝静默截断/时间基错乱
+            if expected_dur > 0 and (
+                duration < expected_dur * 0.8 or duration > expected_dur * 1.2
+            ):
+                _safe_print(
+                    f"   ⚠️ v3拼接成片时长异常（{duration:.1f}s，预期 {expected_dur:.1f}s），回退整段合成",
+                    flush=True,
+                )
+                if os.path.exists(output_path):
+                    try:
+                        os.remove(output_path)
+                    except OSError:
+                        pass
+                return False, 0.0
+
+            return True, duration
+        finally:
+            if os.path.exists(list_path):
+                try:
+                    os.remove(list_path)
+                except OSError:
+                    pass
+
+    @staticmethod
     def _render_single(
         ffmpeg,
         ffprobe,
@@ -2048,9 +2335,27 @@ class RenderService:
                 )
                 overlay_filters = []
 
-        # 阶段B：公共前缀复用——前缀只编一次，各方案仅编「尾部+片尾」再流拷贝拼接
+        # 阶段B.1(v3)：三段式分块流复用——中间完整集秒级流拷贝，首尾极速重编
+        if RenderService.is_v3_engine() and ctx.prefix_dir and len(segments) >= 2:
+            ok, duration = RenderService._try_v3_compose(
+                ffmpeg,
+                ffprobe,
+                ctx,
+                speed,
+                segments,
+                outro_path,
+                overlay_filters,
+                image_overlays,
+                output_path,
+                ffmpeg_kwargs,
+            )
+            if ok:
+                return True, duration
+
+        # 阶段B.2(v2)：公共前缀复用——前缀只编一次，各方案仅编「尾部+片尾」再流拷贝拼接
         if (
-            ctx.prefix_dir
+            not RenderService.is_v3_engine()
+            and ctx.prefix_dir
             and prefix_key is not None
             and prefix_key in ctx.prefix_keys
             and prefix_segments
@@ -2075,7 +2380,7 @@ class RenderService:
             if ok:
                 return True, duration
 
-        # 整段合成（原路径 / 前缀复用的回退）
+        # 整段合成（原路径 / v2/v3 前缀/分块复用的回退）
         gpu_codec = ctx.enc_v if ctx.use_gpu else None
         render_desc = f"合成渲染[{ctx.enc_v}]" if ctx.use_gpu else "合成渲染[CPU]"
         success, err = RenderService._render_segments_output(

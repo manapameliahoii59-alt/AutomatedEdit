@@ -92,6 +92,15 @@ class TestClipSettingsDialog:
         assert not hasattr(dlg, "result_max_transcribe_episodes")
         dlg.deleteLater()
 
+    def test_render_engine_v3_selection(self, qapp):
+        # 验证弹框支持选择并返回 v3 引擎
+        dlg = ClipSettingsDialog()
+        idx_v3 = dlg._render_engine_combo.findData("v3")
+        assert idx_v3 >= 0
+        dlg._render_engine_combo.setCurrentIndex(idx_v3)
+        assert dlg.result_render_engine() == "v3"
+        dlg.deleteLater()
+
 
 class TestClipEditAutoSelectAfterImport:
     def test_import_with_auto_select_enabled(self, qapp, tmp_path, monkeypatch):

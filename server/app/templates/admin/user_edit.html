@@ -699,7 +699,7 @@
                   <label class="lbl-strong" for="clip_render_engine">渲染引擎（双向）</label>
                   <select class="admin-select" id="clip_render_engine" name="clip_render_engine">
                     <option value="">不设置</option>
-                    {% for value, label in [("current","v2（推荐/动态前缀复用与叠字预渲）"),("legacy","v1（全量独立重编/关闭前缀复用）")] %}
+                    {% for value, label in [("v3","v3（极速模式/三段式分块流复用，推荐）"),("current","v2（动态最长前缀复用与叠字预渲）"),("legacy","v1（全量独立重编/关闭前缀复用）")] %}
                     <option value="{{ value }}" {% if clip_edit.clip_render_engine == value %}selected{% endif %}>{{ label }}</option>
                     {% endfor %}
                   </select>

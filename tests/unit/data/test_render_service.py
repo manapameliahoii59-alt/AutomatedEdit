@@ -939,9 +939,12 @@ def test_normalize_render_engine():
     assert RenderService.normalize_render_engine("CURRENT") == "current"
     assert RenderService.normalize_render_engine("bogus") == "current"
     assert RenderService.normalize_render_engine(None) == "current"
-    # 支持 v2 / v1 别名
+    # 支持 v3 / v2 / v1 别名
+    assert RenderService.normalize_render_engine("v3") == "v3"
+    assert RenderService.normalize_render_engine("chunk") == "v3"
     assert RenderService.normalize_render_engine("v2") == "current"
     assert RenderService.normalize_render_engine("v1") == "legacy"
+    assert dict(RENDER_ENGINE_CHOICES).get("v3") == "v3"
     assert dict(RENDER_ENGINE_CHOICES).get("current") == "v2"
     assert dict(RENDER_ENGINE_CHOICES).get("legacy") == "v1"
 
@@ -988,5 +991,127 @@ def test_dynamic_sub_prefix_mining_different_lengths():
     for p in plans:
         matched = RenderService._prefix_key(p["files_config"], 1.6, keys)
         assert matched == (expected_tuple, 0.0, 1.6)
+
+
+def test_v3_engine_flags(monkeypatch):
+    import app.common.config as config_mod
+    from app.data.services.render_service import RenderService
+
+    monkeypatch.setattr(config_mod.cfg, "clip_render_engine", _CfgItem("v3"))
+    monkeypatch.setattr(config_mod.cfg, "clip_overlay_bake_png", _CfgItem(True))
+
+    assert RenderService.is_v3_engine() is True
+    assert RenderService._is_legacy_engine() is False
+    assert RenderService._overlay_bake_enabled() is True
+    # v3 独立于 v2，不使用 v2 的全局公共前缀
+    assert RenderService._prefix_keys_for(_two_reusable_plans()) == set()
+
+
+def test_v3_compose_flow(tmp_path, monkeypatch):
+    from app.data.services.render_service import RenderService, RenderContext, ClipSegment
+
+    project_dir = tmp_path / "proj"
+    project_dir.mkdir()
+    prefix_dir = tmp_path / "prefix"
+    prefix_dir.mkdir()
+
+    ep1_src = project_dir / "1.mp4"
+    ep2_src = project_dir / "2.mp4"
+    ep3_src = project_dir / "3.mp4"
+    for ep in (ep1_src, ep2_src, ep3_src):
+        ep.write_bytes(b"dummy")
+
+    cached_ep1 = tmp_path / "cache_1.mp4"
+    cached_ep2 = tmp_path / "cache_2.mp4"
+    cached_ep3 = tmp_path / "cache_3.mp4"
+    for c in (cached_ep1, cached_ep2, cached_ep3):
+        c.write_bytes(b"dummy")
+
+    ctx = RenderContext(
+        project_path=str(project_dir),
+        target_w=720,
+        target_h=1280,
+        use_gpu=False,
+        enc_v="libx264",
+        prefix_dir=str(prefix_dir),
+    )
+    ctx.episode_cache[("1.mp4", 1.0)] = str(cached_ep1)
+    ctx.episode_cache[("2.mp4", 1.0)] = str(cached_ep2)
+    ctx.episode_cache[("3.mp4", 1.0)] = str(cached_ep3)
+
+    segments = [
+        ClipSegment("1.mp4", 5.0, None),
+        ClipSegment("2.mp4", 0.0, None),
+        ClipSegment("3.mp4", 0.0, 30.0),
+    ]
+
+    rendered_descs = []
+
+    def mock_render_segments(
+        ffmpeg,
+        ffprobe,
+        ctx,
+        segs,
+        inputs,
+        speed,
+        outro_path,
+        overlay_filters,
+        image_overlays,
+        output_path,
+        desc,
+        ffmpeg_kwargs,
+    ):
+        rendered_descs.append(desc)
+        with open(output_path, "wb") as f:
+            f.write(b"video_data")
+        return True, ""
+
+    def mock_run_ffmpeg(cmd, desc, **kwargs):
+        if "-f" in cmd and "concat" in cmd:
+            out_p = cmd[-1]
+            with open(out_p, "wb") as f:
+                f.write(b"final_video")
+            return True, ""
+        return True, ""
+
+    def mock_probe(ffprobe, path, cache=None):
+        if str(path) == str(out_final):
+            return 100.0
+        if "head" in str(path):
+            return 30.0
+        if "mid" in str(path):
+            return 40.0
+        if "tail" in str(path):
+            return 30.0
+        return 33.3
+
+    monkeypatch.setattr(RenderService, "_render_segments_output", mock_render_segments)
+    monkeypatch.setattr(RenderService, "_run_ffmpeg", mock_run_ffmpeg)
+    monkeypatch.setattr(RenderService, "_validate_output", lambda *args, **kwargs: True)
+    monkeypatch.setattr(RenderService, "_probe_duration", mock_probe)
+
+    out_final = str(tmp_path / "out.mp4")
+    ok, dur = RenderService._try_v3_compose(
+        ffmpeg="ffmpeg",
+        ffprobe="ffprobe",
+        ctx=ctx,
+        speed=1.0,
+        segments=segments,
+        outro_path=None,
+        overlay_filters=[],
+        image_overlays=[],
+        output_path=out_final,
+        ffmpeg_kwargs={},
+    )
+    assert ok is True
+    assert dur == 100.0
+    # 首段、中间完整集、尾部合成各跑一次
+    assert any("v3首段合成" in d for d in rendered_descs)
+    assert any("v3完整集[2.mp4]" in d for d in rendered_descs)
+    assert any("v3尾部+片尾合成" in d for d in rendered_descs)
+
+    # 验证中间集已成功进入 v3_mid_cache
+    assert len(ctx.v3_mid_cache) == 1
+
 
 
