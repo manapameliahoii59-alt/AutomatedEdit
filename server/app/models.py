@@ -82,6 +82,9 @@ class UserMachine(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), unique=True, index=True)
+    machine_id: Mapped[str] = mapped_column(String(64), default="")
+    ip_address: Mapped[str] = mapped_column(String(64), default="")
+    local_ip: Mapped[str] = mapped_column(String(128), default="")
     cpu_name: Mapped[str] = mapped_column(String(255), default="")
     cpu_cores_logical: Mapped[int] = mapped_column(Integer, default=0)
     cpu_cores_physical: Mapped[int] = mapped_column(Integer, default=0)

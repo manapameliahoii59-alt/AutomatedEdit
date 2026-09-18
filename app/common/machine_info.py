@@ -6,7 +6,9 @@ import ctypes
 import json
 import os
 import platform
+import socket
 import sys
+import uuid
 from typing import Any
 
 from app.common.config import VERSION
@@ -225,6 +227,103 @@ def _collect_gpus() -> list[dict[str, Any]]:
     return gpus
 
 
+_CACHED_MACHINE_ID: str | None = None
+
+
+def _machine_id() -> str:
+    global _CACHED_MACHINE_ID
+    if _CACHED_MACHINE_ID:
+        return _CACHED_MACHINE_ID
+
+    # 1. 尝试主板 BIOS UUID（硬件物理唯一标识）
+    try:
+        proc = win_run(
+            [
+                "powershell",
+                "-NoProfile",
+                "-NonInteractive",
+                "-Command",
+                "(Get-CimInstance Win32_ComputerSystemProduct).UUID",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        val = (proc.stdout or "").strip()
+        clean = val.replace("-", "").strip()
+        if (
+            val
+            and len(clean) >= 16
+            and not set(clean).issubset({"0"})
+            and not set(clean).issubset({"F", "f"})
+            and clean.lower() != "none"
+        ):
+            _CACHED_MACHINE_ID = val[:64]
+            return _CACHED_MACHINE_ID
+    except Exception:
+        pass
+
+    # 2. 回退 Windows 注册表 MachineGuid
+    try:
+        import winreg
+
+        key = winreg.OpenKey(
+            winreg.HKEY_LOCAL_MACHINE,
+            r"SOFTWARE\Microsoft\Cryptography",
+        )
+        try:
+            val, _ = winreg.QueryValueEx(key, "MachineGuid")
+            s = str(val or "").strip()
+            if s:
+                _CACHED_MACHINE_ID = s[:64]
+                return _CACHED_MACHINE_ID
+        finally:
+            winreg.CloseKey(key)
+    except Exception:
+        pass
+
+    # 3. 回退 MAC 节点地址
+    try:
+        node = uuid.getnode()
+        if node:
+            _CACHED_MACHINE_ID = f"{node:012x}"
+            return _CACHED_MACHINE_ID
+    except Exception:
+        pass
+
+    return ""
+
+
+def _local_ips() -> str:
+    ips: list[str] = []
+    # 优先探测默认出网路由网卡的本地 IP
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+            s.connect(("223.5.5.5", 80))
+            primary = s.getsockname()[0]
+            if primary and not primary.startswith("127."):
+                ips.append(primary)
+    except Exception:
+        pass
+
+    # 补充其它非回环、非链路本地网卡 IP
+    try:
+        hostname = socket.gethostname()
+        _, _, host_ips = socket.gethostbyname_ex(hostname)
+        for ip in host_ips:
+            if (
+                ip
+                and not ip.startswith("127.")
+                and not ip.startswith("169.254.")
+                and ip not in ips
+            ):
+                ips.append(ip)
+    except Exception:
+        pass
+
+    return ", ".join(ips)[:128]
+
+
 def collect_machine_info() -> dict[str, Any]:
     """采集机器信息；任何一项失败都返回可用的部分，绝不抛异常。"""
     ram_total_mb, ram_available_mb = _memory_mb()
@@ -234,6 +333,8 @@ def collect_machine_info() -> dict[str, Any]:
     return {
         "os": str(platform.platform() or "")[:255],
         "hostname": str(platform.node() or "")[:128],
+        "machine_id": _machine_id()[:64],
+        "local_ip": _local_ips()[:128],
         "cpu_name": _cpu_name()[:255],
         "cpu_cores_logical": max(0, logical_cores),
         "cpu_cores_physical": max(0, physical_cores),

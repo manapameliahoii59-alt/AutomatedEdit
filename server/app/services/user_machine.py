@@ -17,6 +17,13 @@ def upsert_machine(db: Session, user_id: int, payload: dict[str, Any]) -> UserMa
         row = UserMachine(user_id=user_id)
         db.add(row)
 
+    if "machine_id" in payload:
+        row.machine_id = str(payload.get("machine_id") or "")[:64]
+    if "ip_address" in payload:
+        row.ip_address = str(payload.get("ip_address") or "")[:64]
+    if "local_ip" in payload:
+        row.local_ip = str(payload.get("local_ip") or "")[:128]
+
     row.os = str(payload.get("os") or "")[:255]
     row.hostname = str(payload.get("hostname") or "")[:128]
     row.cpu_name = str(payload.get("cpu_name") or "")[:255]

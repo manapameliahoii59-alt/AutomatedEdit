@@ -554,6 +554,14 @@
                   <span class="device-val">{{ machine.hostname }}</span>
                 </div>
                 <div class="device-item">
+                  <span class="device-label">IP 地址:</span>
+                  <span class="device-val">{{ machine.ip_address }}</span>
+                </div>
+                <div class="device-item">
+                  <span class="device-label">硬件机器码:</span>
+                  <span class="device-val" style="font-family: monospace;">{{ machine.machine_id }}</span>
+                </div>
+                <div class="device-item">
                   <span class="device-label">客户端版本:</span>
                   <span class="device-val"><span class="tag" style="background:#e8f4ff; color:#1890ff;">v{{ machine.client_version }}</span></span>
                 </div>

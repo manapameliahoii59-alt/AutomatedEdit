@@ -759,6 +759,8 @@ class MachineInfoReport(BaseModel):
 
     os: str = Field(default="", max_length=255)
     hostname: str = Field(default="", max_length=128)
+    machine_id: str = Field(default="", max_length=64)
+    local_ip: str = Field(default="", max_length=128)
     cpu_name: str = Field(default="", max_length=255)
     cpu_cores_logical: int = Field(default=0, ge=0, le=1024)
     cpu_cores_physical: int = Field(default=0, ge=0, le=1024)

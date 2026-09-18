@@ -65,6 +65,8 @@ class TestCollectMachineInfo:
         assert set(info) >= {
             "os",
             "hostname",
+            "machine_id",
+            "local_ip",
             "cpu_name",
             "cpu_cores_logical",
             "cpu_cores_physical",
@@ -74,6 +76,13 @@ class TestCollectMachineInfo:
             "gpu_summary",
             "client_version",
         }
+
+    def test_machine_id_and_local_ips_non_empty(self):
+        # 确保在当前环境采集不抛异常且格式为有效字符串
+        mid = mi._machine_id()
+        assert isinstance(mid, str)
+        ips = mi._local_ips()
+        assert isinstance(ips, str)
 
     def test_windows_gpus_returns_empty_on_bad_output(self, monkeypatch):
         class _Proc:
@@ -96,3 +105,4 @@ class TestCollectMachineInfo:
         assert len(gpus) == 1
         assert gpus[0]["name"] == "AMD Radeon RX 5600 XT"
         assert gpus[0]["vendor"] == "AMD"
+

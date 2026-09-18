@@ -5,12 +5,12 @@
 <div class="head">
   <div>
     <h1>机器信息</h1>
-    <p>共 {{ total }} 条 · 桌面端 CPU / 显卡 / 内存（每用户最新一条）</p>
+    <p>共 {{ total }} 条 · 桌面端 CPU / 显卡 / 内存 / IP / 机器码（每用户最新一条）</p>
   </div>
   <form class="search" method="get">
     <div class="el-input">
       <div class="el-input__wrapper">
-        <input class="el-input__inner" name="q" value="{{ q }}" placeholder="搜索账号 / CPU / 显卡">
+        <input class="el-input__inner" name="q" value="{{ q }}" placeholder="搜索账号 / CPU / 显卡 / IP / 机器码">
       </div>
     </div>
     <button class="el-button el-button--primary" type="submit">搜索</button>
@@ -21,6 +21,8 @@
     <thead>
       <tr>
         <th>账号</th>
+        <th>IP 地址</th>
+        <th>机器码</th>
         <th>CPU</th>
         <th>核心</th>
         <th>内存</th>
@@ -35,6 +37,8 @@
       {% for row in rows %}
       <tr>
         <td>{{ row.username }}</td>
+        <td class="ellipsis" title="{{ row.ip_address }}">{{ row.ip_address }}</td>
+        <td class="ellipsis" title="{{ row.machine_id }}" style="font-family: monospace;">{{ row.machine_id }}</td>
         <td class="ellipsis" title="{{ row.cpu_name }}">{{ row.cpu_name }}</td>
         <td>{{ row.cores }}</td>
         <td>{{ row.ram }}</td>
@@ -45,7 +49,7 @@
         <td>{{ row.updated_at }}</td>
       </tr>
       {% else %}
-      <tr><td class="empty" colspan="9">暂无数据</td></tr>
+      <tr><td class="empty" colspan="11">暂无数据</td></tr>
       {% endfor %}
     </tbody>
   </table>
@@ -61,6 +65,8 @@
       data: {{ rows | tojson }},
       columns: [
         { field: "username", title: "账号", minWidth: 140 },
+        { field: "ip_address", title: "IP 地址", minWidth: 180, showOverflow: true },
+        { field: "machine_id", title: "机器码", minWidth: 180, showOverflow: true },
         { field: "cpu_name", title: "CPU", minWidth: 200, showOverflow: true },
         { field: "cores", title: "核心", width: 140 },
         { field: "ram", title: "内存", width: 170 },

@@ -208,14 +208,33 @@ def report_usage(
     return {"ok": True}
 
 
+def _extract_client_ip(request: Request) -> str:
+    forwarded = request.headers.get("X-Forwarded-For")
+    if forwarded:
+        first = forwarded.split(",")[0].strip()
+        if first:
+            return first
+    real_ip = request.headers.get("X-Real-IP")
+    if real_ip and real_ip.strip():
+        return real_ip.strip()
+    if request.client and request.client.host:
+        return request.client.host.strip()
+    return ""
+
+
 @router.post("/machine", status_code=201)
 def report_machine_info(
+    request: Request,
     body: MachineInfoReport,
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """接收桌面端上报的机器信息（CPU/显卡/内存），每用户仅保留最新一条。"""
-    upsert_machine(db, user.id, body.model_dump())
+    """接收桌面端上报的机器信息（CPU/显卡/内存/机器码/IP），每用户仅保留最新一条。"""
+    payload = body.model_dump()
+    client_ip = _extract_client_ip(request)
+    if client_ip:
+        payload["ip_address"] = client_ip
+    upsert_machine(db, user.id, payload)
     db.commit()
     return {"ok": True}
 

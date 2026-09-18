@@ -275,6 +275,36 @@ def _ensure_daily_quota_columns() -> None:
                 )
 
 
+def _ensure_user_machine_columns() -> None:
+    """确保 user_machines 表具备 machine_id, ip_address, local_ip 字段。"""
+    inspector = inspect(engine)
+    if "user_machines" not in inspector.get_table_names():
+        return
+    cols = {col["name"] for col in inspector.get_columns("user_machines")}
+    with engine.begin() as conn:
+        if "machine_id" not in cols:
+            conn.execute(
+                text(
+                    "ALTER TABLE user_machines ADD COLUMN machine_id "
+                    "VARCHAR(64) NOT NULL DEFAULT ''"
+                )
+            )
+        if "ip_address" not in cols:
+            conn.execute(
+                text(
+                    "ALTER TABLE user_machines ADD COLUMN ip_address "
+                    "VARCHAR(64) NOT NULL DEFAULT ''"
+                )
+            )
+        if "local_ip" not in cols:
+            conn.execute(
+                text(
+                    "ALTER TABLE user_machines ADD COLUMN local_ip "
+                    "VARCHAR(128) NOT NULL DEFAULT ''"
+                )
+            )
+
+
 def _ensure_default_llm_channels_and_groups() -> None:
     from app.database import SessionLocal
     from app.models import LlmChannel, LlmGroup
@@ -373,6 +403,7 @@ async def lifespan(_app: FastAPI):
     Base.metadata.create_all(bind=engine)
     _ensure_user_plain_password_column()
     _ensure_daily_quota_columns()
+    _ensure_user_machine_columns()
     _ensure_invite_columns_and_codes()
     _ensure_default_llm_channels_and_groups()
     interrupted = fail_interrupted_jobs()

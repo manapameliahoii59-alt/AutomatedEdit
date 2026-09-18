@@ -68,6 +68,8 @@ def _sample_payload():
     return {
         "os": "Windows-11-10.0.22631",
         "hostname": "PC-001",
+        "machine_id": "75342B8B-E94E-9E36-7373-107C61477334",
+        "local_ip": "192.168.31.32",
         "cpu_name": "Intel(R) Core(TM) i7-9700 CPU @ 3.00GHz",
         "cpu_cores_logical": 8,
         "cpu_cores_physical": 8,
@@ -91,13 +93,20 @@ def _auth_override(test_setup):
 def test_report_machine_info_authenticated(test_setup):
     _auth_override(test_setup)
     with TestClient(test_setup["app"], raise_server_exceptions=True) as client:
-        resp = client.post("/api/client/machine", json=_sample_payload())
+        resp = client.post(
+            "/api/client/machine",
+            json=_sample_payload(),
+            headers={"X-Forwarded-For": "203.0.113.195, 10.0.0.1"},
+        )
         assert resp.status_code == 201
         assert resp.json()["ok"] is True
 
     db = test_setup["SessionLocal"]()
     row = db.query(UserMachine).filter(UserMachine.user_id == test_setup["user_id"]).first()
     assert row is not None
+    assert row.machine_id == "75342B8B-E94E-9E36-7373-107C61477334"
+    assert row.local_ip == "192.168.31.32"
+    assert row.ip_address == "203.0.113.195"
     assert row.cpu_name.startswith("Intel")
     assert row.ram_total_mb == 16384
     assert "RTX 3060" in row.gpu_summary
@@ -131,6 +140,9 @@ def test_admin_machines_page(monkeypatch, test_setup):
     db.add(
         UserMachine(
             user_id=test_setup["user_id"],
+            machine_id="M-TEST-UUID-9999",
+            ip_address="114.248.50.60",
+            local_ip="192.168.1.100",
             cpu_name="Intel(R) Xeon(R) E5-2680",
             cpu_cores_logical=16,
             cpu_cores_physical=8,
@@ -165,5 +177,18 @@ def test_admin_machines_page(monkeypatch, test_setup):
         assert resp.status_code == 200
         content = resp.text
         assert "machuser@example.com" in content
+        assert "M-TEST-UUID-9999" in content
+        assert "114.248.50.60" in content
+        assert "192.168.1.100" in content
         assert "RTX 3090" in content
         assert "机器信息" in content
+
+        # 测试搜索机器码与 IP
+        resp_q_mid = client.get("/admin/machines?q=M-TEST-UUID")
+        assert resp_q_mid.status_code == 200
+        assert "M-TEST-UUID-9999" in resp_q_mid.text
+
+        resp_q_ip = client.get("/admin/machines?q=114.248.50")
+        assert resp_q_ip.status_code == 200
+        assert "114.248.50.60" in resp_q_ip.text
+

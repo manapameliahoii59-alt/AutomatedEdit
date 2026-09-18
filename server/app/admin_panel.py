@@ -949,10 +949,24 @@ def _ram_text(total_mb: int, available_mb: int) -> str:
     return f"{total_gb:.1f} GB"
 
 
+def _ip_text(ip_address: str | None, local_ip: str | None) -> str:
+    pub = (ip_address or "").strip()
+    loc = (local_ip or "").strip()
+    if pub and loc:
+        return f"{pub}（内网: {loc}）"
+    if pub:
+        return pub
+    if loc:
+        return f"内网: {loc}"
+    return "—"
+
+
 def _machine_to_dict(row: UserMachine | None) -> dict[str, Any] | None:
     if row is None:
         return None
     return {
+        "machine_id": getattr(row, "machine_id", "") or "—",
+        "ip_address": _ip_text(getattr(row, "ip_address", None), getattr(row, "local_ip", None)),
         "os": row.os or "—",
         "hostname": row.hostname or "—",
         "cpu_name": row.cpu_name or "—",
@@ -976,6 +990,8 @@ def machines_list(
         return {
             "id": row.id,
             "username": username,
+            "ip_address": _ip_text(getattr(row, "ip_address", None), getattr(row, "local_ip", None)),
+            "machine_id": getattr(row, "machine_id", "") or "—",
             "cpu_name": row.cpu_name or "—",
             "cores": _cores_text(row.cpu_cores_physical, row.cpu_cores_logical),
             "ram": _ram_text(row.ram_total_mb, row.ram_available_mb),
@@ -994,6 +1010,9 @@ def machines_list(
         model=UserMachine,
         order_col=UserMachine.updated_at,
         search_cols=[
+            UserMachine.machine_id,
+            UserMachine.ip_address,
+            UserMachine.local_ip,
             UserMachine.cpu_name,
             UserMachine.gpu_summary,
             UserMachine.os,
