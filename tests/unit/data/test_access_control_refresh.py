@@ -67,3 +67,34 @@ def test_check_session_network_error_is_unreachable(monkeypatch):
 
     monkeypatch.setattr(api, "_request", _boom)
     assert api.check_session() == "unreachable"
+
+
+def test_ensure_authorized_interactive_invalid_shows_019_and_returns_false(monkeypatch):
+    svc = AccessControlService()
+    monkeypatch.setattr(
+        "app.data.services.access_control_service.get_api",
+        lambda: _FakeApi("invalid"),
+    )
+    dialog_calls = []
+    monkeypatch.setattr(
+        "app.common.utils.show_dialog",
+        lambda parent, content, title: dialog_calls.append((content, title)),
+    )
+
+    res = svc.ensure_authorized_interactive()
+    assert res is False
+    assert svc.is_blocked() is True
+    assert len(dialog_calls) == 1
+    assert "错误代码：019" in dialog_calls[0][0]
+
+
+def test_ensure_authorized_interactive_valid_returns_true(monkeypatch):
+    svc = AccessControlService()
+    monkeypatch.setattr(
+        "app.data.services.access_control_service.get_api",
+        lambda: _FakeApi("valid"),
+    )
+    res = svc.ensure_authorized_interactive()
+    assert res is True
+    assert svc.is_blocked() is False
+

@@ -35,10 +35,16 @@ def get_current_user(
     expected_ver = getattr(user, "token_version", 1) or 1
     if token_ver is not None:
         if token_ver != expected_ver:
-            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="登录会话已过期，请重新登录")
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="您的账号已在另一台设备登录，当前会话已过期失效，请重新登录",
+            )
     else:
         if expected_ver > 1:
-            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="登录会话已过期，请重新登录")
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="您的账号已在另一台设备登录，当前会话已过期失效，请重新登录",
+            )
 
     assert_user_allowed(user)
     return user

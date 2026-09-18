@@ -104,6 +104,7 @@ from app.data.models.batch_execution_record import (
     BatchExecutionSummary,
     DramaTimingRecord,
 )
+from app.data.services.access_control_service import access_control
 from app.ui.components.batch_execution_dialog import BatchExecutionDialog
 
 from .view_model import ClipEditViewModel
@@ -445,21 +446,21 @@ class ClipEditPage(ScrollArea):
             transcribe_btn.setFixedWidth(56)
             transcribe_btn.setProperty("project_id", project.id)
             transcribe_btn.clicked.connect(
-                lambda _=False, pid=project.id: self.vm.start_transcribe(pid)
+                lambda _=False, pid=project.id: self._start_single_transcribe(pid)
             )
 
             plan_btn = PushButton("策划", cell)
             plan_btn.setFixedWidth(56)
             plan_btn.setProperty("project_id", project.id)
             plan_btn.clicked.connect(
-                lambda _=False, pid=project.id: self.vm.start_planning(pid)
+                lambda _=False, pid=project.id: self._start_single_plan(pid)
             )
 
             render_btn = PushButton("渲染", cell)
             render_btn.setFixedWidth(56)
             render_btn.setProperty("project_id", project.id)
             render_btn.clicked.connect(
-                lambda _=False, pid=project.id: self.vm.start_render(pid)
+                lambda _=False, pid=project.id: self._start_single_render(pid)
             )
 
             del_btn = PushButton("删除", cell)
@@ -537,7 +538,24 @@ class ClipEditPage(ScrollArea):
         self.table.blockSignals(False)
         self._sync_select_all_checkbox()
 
+    def _start_single_transcribe(self, project_id: str):
+        if not access_control.ensure_authorized_interactive(self):
+            return
+        self.vm.start_transcribe(project_id)
+
+    def _start_single_plan(self, project_id: str):
+        if not access_control.ensure_authorized_interactive(self):
+            return
+        self.vm.start_planning(project_id)
+
+    def _start_single_render(self, project_id: str):
+        if not access_control.ensure_authorized_interactive(self):
+            return
+        self.vm.start_render(project_id)
+
     def _batch_transcribe(self):
+        if not access_control.ensure_authorized_interactive(self):
+            return
         ids = self._get_checked_ids()
         if not ids:
             show_dialog(self, "请先勾选要处理的剧目", "提示")
@@ -545,6 +563,8 @@ class ClipEditPage(ScrollArea):
         self.vm.batch_transcribe(ids)
 
     def _batch_plan(self):
+        if not access_control.ensure_authorized_interactive(self):
+            return
         ids = self._get_checked_ids()
         if not ids:
             show_dialog(self, "请先勾选要处理的剧目", "提示")
@@ -552,6 +572,8 @@ class ClipEditPage(ScrollArea):
         self.vm.batch_plan(ids)
 
     def _batch_render(self):
+        if not access_control.ensure_authorized_interactive(self):
+            return
         ids = self._get_checked_ids()
         if not ids:
             show_dialog(self, "请先勾选要处理的剧目", "提示")
@@ -988,6 +1010,9 @@ class ClipEditPage(ScrollArea):
         dlg.exec()
 
     def _batch_all(self):
+        if not access_control.ensure_authorized_interactive(self):
+            return
+
         if not self.vm.get_projects():
             show_dialog(self, "暂未导入任何剧目", "提示")
             return

@@ -30,6 +30,9 @@ class AccessControlService:
     def __init__(self) -> None:
         self._blocked = False
         self._session_expired_callbacks: list[callable] = []
+        self._last_check_time: float = 0.0
+        self._last_status: str = "valid"
+        self._cache_ttl: float = 10.0
 
     @classmethod
     def instance(cls) -> "AccessControlService":
@@ -70,6 +73,70 @@ class AccessControlService:
     def ensure_allowed(self) -> None:
         if self.is_blocked():
             raise RuntimeError(self.random_error())
+
+    def ensure_authorized_interactive(self, parent=None, *, force: bool = False) -> bool:
+        """任务操作前置授权校验：
+        若后台暂停授权（invalid）或会话失效（expired），立即弹窗拦截并返回 False。
+        """
+        import time
+
+        now = time.monotonic()
+        if (
+            not force
+            and (now - self._last_check_time < self._cache_ttl)
+            and self._last_status == "valid"
+        ):
+            return True
+
+        api = get_api()
+        status = "valid"
+        if hasattr(api, "check_session"):
+            status = api.check_session()
+        elif hasattr(api, "validate_session"):
+            status = "valid" if api.validate_session() else "invalid"
+
+        self._last_check_time = now
+        self._last_status = status
+
+        if status == "valid":
+            self.unblock()
+            return True
+
+        if status == "invalid":
+            self.block()
+            try:
+                from app.common.utils import show_dialog
+
+                show_dialog(parent, "执行任务出错，错误代码：019", "提示")
+            except Exception:
+                pass
+            return False
+
+        if status == "expired":
+            self.block()
+            try:
+                from app.common.utils import show_dialog
+
+                show_dialog(
+                    parent,
+                    "您的账号已在另一台设备登录或登录已过期，请重新登录！",
+                    "提示",
+                )
+            except Exception:
+                pass
+            self.notify_session_expired("登录会话已过期，请重新登录")
+            return False
+
+        if self.is_blocked():
+            try:
+                from app.common.utils import show_dialog
+
+                show_dialog(parent, "执行任务出错，错误代码：019", "提示")
+            except Exception:
+                pass
+            return False
+
+        return True
 
     def refresh(self) -> bool:
         """刷新封禁状态。

@@ -37,6 +37,7 @@ from app.data.services.ai_director_service import AIDirectorService
 from app.data.services.render_service import RenderService, RenderResult
 from app.data.services.usage_service import UsageService
 from app.data.services.quota_service import QuotaService
+from app.data.services.access_control_service import access_control
 
 
 def _format_plan_result_message(project_name: str, result: dict | None = None) -> str:
@@ -563,6 +564,12 @@ class ClipEditViewModel(ViewModel):
             return False
         return True
 
+    def _ensure_access_allowed(self) -> bool:
+        if access_control.is_blocked():
+            self.errorOccurred.emit("执行任务出错，错误代码：019")
+            return False
+        return True
+
     def request_cancel(self) -> None:
         self._batch_cancel_requested = True
         render_queue.request_cancel()
@@ -616,24 +623,12 @@ class ClipEditViewModel(ViewModel):
             self._set_stage_progress(pid, "render", "排队中")
 
     def start_transcribe(self, project_id: str):
+        if not self._ensure_access_allowed():
+            return
         project = next((p for p in self._projects if p.id == project_id), None)
         if not project:
             self.errorOccurred.emit("未找到该剧目")
             return
-
-        try:
-            warnings = TranscriptionService.check_environment()
-        except ImportError as e:
-            self.errorOccurred.emit(sanitize_transcribe_error(e, drama_name=project.name))
-            return
-
-        if warnings:
-            sanitized_warnings = [
-                w for w in (sanitize_transcribe_warning(w) for w in warnings) if w
-            ]
-            sanitized_warnings = list(dict.fromkeys(sanitized_warnings))
-            if sanitized_warnings:
-                self.messageReceived.emit("环境提示：\n- " + "\n- ".join(sanitized_warnings))
 
         self._update_status(project_id, "transcribe", DramaStatus.IN_PROGRESS)
         self._show_progress("正在识别", project.name)
@@ -668,6 +663,8 @@ class ClipEditViewModel(ViewModel):
         )
 
     def start_planning(self, project_id: str):
+        if not self._ensure_access_allowed():
+            return
         project = next((p for p in self._projects if p.id == project_id), None)
         if not project:
             self.errorOccurred.emit("未找到该剧目")
@@ -723,6 +720,8 @@ class ClipEditViewModel(ViewModel):
         )
 
     def start_render(self, project_id: str):
+        if not self._ensure_access_allowed():
+            return
         project = next((p for p in self._projects if p.id == project_id), None)
         if not project:
             self.errorOccurred.emit("未找到该剧目")
@@ -819,6 +818,8 @@ class ClipEditViewModel(ViewModel):
         task_manager.submit_task(_do, on_success=_on_success, on_error=_on_error)
 
     def batch_transcribe(self, project_ids: list[str]):
+        if not self._ensure_access_allowed():
+            return
         queue: list[DramaProject] = []
         skipped = 0
         for pid in project_ids:
@@ -937,6 +938,8 @@ class ClipEditViewModel(ViewModel):
         _run_at(0)
 
     def batch_plan(self, project_ids: list[str]):
+        if not self._ensure_access_allowed():
+            return
         queue: list[DramaProject] = []
         skipped = 0
         for pid in project_ids:
@@ -1086,6 +1089,8 @@ class ClipEditViewModel(ViewModel):
         _run_at(0)
 
     def batch_render(self, project_ids: list[str]):
+        if not self._ensure_access_allowed():
+            return
         valid = []
         skipped = 0
         for pid in project_ids:
@@ -1250,6 +1255,8 @@ class ClipEditViewModel(ViewModel):
         self.messageReceived.emit("，".join(parts))
 
     def batch_all(self, project_ids: list[str]):
+        if not self._ensure_access_allowed():
+            return
         queue: list[DramaProject] = []
         for pid in project_ids:
             project = next((p for p in self._projects if p.id == pid), None)

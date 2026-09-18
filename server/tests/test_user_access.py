@@ -42,3 +42,34 @@ def test_assert_user_allowed_raises_invalid():
         assert_user_allowed(user)
     assert exc.value.status_code == 403
     assert exc.value.detail == INVALID_USER_MESSAGE
+
+
+def test_login_single_active_session_kickout():
+    from app.auth import create_access_token
+    from app.deps import get_current_user
+    from fastapi.security import HTTPAuthorizationCredentials
+
+    user = User(id=1, username="test@example.com", password_hash="hash", plain_password="pwd", is_active=True, token_version=1)
+    token1 = create_access_token(user.id, user.username, user.role, token_version=user.token_version)
+
+    class FakeDB:
+        def get(self, model, user_id):
+            return user
+
+    u1 = get_current_user(HTTPAuthorizationCredentials(scheme="Bearer", credentials=token1), db=FakeDB(), client_version="0.0.20")
+    assert u1.id == 1
+
+    # 另一台设备登录导致 token_version 自增
+    user.token_version += 1
+    token2 = create_access_token(user.id, user.username, user.role, token_version=user.token_version)
+
+    # 新设备正常工作
+    u2 = get_current_user(HTTPAuthorizationCredentials(scheme="Bearer", credentials=token2), db=FakeDB(), client_version="0.0.20")
+    assert u2.id == 1
+
+    # 旧设备 Token 1 立即被踢下线，返回 401
+    with pytest.raises(HTTPException) as exc:
+        get_current_user(HTTPAuthorizationCredentials(scheme="Bearer", credentials=token1), db=FakeDB(), client_version="0.0.20")
+    assert exc.value.status_code == 401
+    assert "另一台设备" in exc.value.detail
+

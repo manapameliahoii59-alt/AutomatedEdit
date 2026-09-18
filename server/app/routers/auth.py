@@ -63,11 +63,16 @@ def login(
 
     assert_user_allowed(user)
 
+    # 单点登录互踢：每次成功登录自增 token_version，旧设备原有 Token 立即失效
+    user.token_version = (getattr(user, "token_version", 1) or 1) + 1
+    db.commit()
+    db.refresh(user)
+
     token = create_access_token(
         user.id,
         user.username,
         user.role,
-        token_version=getattr(user, "token_version", 1),
+        token_version=user.token_version,
     )
     return TokenResponse(
         access_token=token,

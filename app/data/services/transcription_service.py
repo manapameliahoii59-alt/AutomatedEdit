@@ -149,8 +149,6 @@ class TranscriptionService:
             raise ImportError(f"识别模块ff加载失败：{e}，请检查环境配置")
 
         warnings = []
-        if not torch.cuda.is_available():
-            warnings.append("未检测到 CUDA GPU，将使用 CPU 进行识别（速度较慢）")
 
         # FunASR 解码 MP4 依赖 PATH 上的 ffmpeg
         ensure_ffmpeg_on_path()
