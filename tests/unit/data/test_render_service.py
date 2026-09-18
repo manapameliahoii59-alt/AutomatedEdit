@@ -1114,4 +1114,43 @@ def test_v3_compose_flow(tmp_path, monkeypatch):
     assert len(ctx.v3_mid_cache) == 1
 
 
+def test_dynamic_plan_episodes_skips_unused_and_supports_above_10():
+    """验证集数收集完全按方案动态提取：支持 10 集以上，未使用的 5~8 集绝不处理。"""
+    from app.data.services.render_service import RenderService
+
+    plans = [
+        {
+            "files_config": {
+                "full_episodes": ["1.mp4", "2.mp4", "11.mp4"],
+                "last_episode": "12.mp4",
+                "first_episode_cut_start": 5.0,
+            },
+            "global_speed": 1.0,
+        },
+        {
+            "files_config": {
+                "full_episodes": ["1.mp4", "3.mp4", "11.mp4"],
+                "last_episode": "15.mp4",
+                "first_episode_cut_start": 0.0,
+            },
+            "global_speed": 1.2,
+        },
+    ]
+
+    episodes, speeds = RenderService._collect_episodes_and_speeds(plans)
+
+    # 验证动态提取的集数列表
+    expected = ["1.mp4", "2.mp4", "3.mp4", "11.mp4", "12.mp4", "15.mp4"]
+    assert episodes == expected
+    # 5~8 集未在方案中，绝对不在此集合中
+    for unused in ("4.mp4", "5.mp4", "6.mp4", "7.mp4", "8.mp4", "9.mp4", "10.mp4"):
+        assert unused not in episodes
+    # 10 集以上正常包含
+    assert "11.mp4" in episodes
+    assert "12.mp4" in episodes
+    assert "15.mp4" in episodes
+    assert speeds == {1.0, 1.2}
+
+
+
 

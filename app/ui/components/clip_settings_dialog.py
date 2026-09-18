@@ -118,7 +118,7 @@ class ClipSettingsDialog(QDialog):
         if engine_idx >= 0:
             self._render_engine_combo.setCurrentIndex(engine_idx)
         self._render_engine_combo.setToolTip(
-            "“v3”启用三段式分块流复用，高频完整集秒级流拷贝，渲染极速（推荐）；\n"
+            "“v3”按策划案动态拆解，完整集秒级流拷贝复用（按需处理任意集数），渲染更快（推荐）；\n"
             "“v2”启用动态最长公共前缀复用与叠字预渲；\n"
             "“v1”关闭前缀复用与叠字预渲，每条成片全量独立重编。"
         )

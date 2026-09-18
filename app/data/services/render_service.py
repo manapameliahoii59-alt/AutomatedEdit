@@ -499,8 +499,9 @@ class RenderService:
                 flush=True,
             )
 
+        ep_list_str = ", ".join(episodes)
         _safe_print(
-            f"   📦 预处理 {len(episodes)} 集缓存（倍速 {', '.join(str(s) for s in sorted(speeds))}）…",
+            f"   📦 动态解析策划案引用的 {len(episodes)} 集素材: {ep_list_str}（倍速 {', '.join(str(s) for s in sorted(speeds))}，未引用的集数自动跳过）…",
             flush=True,
         )
         cache_total = len(episodes) * len(speeds)
@@ -2017,7 +2018,7 @@ class RenderService:
                 return False, 0.0
             ctx.v3_head_cache[head_key] = head_path
 
-        # 2. 中间高频完整集序列 (mid)
+        # 2. 策划案动态中间完整集序列 (mid，由方案 files_config 动态决定，支持任意集数，未使用的集数绝不处理)
         mid_segs = segments[1:-1] if len(segments) > 2 else []
         mid_paths: list[str] = []
         for mid_seg in mid_segs:
