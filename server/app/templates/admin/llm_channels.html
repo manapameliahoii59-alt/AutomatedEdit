@@ -841,7 +841,8 @@ async function deleteChannelConfirm(channelId, channelName) {
     type: "danger",
   });
   if (!ok) return;
-  window.pjaxSubmit(`/admin/channels/channel/delete/${channelId}`, new FormData());
+  const resp = await fetch(`/admin/channels/channel/delete/${channelId}`, { method: "POST" });
+  if (resp.ok) window.location.href = "/admin/channels?msg=channel_deleted";
 }
 
 async function deleteGroupConfirm(groupId, groupName) {
@@ -853,7 +854,8 @@ async function deleteGroupConfirm(groupId, groupName) {
     type: "danger",
   });
   if (!ok) return;
-  window.pjaxSubmit(`/admin/channels/group/delete/${groupId}`, new FormData());
+  const resp = await fetch(`/admin/channels/group/delete/${groupId}`, { method: "POST" });
+  if (resp.ok) window.location.href = "/admin/channels?msg=group_deleted";
 }
 </script>
 {% endblock %}

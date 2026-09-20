@@ -2,11 +2,7 @@
 {% from "admin/macros.html" import pager %}
 {% block title %}机器信息 · {{ app_name }}{% endblock %}
 {% block body %}
-<div class="head">
-  <div>
-    <h1>机器信息</h1>
-    <p>共 {{ total }} 条 · 桌面端 CPU / 显卡 / 内存 / IP / 机器码（每用户最新一条）</p>
-  </div>
+<div class="head head--search-only">
   <form class="search" method="get">
     <div class="el-input">
       <div class="el-input__wrapper">
@@ -14,7 +10,11 @@
       </div>
     </div>
     <button class="el-button el-button--primary" type="submit">搜索</button>
+    {% if q %}<a href="/admin/machines" class="el-button" style="text-decoration: none;">重置</a>{% endif %}
   </form>
+  <div class="head-actions">
+    <button type="button" class="el-button" onclick="resetTableLayout('admin_machines_table')" title="恢复表格的默认列宽与列顺序">重置表头</button>
+  </div>
 </div>
 <div class="grid-card">
   <table class="ssr-table" id="machine-ssr-table">
@@ -59,8 +59,9 @@
 {% endblock %}
 {% block scripts %}
 <script>
-  if (window.Vue && window.VXETable) {
+  if (window.mountAdminGrid) {
     mountAdminGrid("#machine-grid", {
+      tableKey: "admin_machines_table",
       fallback: "#machine-ssr-table",
       data: {{ rows | tojson }},
       columns: [

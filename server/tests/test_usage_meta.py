@@ -8,6 +8,7 @@ if str(SERVER_ROOT) not in sys.path:
 from app.services.usage_meta import (
     format_plan_drama_meta,
     normalize_plan_mode,
+    normalize_render_engine_label,
     parse_drama_name_from_meta,
     parse_plan_mode_from_meta,
 )
@@ -24,3 +25,17 @@ def test_format_and_parse_plan_drama_meta():
     assert parse_plan_mode_from_meta("剧A") is None
     assert normalize_plan_mode("MIXED") == "mixed"
     assert normalize_plan_mode("other") is None
+
+
+def test_normalize_render_engine_label():
+    assert normalize_render_engine_label("current") == "v2"
+    assert normalize_render_engine_label("CURRENT") == "v2"
+    assert normalize_render_engine_label("legacy") == "v1"
+    assert normalize_render_engine_label("LEGACY") == "v1"
+    assert normalize_render_engine_label("v3") == "v3"
+    assert normalize_render_engine_label("V3") == "v3"
+    assert normalize_render_engine_label("v2") == "v2"
+    assert normalize_render_engine_label("v1") == "v1"
+    assert normalize_render_engine_label("") == "—"
+    assert normalize_render_engine_label(None) == "—"
+    assert normalize_render_engine_label("custom_engine") == "custom_engine"

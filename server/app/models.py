@@ -193,47 +193,6 @@ class ErrorReport(Base):
     user: Mapped["User | None"] = relationship()
 
 
-class RadioTrack(Base):
-    """音乐电台曲目（从B站扒取的音源或本地上传的音乐）。"""
-
-    __tablename__ = "radio_tracks"
-
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    title: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
-    artist: Mapped[str] = mapped_column(String(128), default="未知艺术家")
-    duration: Mapped[int] = mapped_column(Integer, default=0)  # 秒
-    cover_url: Mapped[str] = mapped_column(String(512), default="")
-    audio_url: Mapped[str] = mapped_column(String(512), nullable=False)
-    source_type: Mapped[str] = mapped_column(String(32), default="bilibili")  # bilibili | upload
-    source_url: Mapped[str] = mapped_column(String(512), default="")
-    source_id: Mapped[str] = mapped_column(String(64), default="", index=True)  # BV号或原始标识
-    file_size: Mapped[int] = mapped_column(Integer, default=0)  # 字节
-    play_count: Mapped[int] = mapped_column(Integer, default=0)
-    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), index=True)
-
-
-class RadioGroup(Base):
-    """音乐电台自定义分组/歌单。"""
-
-    __tablename__ = "radio_groups"
-
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    name: Mapped[str] = mapped_column(String(64), nullable=False, unique=True, index=True)
-    description: Mapped[str] = mapped_column(String(255), default="")
-    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
-
-
-class RadioTrackGroup(Base):
-    """歌曲与自定义分组关联关系表。"""
-
-    __tablename__ = "radio_track_groups"
-
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    group_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
-    track_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
-
-
 class LlmChannel(Base):
     """大模型渠道配置（支持 deepseek / zhipu / xiaomi / opencode_go / siliconflow / tongyi 等）。"""
 
@@ -296,3 +255,17 @@ class UserInviteRecord(Base):
 
     inviter: Mapped["User"] = relationship("User", foreign_keys=[inviter_id])
     invitee: Mapped["User"] = relationship("User", foreign_keys=[invitee_id])
+
+
+class AdminTableConfig(Base):
+    """后台表格个性化布局配置（用于记忆拖拽后的列宽、列顺序等）。"""
+
+    __tablename__ = "admin_table_configs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    table_key: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    config_json: Mapped[str] = mapped_column(Text, default="{}")
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, server_default=func.now(), onupdate=func.now()
+    )
+

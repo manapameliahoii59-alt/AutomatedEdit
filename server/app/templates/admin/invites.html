@@ -252,19 +252,25 @@
 
   <!-- 邀请记录明细卡片 -->
   <div class="table-card">
-    <div class="table-card-head">
-      <h3 class="table-card-title">邀请流水记录 (共 {{ total_count }} 条)</h3>
-      <form class="search" method="get" action="/admin/invites" style="margin: 0;">
-        <div class="el-input" style="width: 260px;">
-          <div class="el-input__wrapper">
-            <input class="el-input__inner" name="q" value="{{ q }}" placeholder="搜索邀请人/被邀请人/邀请码..." />
+    <div class="table-card-head" style="display: flex; justify-content: space-between; align-items: center; gap: 20px;">
+      <div style="display: flex; align-items: center; gap: 20px; flex-wrap: wrap;">
+        <h3 class="table-card-title">邀请流水记录 (共 {{ total_count }} 条)</h3>
+        <form class="search" method="get" action="/admin/invites" style="margin: 0; display: flex; align-items: center; gap: 8px;">
+          <div class="el-input" style="width: 260px;">
+            <div class="el-input__wrapper">
+              <input class="el-input__inner" name="q" value="{{ q }}" placeholder="搜索邀请人/被邀请人/邀请码..." />
+            </div>
           </div>
-        </div>
-        <button class="el-button el-button--primary" type="submit">搜索</button>
-      </form>
+          <button class="el-button el-button--primary" type="submit">搜索</button>
+          {% if q %}<a href="/admin/invites" class="el-button" style="text-decoration: none;">重置</a>{% endif %}
+        </form>
+      </div>
+      <div class="head-actions">
+        <button type="button" class="el-button" onclick="resetTableLayout('admin_invites_table')" title="恢复表格的默认列宽与列顺序">重置表头</button>
+      </div>
     </div>
 
-    <table class="ssr-table is-fallback" style="display: table; width: 100%;">
+    <table class="ssr-table" id="invites-ssr-table" style="width: 100%;">
       <thead>
         <tr>
           <th style="width: 60px;">ID</th>
@@ -302,6 +308,7 @@
         {% endfor %}
       </tbody>
     </table>
+    <div id="invites-grid"></div>
 
     {% if total_pages > 1 %}
     <div style="padding: 12px 20px; display: flex; justify-content: flex-end; align-items: center; gap: 8px; border-top: 1px solid #ebeef5;">
@@ -316,4 +323,66 @@
     {% endif %}
   </div>
 </div>
+{% endblock %}
+{% block scripts %}
+<script>
+  if (window.mountAdminGrid) {
+    mountAdminGrid("#invites-grid", {
+      tableKey: "admin_invites_table",
+      fallback: "#invites-ssr-table",
+      height: "auto",
+      data: {{ records | tojson }},
+      columns: [
+        {
+          field: "id",
+          title: "ID",
+          width: 70,
+          slots: {
+            default: ({ row }) => [Vue.h("span", { style: "color: #909399;" }, `#${row.id}`)],
+          },
+        },
+        {
+          field: "inviter_username",
+          title: "邀请人账号",
+          minWidth: 160,
+          slots: {
+            default: ({ row }) => [Vue.h("strong", { style: "color: #303133;" }, row.inviter_username)],
+          },
+        },
+        {
+          field: "inviter_code",
+          title: "使用的邀请码",
+          width: 130,
+          slots: {
+            default: ({ row }) => [Vue.h("span", { class: "invite-badge" }, row.inviter_code)],
+          },
+        },
+        {
+          field: "invitee_username",
+          title: "被邀请新用户",
+          minWidth: 160,
+          slots: {
+            default: ({ row }) => [Vue.h("strong", { style: "color: #409eff;" }, row.invitee_username)],
+          },
+        },
+        {
+          field: "reward_clip_limit",
+          title: "双方奖励剪辑数",
+          width: 140,
+          slots: {
+            default: ({ row }) => [Vue.h("span", { style: "color: #67c23a; font-weight: 600;" }, `+${row.reward_clip_limit} 首/天`)],
+          },
+        },
+        {
+          field: "created_at",
+          title: "绑定兑换时间",
+          width: 180,
+          slots: {
+            default: ({ row }) => [Vue.h("span", { style: "color: #909399; font-size: 12px;" }, row.created_at)],
+          },
+        },
+      ],
+    });
+  }
+</script>
 {% endblock %}

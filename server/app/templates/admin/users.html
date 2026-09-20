@@ -2,11 +2,7 @@
 {% from "admin/macros.html" import pager %}
 {% block title %}用户 · {{ app_name }}{% endblock %}
 {% block body %}
-<div class="head">
-  <div>
-    <h1>用户</h1>
-    <p>共 {{ total }} 人 · 策划模型、API Key 与桌面端权限</p>
-  </div>
+<div class="head head--search-only">
   <form class="search" method="get" action="/admin/users">
     <div class="el-input">
       <div class="el-input__wrapper">
@@ -14,7 +10,11 @@
       </div>
     </div>
     <button class="el-button el-button--primary" type="submit">搜索</button>
+    {% if q %}<a href="/admin/users" class="el-button" style="text-decoration: none;">重置</a>{% endif %}
   </form>
+  <div class="head-actions">
+    <button type="button" class="el-button" onclick="resetTableLayout('admin_users_table')" title="恢复表格的默认列宽与列顺序">重置表头</button>
+  </div>
 </div>
 {% if missing_plan_keys_users %}
 <div class="el-alert el-alert--warning is-light" style="margin-bottom: 14px; border: 1px solid #faecd8; display: flex; align-items: center; justify-content: space-between; background: #fdf6ec; color: #b88230; padding: 10px 16px; border-radius: 4px;">
@@ -70,9 +70,10 @@
 {% endblock %}
 {% block scripts %}
 <script>
-  if (window.Vue && window.VXETable) {
+  if (window.mountAdminGrid) {
     const { h } = Vue;
     mountAdminGrid("#user-grid", {
+      tableKey: "admin_users_table",
       fallback: "#user-ssr-table",
       data: {{ users | tojson }},
       columns: [
@@ -92,6 +93,7 @@
         { field: "plan_label", title: "策划模型", minWidth: 180 },
         { field: "keys_preview", title: "策划 API Keys", minWidth: 180, showOverflow: true },
         {
+          field: "action",
           title: "操作",
           width: 90,
           slots: {

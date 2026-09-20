@@ -543,20 +543,6 @@ class OverlayTextLibrarySettings(BaseModel):
         return self
 
 
-def _default_overlay_library() -> OverlayTextLibrarySettings:
-    return OverlayTextLibrarySettings(
-        selected_id="default",
-        groups=[
-            OverlayTextGroupSettings(
-                id="default",
-                name="默认",
-                title=_default_overlay_title(),
-                disclaimer=_default_overlay_disclaimer(),
-            )
-        ],
-    )
-
-
 # 编码档位合法取值（与客户端 RenderService 的 normalizer 对齐）
 _ENCODE_PRESET_SETS: dict[str, set[str]] = {
     "encode_nvenc_preset": {f"p{i}" for i in range(1, 8)},
@@ -572,8 +558,8 @@ _ENCODE_PRESET_SETS: dict[str, set[str]] = {
     },
 }
 
-# 渲染引擎合法取值（v3=三段式分块流复用；current=v2动态前缀优化；legacy=v1兼容旧逻辑）
-_RENDER_ENGINE_VALUES = {"v3", "current", "legacy"}
+# 渲染引擎合法取值（v3=三段式分块流复用；current/v2=动态前缀优化；legacy/v1=兼容旧逻辑）
+_RENDER_ENGINE_VALUES = {"v3", "current", "legacy", "v2", "v1"}
 
 
 class ClipEditSettings(BaseModel):
@@ -628,6 +614,12 @@ class ClipEditSettings(BaseModel):
             self.clip_export_dir = str(self.clip_export_dir).strip()[:512]
         if self.clip_render_engine is not None:
             engine = str(self.clip_render_engine).strip().lower()
+            if engine in ("v2", "current"):
+                engine = "current"
+            elif engine in ("v1", "legacy"):
+                engine = "legacy"
+            elif engine in ("v3", "chunk", "stream_chunk"):
+                engine = "v3"
             self.clip_render_engine = (
                 engine if engine in _RENDER_ENGINE_VALUES else None
             )
@@ -687,6 +679,12 @@ class ClipEditSettingsPatch(BaseModel):
             self.clip_export_dir = str(self.clip_export_dir).strip()[:512]
         if self.clip_render_engine is not None:
             engine = str(self.clip_render_engine).strip().lower()
+            if engine in ("v2", "current"):
+                engine = "current"
+            elif engine in ("v1", "legacy"):
+                engine = "legacy"
+            elif engine in ("v3", "chunk", "stream_chunk"):
+                engine = "v3"
             self.clip_render_engine = (
                 engine if engine in _RENDER_ENGINE_VALUES else None
             )

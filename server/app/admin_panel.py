@@ -21,11 +21,11 @@ from starlette.middleware.sessions import SessionMiddleware
 from app.config import settings
 from app.database import engine
 from app.models import (
+    AdminTableConfig,
     ErrorReport,
     LlmChannel,
     LlmGroup,
     PlanJob,
-    SystemSetting,
     UsageEvent,
     User,
     UserDailyActivity,
@@ -45,11 +45,10 @@ from app.services.plan_secrets import (
     normalize_plan_llm_provider,
     plan_llm_preset_label,
 )
-from app.services.usage_meta import PLAN_MODE_LABELS
+from app.services.usage_meta import PLAN_MODE_LABELS, normalize_render_engine_label
 from app.services.user_machine import get_machine
 from app.services.user_settings import _load_data, get_user_settings, patch_user_settings
 
-_DRAMA_COL_MAX_WIDTH_PX = 200
 _PAGE_SIZE = 40
 _TEMPLATE_DIR = Path(__file__).resolve().parent / "templates"
 _STATIC_DIR = Path(__file__).resolve().parent / "static" / "admin"
@@ -185,19 +184,6 @@ def _drama_names_text(model, attr) -> str:
     return text
 
 
-def _drama_names_ellipsis(model, attr):
-    full = _drama_names_text(model, attr)
-    if not full:
-        return "-"
-    safe = escape(full)
-    return Markup(
-        f'<span title="{safe}" style="'
-        f"display:inline-block;max-width:{_DRAMA_COL_MAX_WIDTH_PX}px;"
-        "overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"
-        f'vertical-align:bottom;">{safe}</span>'
-    )
-
-
 def _session() -> Session:
     return sessionmaker(bind=engine, autoflush=False, autocommit=False)()
 
@@ -293,7 +279,6 @@ def _nav(active: str) -> list[dict[str, str]]:
         ("invites", "/admin/invites", "邀请管理"),
         ("settings", "/admin/settings", "用户配置"),
         ("errors", "/admin/errors", "错误反馈"),
-        ("radio", "/admin/radio", "音乐电台"),
         ("version", "/admin/version", "版本更新"),
         ("profile", "/admin/profile", "个人中心"),
     ]
@@ -806,13 +791,18 @@ def _list_page(
     page: int,
     row_mapper,
     extra_filters=None,
+    custom_search_cond=None,
+    extra_ctx: dict | None = None,
 ):
     stmt = select(model).options(joinedload(model.user))
     count_stmt = select(func.count(model.id))
     keyword = q.strip()
     if keyword:
-        like = f"%{keyword}%"
-        cond = or_(*[col.like(like) for col in search_cols])
+        if custom_search_cond is not None:
+            cond = custom_search_cond(keyword)
+        else:
+            like = f"%{keyword}%"
+            cond = or_(*[col.like(like) for col in search_cols])
         stmt = stmt.where(cond)
         count_stmt = count_stmt.where(cond)
     if extra_filters is not None:
@@ -823,20 +813,19 @@ def _list_page(
     rows = db.scalars(
         stmt.order_by(desc(order_col)).offset(offset).limit(_PAGE_SIZE)
     ).unique().all()
-    return templates.TemplateResponse(
+    ctx = _ctx(
         request,
-        template,
-        _ctx(
-            request,
-            active=active,
-            db=db,
-            rows=[row_mapper(row) for row in rows],
-            q=keyword,
-            page=page,
-            total_pages=total_pages,
-            total=total,
-        ),
+        active=active,
+        db=db,
+        rows=[row_mapper(row) for row in rows],
+        q=keyword,
+        page=page,
+        total_pages=total_pages,
+        total=total,
     )
+    if extra_ctx:
+        ctx.update(extra_ctx)
+    return templates.TemplateResponse(request, template, ctx)
 
 
 @router.get("/activity", response_class=HTMLResponse)
@@ -885,7 +874,18 @@ def usage_list(
     db: Db,
     q: str = "",
     page: int = Query(default=1, ge=1),
+    user_id: str = Query(default=""),
+    start_date: str = Query(default=""),
+    end_date: str = Query(default=""),
 ):
+    parsed_user_id: int | None = None
+    clean_user_id = (user_id or "").strip()
+    if clean_user_id:
+        try:
+            parsed_user_id = int(clean_user_id)
+        except (ValueError, TypeError):
+            parsed_user_id = None
+
     def mapper(row: UsageEvent) -> dict:
         username = row.user.username if row.user else f"#{row.user_id}"
         return {
@@ -905,10 +905,74 @@ def usage_list(
             "resolution": row.resolution or "—",
             "cache_ms": row.cache_ms,
             "compose_ms": row.compose_ms,
-            "render_engine": row.render_engine or "—",
+            "render_engine": normalize_render_engine_label(row.render_engine),
             "client_version": row.client_version or "—",
             "created_at": _fmt_dt(row.created_at),
         }
+
+    def _usage_search(keyword: str):
+        like = f"%{keyword}%"
+        conds = [
+            UsageEvent.event.like(like),
+            UsageEvent.meta.like(like),
+            UsageEvent.plan_mode.like(like),
+            UsageEvent.plan_model.like(like),
+            UsageEvent.encoder.like(like),
+            UsageEvent.render_engine.like(like),
+        ]
+        k_lower = keyword.lower()
+        if k_lower in ("v2", "v2（动态最长前缀复用与叠字预渲）", "v2引擎"):
+            conds.append(UsageEvent.render_engine.in_(["v2", "current"]))
+        elif k_lower in ("v1", "v1（全量独立重编/关闭前缀复用）", "v1引擎"):
+            conds.append(UsageEvent.render_engine.in_(["v1", "legacy"]))
+        elif k_lower in ("current",):
+            conds.append(UsageEvent.render_engine.in_(["v2", "current"]))
+        elif k_lower in ("legacy",):
+            conds.append(UsageEvent.render_engine.in_(["v1", "legacy"]))
+        elif k_lower in ("短片", "short"):
+            conds.append(UsageEvent.plan_mode == "short")
+        elif k_lower in ("长片", "long"):
+            conds.append(UsageEvent.plan_mode == "long")
+        elif k_lower in ("混合", "mixed"):
+            conds.append(UsageEvent.plan_mode == "mixed")
+        return or_(*conds)
+
+    start_dt = None
+    if start_date and start_date.strip():
+        try:
+            start_dt = datetime.strptime(start_date.strip(), "%Y-%m-%d").replace(
+                hour=0, minute=0, second=0, microsecond=0
+            )
+        except (ValueError, TypeError):
+            start_dt = None
+
+    end_dt = None
+    if end_date and end_date.strip():
+        try:
+            end_dt = datetime.strptime(end_date.strip(), "%Y-%m-%d").replace(
+                hour=23, minute=59, second=59, microsecond=999999
+            )
+        except (ValueError, TypeError):
+            end_dt = None
+
+    def _usage_extra_filters(stmt):
+        if parsed_user_id:
+            stmt = stmt.where(UsageEvent.user_id == parsed_user_id)
+        if start_dt:
+            stmt = stmt.where(UsageEvent.created_at >= start_dt)
+        if end_dt:
+            stmt = stmt.where(UsageEvent.created_at <= end_dt)
+        return stmt
+
+    all_users = db.scalars(select(User).order_by(User.username.asc())).all()
+    users_list = [{"id": u.id, "username": u.username} for u in all_users]
+
+    extra_ctx = {
+        "selected_user_id": parsed_user_id,
+        "start_date": start_date.strip(),
+        "end_date": end_date.strip(),
+        "users_list": users_list,
+    }
 
     return _list_page(
         request,
@@ -923,11 +987,71 @@ def usage_list(
             UsageEvent.plan_mode,
             UsageEvent.plan_model,
             UsageEvent.encoder,
+            UsageEvent.render_engine,
         ],
         q=q,
         page=page,
         row_mapper=mapper,
+        extra_filters=_usage_extra_filters,
+        custom_search_cond=_usage_search,
+        extra_ctx=extra_ctx,
     )
+
+
+@router.get("/api/table-config/{table_key}")
+def get_table_config(request: Request, db: Db, table_key: str):
+    if not _is_logged_in(request):
+        return JSONResponse({"error": "unauthorized"}, status_code=401)
+    key = table_key.strip()
+    if not key:
+        return JSONResponse({"error": "invalid table_key"}, status_code=400)
+    row = db.scalar(select(AdminTableConfig).where(AdminTableConfig.table_key == key))
+    if not row or not row.config_json:
+        return JSONResponse({"success": True, "table_key": key, "config": None})
+    try:
+        config_data = json.loads(row.config_json)
+    except Exception:
+        config_data = None
+    return JSONResponse({"success": True, "table_key": key, "config": config_data})
+
+
+@router.post("/api/table-config/{table_key}")
+async def save_table_config(request: Request, db: Db, table_key: str):
+    if not _is_logged_in(request):
+        return JSONResponse({"error": "unauthorized"}, status_code=401)
+    key = table_key.strip()
+    if not key:
+        return JSONResponse({"error": "invalid table_key"}, status_code=400)
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"error": "invalid json"}, status_code=400)
+    if not isinstance(body, dict):
+        return JSONResponse({"error": "config must be a json object"}, status_code=400)
+
+    config_str = json.dumps(body, ensure_ascii=False)
+    row = db.scalar(select(AdminTableConfig).where(AdminTableConfig.table_key == key))
+    if row:
+        row.config_json = config_str
+    else:
+        row = AdminTableConfig(table_key=key, config_json=config_str)
+        db.add(row)
+    db.commit()
+    return JSONResponse({"success": True, "message": "saved"})
+
+
+@router.delete("/api/table-config/{table_key}")
+def reset_table_config(request: Request, db: Db, table_key: str):
+    if not _is_logged_in(request):
+        return JSONResponse({"error": "unauthorized"}, status_code=401)
+    key = table_key.strip()
+    if not key:
+        return JSONResponse({"error": "invalid table_key"}, status_code=400)
+    row = db.scalar(select(AdminTableConfig).where(AdminTableConfig.table_key == key))
+    if row:
+        db.delete(row)
+        db.commit()
+    return JSONResponse({"success": True, "message": "reset"})
 
 
 def _cores_text(physical: int, logical: int) -> str:
@@ -1324,347 +1448,6 @@ def profile_theme_reset_upload(request: Request):
     theme["has_uploaded"] = False
     _save_login_theme(theme)
     return RedirectResponse("/admin/profile?msg=upload_deleted", status_code=302)
-
-
-# ---------------------------------------------------------------------------
-# 音乐电台与 B 站音源管理
-# ---------------------------------------------------------------------------
-from app.services.radio_service import (
-    parse_bilibili_video,
-    download_bilibili_track,
-    save_uploaded_track,
-    list_radio_tracks,
-    get_radio_track,
-    update_radio_track,
-    delete_radio_track,
-    increment_track_play_count,
-    get_radio_stats,
-    list_radio_groups,
-    get_radio_group,
-    create_radio_group,
-    update_radio_group,
-    delete_radio_group,
-    set_track_groups,
-    _STATIC_RADIO_DIR,
-)
-
-
-@router.get("/radio", response_class=HTMLResponse)
-def radio_page(
-    request: Request,
-    db: Db,
-    q: str = "",
-    group_id: int | None = None,
-    msg: str = "",
-    error: str = "",
-):
-    if not _is_logged_in(request):
-        return RedirectResponse("/admin/login", status_code=302)
-    tracks = list_radio_tracks(db, q=q, group_id=group_id)
-    stats = get_radio_stats(db)
-    groups = list_radio_groups(db)
-    active_group = get_radio_group(group_id, db) if group_id else None
-    return templates.TemplateResponse(
-        request,
-        "admin/radio.html",
-        _ctx(
-            request,
-            active="radio",
-            db=db,
-            tracks=tracks,
-            stats=stats,
-            groups=groups,
-            active_group_id=group_id,
-            active_group=active_group,
-            q=q,
-            msg=msg,
-            error=error,
-        ),
-    )
-
-
-@router.get("/api/radio/tracks")
-def api_radio_tracks(request: Request, db: Db, q: str = "", group_id: int | None = None):
-    if not _is_logged_in(request):
-        return JSONResponse({"detail": "未登录"}, status_code=401)
-    tracks = list_radio_tracks(db, q=q, group_id=group_id)
-    return {
-        "tracks": [
-            {
-                "id": t.id,
-                "title": t.title,
-                "artist": t.artist,
-                "duration": t.duration,
-                "cover_url": t.cover_url,
-                "audio_url": t.audio_url,
-                "source_type": t.source_type,
-                "source_url": t.source_url,
-                "source_id": t.source_id,
-                "file_size": t.file_size,
-                "play_count": t.play_count,
-                "groups": getattr(t, "groups", []),
-                "group_ids": getattr(t, "group_ids", []),
-                "created_at": t.created_at.strftime("%Y-%m-%d %H:%M") if t.created_at else "",
-            }
-            for t in tracks
-        ]
-    }
-
-
-@router.get("/api/radio/groups")
-def api_radio_groups(request: Request, db: Db):
-    if not _is_logged_in(request):
-        return JSONResponse({"ok": False, "error": "未登录"}, status_code=401)
-    return {"ok": True, "groups": list_radio_groups(db)}
-
-
-@router.post("/api/radio/groups/create")
-async def api_radio_group_create(request: Request, db: Db):
-    if not _is_logged_in(request):
-        return JSONResponse({"ok": False, "error": "未登录"}, status_code=401)
-    try:
-        data = await request.json()
-    except Exception:
-        data = {}
-    name = (data.get("name") or "").strip()
-    description = (data.get("description") or "").strip()
-    try:
-        group = create_radio_group(name, description, db)
-        return {
-            "ok": True,
-            "group": {
-                "id": group.id,
-                "name": group.name,
-                "description": group.description or "",
-                "track_count": 0,
-            },
-        }
-    except ValueError as ve:
-        return JSONResponse({"ok": False, "error": str(ve)})
-    except Exception as e:
-        logger.exception("创建分组失败: %s", e)
-        return JSONResponse({"ok": False, "error": "创建分组失败，请稍后重试"})
-
-
-@router.post("/api/radio/groups/{group_id}/update")
-async def api_radio_group_update(request: Request, group_id: int, db: Db):
-    if not _is_logged_in(request):
-        return JSONResponse({"ok": False, "error": "未登录"}, status_code=401)
-    try:
-        data = await request.json()
-    except Exception:
-        data = {}
-    name = (data.get("name") or "").strip()
-    description = (data.get("description") or "").strip()
-    try:
-        group = update_radio_group(group_id, name, description, db)
-        if not group:
-            return JSONResponse({"ok": False, "error": "分组不存在"}, status_code=404)
-        return {
-            "ok": True,
-            "group": {
-                "id": group.id,
-                "name": group.name,
-                "description": group.description or "",
-            },
-        }
-    except ValueError as ve:
-        return JSONResponse({"ok": False, "error": str(ve)})
-    except Exception as e:
-        logger.exception("更新分组失败: %s", e)
-        return JSONResponse({"ok": False, "error": "更新分组失败，请稍后重试"})
-
-
-@router.post("/api/radio/groups/{group_id}/delete")
-def api_radio_group_delete(request: Request, group_id: int, db: Db):
-    if not _is_logged_in(request):
-        return JSONResponse({"ok": False, "error": "未登录"}, status_code=401)
-    success = delete_radio_group(group_id, db)
-    if not success:
-        return JSONResponse({"ok": False, "error": "分组不存在或删除失败"}, status_code=404)
-    return {"ok": True}
-
-
-@router.post("/api/radio/tracks/{track_id}/groups")
-async def api_radio_track_set_groups(request: Request, track_id: int, db: Db):
-    if not _is_logged_in(request):
-        return JSONResponse({"ok": False, "error": "未登录"}, status_code=401)
-    try:
-        data = await request.json()
-    except Exception:
-        data = {}
-    raw_group_ids = data.get("group_ids", [])
-    group_ids: list[int] = []
-    if isinstance(raw_group_ids, list):
-        for gid in raw_group_ids:
-            try:
-                group_ids.append(int(gid))
-            except (TypeError, ValueError):
-                pass
-    try:
-        assigned_groups = set_track_groups(track_id, group_ids, db)
-        return {"ok": True, "groups": assigned_groups}
-    except Exception as e:
-        logger.exception("设置曲目分组失败: %s", e)
-        return JSONResponse({"ok": False, "error": str(e)})
-
-
-@router.post("/api/radio/bilibili/parse")
-async def api_radio_bilibili_parse(request: Request):
-    if not _is_logged_in(request):
-        return JSONResponse({"ok": False, "error": "未登录"}, status_code=401)
-    try:
-        data = await request.json()
-    except Exception:
-        data = {}
-    url = (data.get("url") or "").strip()
-    if not url:
-        return JSONResponse({"ok": False, "error": "请输入有效的 B 站视频链接或 BV 号！"})
-    try:
-        info = await parse_bilibili_video(url)
-        return {"ok": True, "data": info}
-    except Exception as e:
-        logger.warning("B站链接解析失败: %s", e)
-        return JSONResponse({"ok": False, "error": str(e)})
-
-
-@router.post("/api/radio/bilibili/download")
-async def api_radio_bilibili_download(request: Request, db: Db):
-    if not _is_logged_in(request):
-        return JSONResponse({"ok": False, "error": "未登录"}, status_code=401)
-    try:
-        data = await request.json()
-    except Exception:
-        data = {}
-    url = (data.get("url") or "").strip()
-    custom_title = (data.get("title") or "").strip() or None
-    custom_artist = (data.get("artist") or "").strip() or None
-    cid = data.get("cid")
-    if cid:
-        try:
-            cid = int(cid)
-        except (TypeError, ValueError):
-            cid = None
-
-    group_id = data.get("group_id")
-    if group_id:
-        try:
-            group_id = int(group_id)
-        except (TypeError, ValueError):
-            group_id = None
-
-    if not url:
-        return JSONResponse({"ok": False, "error": "缺少 B 站链接参数！"})
-    try:
-        track = await download_bilibili_track(
-            url,
-            db,
-            custom_title=custom_title,
-            custom_artist=custom_artist,
-            cid_override=cid,
-            group_id=group_id,
-        )
-        return {
-            "ok": True,
-            "track": {
-                "id": track.id,
-                "title": track.title,
-                "artist": track.artist,
-                "duration": track.duration,
-                "cover_url": track.cover_url,
-                "audio_url": track.audio_url,
-                "source_type": track.source_type,
-                "source_url": track.source_url,
-                "source_id": track.source_id,
-                "file_size": track.file_size,
-                "play_count": track.play_count,
-                "groups": getattr(track, "groups", []),
-                "group_ids": getattr(track, "group_ids", []),
-            },
-        }
-    except Exception as e:
-        logger.exception("B站音频下载入库失败: %s", e)
-        return JSONResponse({"ok": False, "error": str(e)})
-
-
-@router.post("/api/radio/upload")
-async def api_radio_upload(
-    request: Request,
-    db: Db,
-    file: UploadFile = File(...),
-    title: Annotated[str, Form()] = "",
-    artist: Annotated[str, Form()] = "",
-    group_id: Annotated[int | None, Form()] = None,
-):
-    if not _is_logged_in(request):
-        return JSONResponse({"ok": False, "error": "未登录"}, status_code=401)
-    try:
-        content = await file.read()
-        if not content:
-            return JSONResponse({"ok": False, "error": "上传的文件内容为空！"})
-        if len(content) > 50 * 1024 * 1024:
-            return JSONResponse({"ok": False, "error": "文件过大，单首音频请控制在 50MB 以内！"})
-        track = await save_uploaded_track(
-            content,
-            file.filename or "unknown.mp3",
-            db,
-            custom_title=title or None,
-            custom_artist=artist or None,
-            group_id=group_id,
-        )
-        return {
-            "ok": True,
-            "track": {
-                "id": track.id,
-                "title": track.title,
-                "artist": track.artist,
-                "duration": track.duration,
-                "cover_url": track.cover_url,
-                "audio_url": track.audio_url,
-                "source_type": track.source_type,
-                "source_id": track.source_id,
-                "file_size": track.file_size,
-                "groups": getattr(track, "groups", []),
-                "group_ids": getattr(track, "group_ids", []),
-            },
-        }
-    except Exception as e:
-        logger.exception("本地音频上传入库失败: %s", e)
-        return JSONResponse({"ok": False, "error": str(e)})
-
-
-@router.post("/api/radio/tracks/{track_id}/update")
-async def api_radio_track_update(request: Request, track_id: int, db: Db):
-    if not _is_logged_in(request):
-        return JSONResponse({"ok": False, "error": "未登录"}, status_code=401)
-    try:
-        data = await request.json()
-    except Exception:
-        data = {}
-    title = (data.get("title") or "").strip()
-    artist = (data.get("artist") or "").strip()
-    track = update_radio_track(track_id, title, artist, db)
-    if not track:
-        return JSONResponse({"ok": False, "error": "曲目不存在"}, status_code=404)
-    return {"ok": True}
-
-
-@router.post("/api/radio/tracks/{track_id}/delete")
-def api_radio_track_delete(request: Request, track_id: int, db: Db):
-    if not _is_logged_in(request):
-        return JSONResponse({"ok": False, "error": "未登录"}, status_code=401)
-    success = delete_radio_track(track_id, db)
-    if not success:
-        return JSONResponse({"ok": False, "error": "曲目不存在或删除失败"}, status_code=404)
-    return {"ok": True}
-
-
-@router.post("/api/radio/tracks/{track_id}/play")
-def api_radio_track_play(request: Request, track_id: int, db: Db):
-    if not _is_logged_in(request):
-        return JSONResponse({"ok": False}, status_code=401)
-    increment_track_play_count(track_id, db)
-    return {"ok": True}
 
 
 @router.get("/version", response_class=HTMLResponse)
@@ -2110,6 +1893,8 @@ def setup_admin(app: Starlette):
         path = request.url.path
         if path.startswith("/admin") and not path.startswith("/admin/login"):
             if not request.session.get("admin"):
+                if path.startswith("/admin/api/"):
+                    return JSONResponse({"error": "unauthorized"}, status_code=401)
                 return _login_redirect(request)
         return await call_next(request)
 
@@ -2121,13 +1906,5 @@ def setup_admin(app: Starlette):
             StaticFiles(directory=str(_STATIC_DIR)),
             name="admin-static",
         )
-    _STATIC_RADIO_DIR.mkdir(parents=True, exist_ok=True)
-    (_STATIC_RADIO_DIR / "tracks").mkdir(parents=True, exist_ok=True)
-    (_STATIC_RADIO_DIR / "covers").mkdir(parents=True, exist_ok=True)
-    app.mount(
-        "/static/radio",
-        StaticFiles(directory=str(_STATIC_RADIO_DIR)),
-        name="radio-static",
-    )
     return router
 

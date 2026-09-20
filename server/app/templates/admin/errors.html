@@ -3,17 +3,7 @@
 {% block title %}错误反馈 · {{ app_name }}{% endblock %}
 {% block body %}
 <div class="head">
-  <div>
-    <h1>错误反馈</h1>
-    <p>共 {{ total }} 条 · 客户端一键上报的真实异常堆栈与诊断信息</p>
-  </div>
-  <div style="display: flex; gap: 12px; align-items: center;">
-    <div class="status-tabs" style="display: flex; gap: 4px; background: #f0f2f5; padding: 3px; border-radius: 4px;">
-      <a href="/admin/errors{% if q %}?q={{ q }}{% endif %}" class="el-button btn-sm{% if not request.query_params.get('status') %} el-button--primary{% endif %}" style="border: none; padding: 4px 10px; height: 26px; font-size: 12px;">全部</a>
-      <a href="/admin/errors?status=pending{% if q %}&q={{ q }}{% endif %}" class="el-button btn-sm{% if request.query_params.get('status') == 'pending' %} el-button--primary{% endif %}" style="border: none; padding: 4px 10px; height: 26px; font-size: 12px;">待处理</a>
-      <a href="/admin/errors?status=resolved{% if q %}&q={{ q }}{% endif %}" class="el-button btn-sm{% if request.query_params.get('status') == 'resolved' %} el-button--primary{% endif %}" style="border: none; padding: 4px 10px; height: 26px; font-size: 12px;">已解决</a>
-      <a href="/admin/errors?status=ignored{% if q %}&q={{ q }}{% endif %}" class="el-button btn-sm{% if request.query_params.get('status') == 'ignored' %} el-button--primary{% endif %}" style="border: none; padding: 4px 10px; height: 26px; font-size: 12px;">已忽略</a>
-    </div>
+  <div style="display: flex; gap: 12px; align-items: center; flex-wrap: wrap;">
     <form class="search" method="get">
       {% if request.query_params.get('status') %}
       <input type="hidden" name="status" value="{{ request.query_params.get('status') }}">
@@ -25,6 +15,15 @@
       </div>
       <button class="el-button el-button--primary" type="submit">搜索</button>
     </form>
+    <div class="status-tabs" style="display: flex; gap: 4px; background: #f0f2f5; padding: 3px; border-radius: 4px;">
+      <a href="/admin/errors{% if q %}?q={{ q }}{% endif %}" class="el-button btn-sm{% if not request.query_params.get('status') %} el-button--primary{% endif %}" style="border: none; padding: 4px 10px; height: 26px; font-size: 12px;">全部</a>
+      <a href="/admin/errors?status=pending{% if q %}&q={{ q }}{% endif %}" class="el-button btn-sm{% if request.query_params.get('status') == 'pending' %} el-button--primary{% endif %}" style="border: none; padding: 4px 10px; height: 26px; font-size: 12px;">待处理</a>
+      <a href="/admin/errors?status=resolved{% if q %}&q={{ q }}{% endif %}" class="el-button btn-sm{% if request.query_params.get('status') == 'resolved' %} el-button--primary{% endif %}" style="border: none; padding: 4px 10px; height: 26px; font-size: 12px;">已解决</a>
+      <a href="/admin/errors?status=ignored{% if q %}&q={{ q }}{% endif %}" class="el-button btn-sm{% if request.query_params.get('status') == 'ignored' %} el-button--primary{% endif %}" style="border: none; padding: 4px 10px; height: 26px; font-size: 12px;">已忽略</a>
+    </div>
+  </div>
+  <div class="head-actions" style="display: flex; gap: 8px; align-items: center;">
+    <button type="button" class="el-button" onclick="resetTableLayout('admin_errors_table')" title="恢复表格的默认列宽与列顺序">重置表头</button>
     <form id="batchResolveForm" method="post" action="/admin/errors/batch-resolve" style="margin: 0;">
       {% if q %}<input type="hidden" name="q" value="{{ q }}">{% endif %}
       <button
@@ -249,8 +248,9 @@
     });
   };
 
-  if (window.Vue && window.VXETable) {
+  if (window.mountAdminGrid) {
     mountAdminGrid("#errors-grid", {
+      tableKey: "admin_errors_table",
       fallback: "#errors-ssr-table",
       data: window.errorRows,
       columns: [
@@ -286,6 +286,7 @@
           }
         },
         {
+          field: "action",
           title: "操作",
           width: 140,
           fixed: "right",

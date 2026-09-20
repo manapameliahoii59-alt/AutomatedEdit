@@ -205,8 +205,3 @@ def assert_client_version_supported(
             detail=f"当前客户端版本 (v{cur_ver}) 已停用，最低要求版本为 v{min_ver}，请升级后继续使用！",
         )
 
-
-# 兼容旧测试/导入名
-RELEASES_DIR = SERVER_ROOT / "release"
-VERSION_FILE = RELEASES_DIR / "version.json"
-

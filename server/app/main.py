@@ -10,7 +10,6 @@ from sqlalchemy.exc import OperationalError
 
 from app.admin_panel import setup_admin
 from app.database import Base, SessionLocal, engine
-import app.models  # noqa: F401
 from app.models import User
 from app.routers import admin, auth, client
 from app.services.client_version import get_releases_dir, STATIC_MOUNT_PATH
@@ -398,6 +397,43 @@ def _ensure_invite_columns_and_codes() -> None:
         logger.warning("补全用户邀请码异常: %s", exc)
 
 
+def _ensure_default_render_engine_v3() -> None:
+    """平滑升级存量用户的历史旧默认渲染引擎 current / v2 -> v3。"""
+    import json
+    from app.models import UserSettings
+
+    inspector = inspect(engine)
+    if "user_settings" not in inspector.get_table_names():
+        return
+    with SessionLocal() as db:
+        try:
+            rows = db.query(UserSettings).all()
+            changed = False
+            for row in rows:
+                if not row.data:
+                    continue
+                try:
+                    data = json.loads(row.data)
+                except Exception:
+                    continue
+                if not isinstance(data, dict):
+                    continue
+                clip_edit = data.get("clip_edit")
+                if (
+                    isinstance(clip_edit, dict)
+                    and clip_edit.get("clip_render_engine") in ("current", "v2")
+                ):
+                    clip_edit["clip_render_engine"] = "v3"
+                    row.data = json.dumps(data, ensure_ascii=False, separators=(",", ":"))
+                    changed = True
+            if changed:
+                db.commit()
+                logger.info("已将存量用户的旧默认渲染引擎平滑升级为 v3")
+        except Exception as exc:
+            db.rollback()
+            logger.warning("平滑升级渲染引擎至 v3 失败: %s", exc)
+
+
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     Base.metadata.create_all(bind=engine)
@@ -406,6 +442,7 @@ async def lifespan(_app: FastAPI):
     _ensure_user_machine_columns()
     _ensure_invite_columns_and_codes()
     _ensure_default_llm_channels_and_groups()
+    _ensure_default_render_engine_v3()
     interrupted = fail_interrupted_jobs()
     if interrupted:
         logger.warning("已将 %s 个未完成策划任务标记为失败（服务重启）", interrupted)

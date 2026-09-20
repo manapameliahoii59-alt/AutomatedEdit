@@ -2,19 +2,60 @@
 {% from "admin/macros.html" import pager %}
 {% block title %}使用记录 · {{ app_name }}{% endblock %}
 {% block body %}
-<div class="head">
-  <div>
-    <h1>使用记录</h1>
-    <p>共 {{ total }} 条</p>
-  </div>
-  <form class="search" method="get">
-    <div class="el-input">
+<div class="head head--search-only">
+  <form class="search" method="get" style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap;">
+    <div class="el-select{% if selected_user_id %} has-value{% endif %}" id="usage-user-select" style="width: 140px;">
+      <div class="el-select__wrapper">
+        <select name="user_id" class="el-select__inner">
+          <option value="">全部账号</option>
+          {% for u in users_list %}
+          <option value="{{ u.id }}" {% if selected_user_id == u.id %}selected{% endif %}>{{ u.username }}</option>
+          {% endfor %}
+        </select>
+        <span class="el-select__suffix">
+          <span class="el-select__caret el-select__arrow">
+            <svg viewBox="0 0 1024 1024" width="12" height="12" fill="currentColor">
+              <path d="M831.872 340.777a31.98 31.98 0 0 0-45.248 0L512 615.34 237.376 340.777a31.98 31.98 0 1 0-45.248 45.248l297.088 297.088a31.98 31.98 0 0 0 45.248 0l297.088-297.088a31.98 31.98 0 0 0 0-45.248z"/>
+            </svg>
+          </span>
+          <span class="el-select__caret el-select__clear" title="清空账号筛选">
+            <svg viewBox="0 0 1024 1024" width="12" height="12" fill="currentColor">
+              <path d="m512 439.68 174.08-174.08a51.2 51.2 0 1 1 72.32 72.32L584.32 512l174.08 174.08a51.2 51.2 0 0 1-72.32 72.32L512 584.32l-174.08 174.08a51.2 51.2 0 0 1-72.32-72.32L439.68 512 265.6 337.92a51.2 51.2 0 1 1 72.32-72.32L512 439.68z"/>
+            </svg>
+          </span>
+        </span>
+      </div>
+    </div>
+    <div class="el-date-editor el-date-editor--daterange" id="usage-date-picker" title="点击选择日期范围">
+      <span class="el-range__icon">
+        <svg viewBox="0 0 1024 1024" width="14" height="14" fill="currentColor">
+          <path d="M768 128V64a32 32 0 0 0-64 0v64H320V64a32 32 0 0 0-64 0v64H160a64 64 0 0 0-64 64v704a64 64 0 0 0 64 64h704a64 64 0 0 0 64-64V192a64 64 0 0 0-64-64h-96zm-576 96h64v64a32 32 0 0 0 64 0v-64h384v64a32 32 0 0 0 64 0v-64h64v128H192V224zm0 224h640v480H192V448z"/>
+        </svg>
+      </span>
+      <input type="text" readonly placeholder="开始日期" class="el-range-input el-range-input--start">
+      <span class="el-range-separator">至</span>
+      <input type="text" readonly placeholder="结束日期" class="el-range-input el-range-input--end">
+      <span class="el-range__close-icon" title="清空日期">
+        <svg viewBox="0 0 1024 1024" width="13" height="13" fill="currentColor">
+          <path d="m512 439.68 174.08-174.08a51.2 51.2 0 1 1 72.32 72.32L584.32 512l174.08 174.08a51.2 51.2 0 0 1-72.32 72.32L512 584.32l-174.08 174.08a51.2 51.2 0 0 1-72.32-72.32L439.68 512 265.6 337.92a51.2 51.2 0 1 1 72.32-72.32L512 439.68z"/>
+        </svg>
+      </span>
+      <input type="hidden" name="start_date" id="usage_start_date" value="{{ start_date }}">
+      <input type="hidden" name="end_date" id="usage_end_date" value="{{ end_date }}">
+    </div>
+    <div class="el-input" style="width: 200px;">
       <div class="el-input__wrapper">
         <input class="el-input__inner" name="q" value="{{ q }}" placeholder="搜索事件 / 详情">
       </div>
     </div>
     <button class="el-button el-button--primary" type="submit">搜索</button>
+    {% if selected_user_id or start_date or end_date or q %}
+    <a href="/admin/usage" class="el-button" style="text-decoration: none;">重置</a>
+    {% endif %}
   </form>
+  <div class="head-actions">
+    <button type="button" class="el-button" onclick="resetTableLayout('admin_usage_table')" title="恢复表格的默认列宽与列顺序">重置表头</button>
+  </div>
 </div>
 <div class="grid-card">
   <table class="ssr-table" id="usage-ssr-table">
@@ -75,12 +116,29 @@
   </table>
   <div id="usage-grid"></div>
 </div>
-{{ pager("/admin/usage", page, total_pages, total, q) }}
+{% set extra_query = ("&user_id=" ~ selected_user_id if selected_user_id else "") ~ ("&start_date=" ~ start_date if start_date else "") ~ ("&end_date=" ~ end_date if end_date else "") %}
+{{ pager("/admin/usage", page, total_pages, total, q, extra_query=extra_query) }}
 {% endblock %}
 {% block scripts %}
 <script>
-  if (window.Vue && window.VXETable) {
+  if (window.initSelect) {
+    initSelect('#usage-user-select', {
+      clearable: true,
+      autoSubmit: true
+    });
+  }
+
+  if (window.initDateRangePicker) {
+    initDateRangePicker('#usage-date-picker', {
+      startDate: '{{ start_date }}',
+      endDate: '{{ end_date }}',
+      autoSubmit: true
+    });
+  }
+
+  if (window.mountAdminGrid) {
     mountAdminGrid("#usage-grid", {
+      tableKey: "admin_usage_table",
       fallback: "#usage-ssr-table",
       data: {{ rows | tojson }},
       columns: [

@@ -22,8 +22,6 @@ SEARCH_EPISODES = 15
 MAX_TARGET_CLIPS_COUNT = 20
 DEFAULT_TARGET_CLIPS_COUNT = 15
 MIN_TARGET_CLIPS_COUNT = 5
-# 兼容：短片/长片客户端仍限 15；混合可达 20
-MAX_SHORT_LONG_CLIPS_COUNT = 15
 DEFAULT_GLOBAL_SPEED = 1.15
 MIN_GLOBAL_SPEED = 1.0
 MAX_GLOBAL_SPEED = 3.0
@@ -55,11 +53,6 @@ CUT_SPAN_MIN_SCORE = 85
 SAME_SHORT_START_RATIO_NUM = 2
 SAME_SHORT_START_RATIO_DEN = 5
 
-# 兼容旧引用
-TARGET_CLIPS_COUNT = DEFAULT_TARGET_CLIPS_COUNT
-MAX_DURATION_SECONDS = DEFAULT_MAX_DURATION_SECONDS
-GROUP_A_COUNT = GROUP_A_RATIO_NUM
-
 ProgressCallback = Callable[[dict[str, Any]], None]
 
 
@@ -69,15 +62,6 @@ def clamp_clip_count(value: Any) -> int:
     except (TypeError, ValueError):
         n = DEFAULT_TARGET_CLIPS_COUNT
     return max(MIN_TARGET_CLIPS_COUNT, min(MAX_TARGET_CLIPS_COUNT, n))
-
-
-def clamp_max_duration_seconds(value: Any) -> int:
-    """长片默认 clamp（300~900）；兼容旧调用。"""
-    try:
-        n = int(round(float(value)))
-    except (TypeError, ValueError):
-        n = DEFAULT_MAX_DURATION_SECONDS
-    return max(MIN_MAX_DURATION_SECONDS, min(MAX_MAX_DURATION_SECONDS, n))
 
 
 def clamp_plan_duration_seconds(value: Any, *, default: int) -> int:

@@ -219,7 +219,7 @@ def test_user_list_shows_deepseek_column(admin_client):
     assert "a@b.com" in response.text
     assert "ssr-table" in response.text
     assert "<td>a@b.com</td>" in response.text
-    assets = admin_client.get("/static/admin/vxe-table.umd.min.js")
+    assets = admin_client.get("/static/admin/admin.js")
     assert assets.status_code == 200
 
 
@@ -333,7 +333,8 @@ def test_unconfigured_keys_modal_and_api(admin_client):
     assert 'id="missing-keys-dialog"' in resp.text
     assert 'id="missing-keys-dismiss-today"' in resp.text
     assert 'admin_missing_keys_dismissed_today' in resp.text
-    assert 'min(880px, 96vw)' in resp.text
+    css_resp = admin_client.get("/static/admin/admin.css")
+    assert 'min(880px, 96vw)' in css_resp.text
     assert 'isEditPage' in resp.text
     assert "a@b.com" in resp.text
     assert "menu-missing-keys-badge" in resp.text
@@ -470,6 +471,48 @@ def test_admin_usage_page_renders_model_and_timing_columns(admin_client):
     assert "策划耗时" in resp.text
     assert "渲染耗时" in resp.text
     assert "总耗时" in resp.text
+    # 验证左上角冗余标题与重复数据条数已移除
+    assert "<h1>使用记录</h1>" not in resp.text
+    assert "<p>共 " not in resp.text
+    assert "head--search-only" in resp.text
+    # 验证查询框靠左排列样式规则生效
+    css_resp = admin_client.get("/static/admin/admin.css")
+    assert ".head.head--search-only" in css_resp.text
+    assert "justify-content: flex-start" in css_resp.text
+
+
+def test_admin_usage_engine_label_mapping_and_search(admin_client):
+    from app.admin_panel import engine
+    from app.models import UsageEvent
+    from sqlalchemy.orm import sessionmaker
+
+    Session = sessionmaker(bind=engine)
+    db = Session()
+    # 插入一条包含 current 引擎的事件
+    db.add(
+        UsageEvent(
+            user_id=1,
+            event="batch_all_render",
+            success=True,
+            duration_ms=50000,
+            meta="测试映射剧目",
+            render_engine="current",
+        )
+    )
+    db.commit()
+    db.close()
+
+    # 1. 验证常规列表页面中 current 被映射为 v2
+    resp = admin_client.get("/admin/usage")
+    assert resp.status_code == 200
+    assert "测试映射剧目" in resp.text
+    assert '"render_engine": "v2"' in resp.text or '<td>v2</td>' in resp.text
+    assert '"render_engine": "current"' not in resp.text
+
+    # 2. 验证搜索 q=v2 能够命中该条记录（别名搜索）
+    search_resp = admin_client.get("/admin/usage?q=v2")
+    assert search_resp.status_code == 200
+    assert "测试映射剧目" in search_resp.text
 
 
 def test_admin_login_page_renders_remember_me_and_theme(admin_client):

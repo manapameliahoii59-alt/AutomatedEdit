@@ -2,11 +2,7 @@
 {% from "admin/macros.html" import pager %}
 {% block title %}每日活动 · {{ app_name }}{% endblock %}
 {% block body %}
-<div class="head">
-  <div>
-    <h1>每日活动</h1>
-    <p>共 {{ total }} 条</p>
-  </div>
+<div class="head head--search-only">
   <form class="search" method="get">
     <div class="el-input">
       <div class="el-input__wrapper">
@@ -14,7 +10,11 @@
       </div>
     </div>
     <button class="el-button el-button--primary" type="submit">搜索</button>
+    {% if q %}<a href="/admin/activity" class="el-button" style="text-decoration: none;">重置</a>{% endif %}
   </form>
+  <div class="head-actions">
+    <button type="button" class="el-button" onclick="resetTableLayout('admin_activity_table')" title="恢复表格的默认列宽与列顺序">重置表头</button>
+  </div>
 </div>
 <div class="grid-card">
   <table class="ssr-table" id="activity-ssr-table">
@@ -55,8 +55,9 @@
 {% endblock %}
 {% block scripts %}
 <script>
-  if (window.Vue && window.VXETable) {
+  if (window.mountAdminGrid) {
     mountAdminGrid("#activity-grid", {
+      tableKey: "admin_activity_table",
       fallback: "#activity-ssr-table",
       data: {{ rows | tojson }},
       columns: [

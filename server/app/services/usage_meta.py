@@ -10,6 +10,21 @@ PLAN_MODE_LABELS: dict[str, str] = {
 
 _LABEL_TO_MODE = {v: k for k, v in PLAN_MODE_LABELS.items()}
 
+# 渲染引擎技术代号与对外展示版本名映射
+RENDER_ENGINE_LABELS: dict[str, str] = {
+    "v3": "v3",
+    "current": "v2",
+    "v2": "v2",
+    "legacy": "v1",
+    "v1": "v1",
+}
+
+
+def normalize_render_engine_label(value: str | None) -> str:
+    """将内部渲染引擎编码（如 current/legacy）转换为对齐桌面端的版本名（v1/v2/v3）。"""
+    key = str(value or "").strip().lower()
+    return RENDER_ENGINE_LABELS.get(key, key or "—")
+
 
 def normalize_plan_mode(value: str | None) -> str | None:
     mode = str(value or "").strip().lower()
