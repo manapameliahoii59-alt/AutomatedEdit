@@ -1,6 +1,6 @@
 import sys
 import threading
-from PySide6.QtCore import QRect, QTimer, Signal
+from PySide6.QtCore import QRect, QTimer, Signal, QThreadPool
 from PySide6.QtGui import QIcon
 from qfluentwidgets import FluentWindow, NavigationItemPosition, FluentIcon as FIF, qconfig
 
@@ -157,6 +157,11 @@ class MainWindow(FluentWindow):
     def closeEvent(self, event):
         access_control.unregister_session_expired_callback(self._on_session_expired_cb)
         UsageService.report_app_close()
+        # 守护后台设置同步与退出上报，最多等待 1000ms 刷入网络
+        try:
+            QThreadPool.globalInstance().waitForDone(1000)
+        except Exception:
+            pass
         super().closeEvent(event)
 
     def systemTitleBarRect(self, size):

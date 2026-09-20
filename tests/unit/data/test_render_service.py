@@ -214,13 +214,13 @@ class TestSceneCache:
         RenderService._optimize_cut("a.mp4", 10.0, cache)
         RenderService._optimize_cut("a.mp4", 10.0, cache)  # 同窗口复用
         assert len(calls) == 1
-        assert calls[0]["start_time"] == 7.0
-        assert calls[0]["end_time"] == 13.0
+        assert calls[0]["start_time"] == 8.0
+        assert calls[0]["end_time"] == 12.0
 
         RenderService._optimize_cut("a.mp4", 30.0, cache)  # 不同切点新窗口
         assert len(calls) == 2
-        assert calls[1]["start_time"] == 27.0
-        assert calls[1]["end_time"] == 33.0
+        assert calls[1]["start_time"] == 28.0
+        assert calls[1]["end_time"] == 32.0
 
 
 class _FakeScene:
@@ -937,8 +937,8 @@ def test_normalize_render_engine():
 
     assert RenderService.normalize_render_engine("legacy") == "legacy"
     assert RenderService.normalize_render_engine("CURRENT") == "current"
-    assert RenderService.normalize_render_engine("bogus") == "current"
-    assert RenderService.normalize_render_engine(None) == "current"
+    assert RenderService.normalize_render_engine("bogus") == "v3"
+    assert RenderService.normalize_render_engine(None) == "v3"
     # 支持 v3 / v2 / v1 别名
     assert RenderService.normalize_render_engine("v3") == "v3"
     assert RenderService.normalize_render_engine("chunk") == "v3"
@@ -1150,6 +1150,134 @@ def test_dynamic_plan_episodes_skips_unused_and_supports_above_10():
     assert "12.mp4" in episodes
     assert "15.mp4" in episodes
     assert speeds == {1.0, 1.2}
+
+
+def test_clear_project_cache(tmp_path):
+    from app.data.services.render_service import RenderService, CACHE_DIR_NAME
+
+    proj = tmp_path / "test_drama"
+    proj.mkdir()
+    cache_dir = proj / CACHE_DIR_NAME
+    cache_dir.mkdir()
+    dummy_file = cache_dir / "ep1_spd1p0.mp4"
+    dummy_file.write_bytes(b"dummy")
+
+    assert cache_dir.is_dir()
+    assert dummy_file.is_file()
+
+    # 执行清理
+    RenderService.clear_project_cache(str(proj))
+
+    # 验证目录已完全被移除
+    assert not cache_dir.exists()
+
+
+def test_v3_mid_in_prefix_temp_dir_lifecycle(tmp_path, monkeypatch):
+    """验证 v3 中间完整集流块被写入临时目录 ctx.prefix_dir，出片即焚，不污染原剧目磁盘。"""
+    from app.data.services.render_service import RenderService, RenderContext, ClipSegment
+
+    project_dir = tmp_path / "proj"
+    project_dir.mkdir()
+    prefix_dir = tmp_path / "prefix"
+    prefix_dir.mkdir()
+
+    ep1_src = project_dir / "1.mp4"
+    ep2_src = project_dir / "2.mp4"
+    ep3_src = project_dir / "3.mp4"
+    for ep in (ep1_src, ep2_src, ep3_src):
+        ep.write_bytes(b"dummy")
+
+    cached_ep1 = tmp_path / "cache_1.mp4"
+    cached_ep2 = tmp_path / "cache_2.mp4"
+    cached_ep3 = tmp_path / "cache_3.mp4"
+    for c in (cached_ep1, cached_ep2, cached_ep3):
+        c.write_bytes(b"dummy")
+
+    ctx = RenderContext(
+        project_path=str(project_dir),
+        target_w=720,
+        target_h=1280,
+        use_gpu=False,
+        enc_v="libx264",
+        prefix_dir=str(prefix_dir),
+    )
+    ctx.episode_cache[("1.mp4", 1.0)] = str(cached_ep1)
+    ctx.episode_cache[("2.mp4", 1.0)] = str(cached_ep2)
+    ctx.episode_cache[("3.mp4", 1.0)] = str(cached_ep3)
+
+    segments = [
+        ClipSegment("1.mp4", 5.0, None),
+        ClipSegment("2.mp4", 0.0, None),
+        ClipSegment("3.mp4", 0.0, 30.0),
+    ]
+
+    rendered_descs = []
+
+    def mock_render_segments(
+        ffmpeg,
+        ffprobe,
+        ctx,
+        segs,
+        inputs,
+        speed,
+        outro_path,
+        overlay_filters,
+        image_overlays,
+        output_path,
+        desc,
+        ffmpeg_kwargs,
+    ):
+        rendered_descs.append(desc)
+        with open(output_path, "wb") as f:
+            f.write(b"video_data")
+        return True, ""
+
+    def mock_run_ffmpeg(cmd, desc, **kwargs):
+        if "-f" in cmd and "concat" in cmd:
+            out_p = cmd[-1]
+            with open(out_p, "wb") as f:
+                f.write(b"final_video")
+            return True, ""
+        return True, ""
+
+    def mock_probe(ffprobe, path, cache=None):
+        if str(path) == str(out_final):
+            return 100.0
+        if "head" in str(path):
+            return 30.0
+        if "mid" in str(path):
+            return 40.0
+        if "tail" in str(path):
+            return 30.0
+        return 33.3
+
+    monkeypatch.setattr(RenderService, "_render_segments_output", mock_render_segments)
+    monkeypatch.setattr(RenderService, "_run_ffmpeg", mock_run_ffmpeg)
+    monkeypatch.setattr(RenderService, "_validate_output", lambda *args, **kwargs: True)
+    monkeypatch.setattr(RenderService, "_probe_duration", mock_probe)
+
+    out_final = str(tmp_path / "out.mp4")
+    ok, dur = RenderService._try_v3_compose(
+        ffmpeg="ffmpeg",
+        ffprobe="ffprobe",
+        ctx=ctx,
+        speed=1.0,
+        segments=segments,
+        outro_path=None,
+        overlay_filters=[],
+        image_overlays=[],
+        output_path=out_final,
+        ffmpeg_kwargs={},
+    )
+    assert ok is True
+
+    # 核心断言：验证 v3 中间完整集流块被创建在 prefix_dir 中，而不是 project_dir 下
+    assert len(ctx.v3_mid_cache) == 1
+    mid_path = list(ctx.v3_mid_cache.values())[0]
+    assert mid_path.startswith(str(prefix_dir))
+    assert os.path.basename(mid_path).startswith("ae_v3_mid_2")
+    assert not (project_dir / ".render_cache").exists()
+
 
 
 

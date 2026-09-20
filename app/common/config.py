@@ -1,7 +1,22 @@
 # coding:utf-8
 import datetime
+import os
+import sys
 
 from qfluentwidgets import (qconfig, QConfig, ConfigItem, BoolValidator, ColorConfigItem, RangeValidator)
+
+
+def _get_config_path() -> str:
+    """定位全局 config.json 绝对路径，防止编辑器不同工作目录启动导致配置错位。"""
+    if getattr(sys, "frozen", False):
+        base_dir = os.path.dirname(sys.executable)
+    else:
+        # app/common/config.py -> 项目根目录
+        base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    return os.path.join(base_dir, "config.json")
+
+
+CONFIG_FILE_PATH = _get_config_path()
 
 
 class MyQConfig(QConfig):
@@ -60,8 +75,8 @@ class Config(MyQConfig):
     clip_overlay_bake_png = ConfigItem(
         "Tools", "clip_overlay_bake_png", True, BoolValidator()
     )
-    # 渲染引擎：current=前缀复用+叠字预渲；legacy=兼容旧逻辑（关闭两者）
-    clip_render_engine = ConfigItem("Tools", "clip_render_engine", "current")
+    # 渲染引擎：v3=三段式分块流复用(极速推荐)；current/v2=前缀复用+叠字预渲；legacy=兼容旧逻辑全量重编
+    clip_render_engine = ConfigItem("Tools", "clip_render_engine", "v3")
     # 自动化剪辑：导入剧目后自动全选导入数据
     clip_auto_select_after_import = ConfigItem(
         "Tools", "clip_auto_select_after_import", True, BoolValidator()
@@ -136,7 +151,11 @@ FEEDBACK_URL = f"mailto:{AUTHOR_EMAIL}"
 
 cfg = Config()
 # qconfig.themeColor = ColorConfigItem("QFluentWidgets", "ThemeColor", '#70d5f3')
-qconfig.load('config.json', cfg)
+qconfig.load(CONFIG_FILE_PATH, cfg)
 # 历史版本错误把 p5 认作更快，现修正默认档位为 p3；若现有配置仍为旧默认值 p5，自动平滑升级为 p3
 if getattr(cfg.encode_nvenc_preset, "value", None) == "p5":
     qconfig.set(cfg.encode_nvenc_preset, "p3")
+# 旧默认引擎 current/v2 自动平滑升级为推荐的 v3
+if getattr(cfg.clip_render_engine, "value", None) in ("current", "v2"):
+    qconfig.set(cfg.clip_render_engine, "v3")
+

@@ -349,7 +349,7 @@ def bundle_config() -> None:
             "clip_export_seq_format": "pad2",
             "clip_last_import_dir": "",
             "clip_overlay_bake_png": True,
-            "clip_render_engine": "current",
+            "clip_render_engine": "v3",
             "clip_trim_ep1_continued": True,
             "overlay_title_json": "",
             "overlay_disclaimer_json": "",

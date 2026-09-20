@@ -108,3 +108,8 @@ changdu_data/
 *.pem
 *.aedump
 tools/keys/
+*.db
+server/*.db
+server/.venv/
+*.heapsnapshot
+server/app/static/admin/custom_bg.*

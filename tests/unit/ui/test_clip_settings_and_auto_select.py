@@ -308,9 +308,10 @@ class TestClipEditAutoSelectAfterImport:
         fresh_cfg = Config()
         # 1. 混合模式策略版本 默认 "v2"
         assert fresh_cfg.plan_mixed_strategy.defaultValue == "v2"
-        # 2. 渲染引擎 默认 "current"（UI 映射为 "v2"）
-        assert fresh_cfg.clip_render_engine.defaultValue == "current"
-        assert dict(RENDER_ENGINE_CHOICES).get("current") == "v2"
+        # 2. 渲染引擎 默认 "v3"（极速模式/三段式分块流复用，推荐）
+        assert fresh_cfg.clip_render_engine.defaultValue == "v3"
+        assert dict(RENDER_ENGINE_CHOICES).get("v3") == "v3"
+        assert RenderService.normalize_render_engine("v3") == "v3"
         assert RenderService.normalize_render_engine("v2") == "current"
         # 3. 去掉未完待续 默认为 开 (True)
         assert fresh_cfg.clip_trim_ep1_continued.defaultValue is True

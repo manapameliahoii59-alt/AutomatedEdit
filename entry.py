@@ -5,6 +5,10 @@ import traceback
 
 # --- 启动诊断 / 崩溃日志（无控制台时尤为重要；仅用标准库）---
 _APP_DIR = os.path.dirname(os.path.abspath(__file__))
+try:
+    os.chdir(_APP_DIR)
+except Exception:
+    pass
 _CRASH_LOG = os.path.join(_APP_DIR, "crash.log")
 _STARTUP_LOG = os.path.join(_APP_DIR, "startup.log")
 _STARTUP_T0 = time.perf_counter()
@@ -131,7 +135,7 @@ _startup_log("import torch done")
 
 _splash.set_text("正在加载界面…")
 _startup_log("import PySide6 begin")
-from PySide6.QtCore import Qt, QTranslator  # noqa: E402
+from PySide6.QtCore import Qt, QTranslator, QThreadPool  # noqa: E402
 from PySide6.QtGui import QFont  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
 _startup_log("import PySide6 done")
@@ -160,6 +164,7 @@ translator = QTranslator()
 translator.load(":/resource/i18n/zh.qm")
 app.installTranslator(translator)
 app.aboutToQuit.connect(shutdown_playwright_worker)
+app.aboutToQuit.connect(lambda: QThreadPool.globalInstance().waitForDone(1500))
 _startup_log("QApplication setup done")
 
 

@@ -214,7 +214,7 @@ class ClipEditPage(ScrollArea):
 
         layout.addWidget(
             BodyLabel(
-                "导入剧集后，依次执行「识别视频 → 策划 → 动态渲染」三步。",
+                "导入剧集，依次执行「识别 → 策划 → 渲染」三步。",
                 self.scroll_widget,
             )
         )
@@ -507,7 +507,7 @@ class ClipEditPage(ScrollArea):
 
     def _preview_project_name(self) -> str:
         projects = self.vm.get_projects()
-        return projects[0].name if projects else "剧名示例"
+        return projects[0].name if projects else "剧名"
 
     def _update_export_name_preview(self, _text: str = "") -> None:
         tag = self.export_name_tag_input.text().strip()
@@ -986,10 +986,10 @@ class ClipEditPage(ScrollArea):
         qconfig.set(cfg.clip_auto_retry_failed, auto_retry)
         resolution = dlg.result_resolution()
         qconfig.set(cfg.encode_output_resolution, resolution)
-        self.vm.save_output_resolution(resolution)
         render_engine = dlg.result_render_engine()
         qconfig.set(cfg.clip_render_engine, render_engine)
         self.vm.save_clip_settings(
+            output_resolution=resolution,
             encode_enable_gpu=enable_gpu,
             clip_trim_ep1_continued=enabled,
             clip_overlay_bake_png=bake_png,

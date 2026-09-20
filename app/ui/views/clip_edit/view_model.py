@@ -145,41 +145,27 @@ class ClipEditViewModel(ViewModel):
 
     def save_output_resolution(self, resolution: str) -> None:
         """本地已写入 cfg 后，后台同步成片分辨率到服务端。"""
-        api = get_api()
-        if not api._token:
-            return
-        patch = clip_edit_settings_patch(output_resolution=resolution)
-        if not patch.get("clip_edit"):
-            return
-
-        def _do():
-            get_api().update_settings(patch)
-            return True
-
-        def _on_error(msg: str):
-            self.errorOccurred.emit(
-                sanitize_ui_error(
-                    msg, stage="settings_sync", friendly="成片分辨率同步失败，请检查网络后重试"
-                )
-            )
-
-        task_manager.submit_task(_do, on_success=lambda _ok: None, on_error=_on_error)
+        self.save_clip_settings(output_resolution=resolution)
 
     def save_clip_settings(
         self,
         *,
+        output_resolution: str | None = None,
         encode_enable_gpu: bool | None = None,
         clip_trim_ep1_continued: bool | None = None,
         clip_overlay_bake_png: bool | None = None,
         clip_auto_select_after_import: bool | None = None,
         clip_auto_retry_failed: bool | None = None,
         clip_render_engine: str | None = None,
+        on_success=None,
+        on_error=None,
     ) -> None:
-        """本地已写入 cfg 后，后台同步双向设置到服务端（不含编码档位）。"""
+        """本地已写入 cfg 后，后台同步双向设置到服务端（原子合并提交）。"""
         api = get_api()
         if not api._token:
             return
         patch = clip_edit_settings_patch(
+            output_resolution=output_resolution,
             encode_enable_gpu=encode_enable_gpu,
             clip_trim_ep1_continued=clip_trim_ep1_continued,
             clip_overlay_bake_png=clip_overlay_bake_png,
@@ -194,14 +180,20 @@ class ClipEditViewModel(ViewModel):
             get_api().update_settings(patch)
             return True
 
-        def _on_error(msg: str):
+        def _handle_error(msg: str):
+            if on_error:
+                on_error(msg)
             self.errorOccurred.emit(
                 sanitize_ui_error(
                     msg, stage="settings_sync", friendly="剪辑设置同步失败，请检查网络后重试"
                 )
             )
 
-        task_manager.submit_task(_do, on_success=lambda _ok: None, on_error=_on_error)
+        def _handle_success(res):
+            if on_success:
+                on_success(res)
+
+        task_manager.submit_task(_do, on_success=_handle_success, on_error=_handle_error)
 
     def save_export_dir(self, folder: str) -> None:
         """导出目录只上传不下载；本地已写入 cfg 后同步到服务端。"""

@@ -22,7 +22,7 @@ MIN_CUT_POINT = 0.1
 MIN_CUT_DURATION = 0.3
 CACHE_DIR_NAME = ".render_cache"
 # 切点优化只扫 AI 切点前后若干秒，避免整集 ContentDetector
-SCENE_SCAN_RADIUS = 3.0
+SCENE_SCAN_RADIUS = 2.0
 # 切点吸附下限：AI 切点 = 台词结束 + 尾垫（服务端 POST_CUT_PAD_SECONDS），
 # 吸附不得早于台词结束点，否则最后一句话会被剪到一半
 CUT_SPEECH_PAD_SECONDS = 0.3
@@ -87,7 +87,7 @@ RENDER_ENGINE_CHOICES: tuple[tuple[str, str], ...] = (
     ("current", "v2"),
     ("legacy", "v1"),
 )
-_DEFAULT_RENDER_ENGINE = "current"
+_DEFAULT_RENDER_ENGINE = "v3"
 _RENDER_ENGINE_SET = {k for k, _ in RENDER_ENGINE_CHOICES}
 # 固定档位尺寸（宽, 高），按画幅方向取用
 _RESOLUTION_DIMS = {
@@ -376,7 +376,11 @@ class RenderService:
                     elif should_cancel and should_cancel():
                         raise RenderCancelled("渲染已取消")
             finally:
-                prefix_dir_ctx.cleanup()
+                try:
+                    prefix_dir_ctx.cleanup()
+                except Exception:
+                    pass
+                RenderService.clear_project_cache(project.folder_path)
             compose_sec = time.perf_counter() - t_compose0
             total_sec = time.perf_counter() - t_all
             _safe_print(
@@ -600,7 +604,11 @@ class RenderService:
                     flush=True,
                 )
         finally:
-            prefix_dir_ctx.cleanup()
+            try:
+                prefix_dir_ctx.cleanup()
+            except Exception:
+                pass
+            RenderService.clear_project_cache(project_path)
 
         total_sec = time.perf_counter() - t0
         compose_sec = max(0.0, total_sec - cache_sec)
@@ -733,6 +741,19 @@ class RenderService:
         path = os.path.join(project_path, CACHE_DIR_NAME)
         os.makedirs(path, exist_ok=True)
         return path
+
+    @staticmethod
+    def clear_project_cache(project_path: str) -> None:
+        """清理剧目目录下的 .render_cache 临时缓存目录（释放磁盘空间）。"""
+        if not project_path or not os.path.isdir(project_path):
+            return
+        cache_dir = os.path.join(project_path, CACHE_DIR_NAME)
+        if os.path.isdir(cache_dir):
+            try:
+                shutil.rmtree(cache_dir, ignore_errors=True)
+            except Exception:
+                pass
+
 
     @staticmethod
     def _cache_file_path(
@@ -2040,12 +2061,10 @@ class RenderService:
                 stem = os.path.splitext(os.path.basename(ep))[0]
                 spd_tag = str(speed).replace(".", "p")
                 mid_filename = (
-                    f"v3_mid_{stem}_spd{spd_tag}_{ctx.target_w}x{ctx.target_h}"
+                    f"ae_v3_mid_{stem}_spd{spd_tag}_{ctx.target_w}x{ctx.target_h}"
                     f"_{enc_tag}_{overlay_digest}_m{mtime}.mp4"
                 )
-                mid_path = os.path.join(
-                    RenderService._cache_dir(ctx.project_path), mid_filename
-                )
+                mid_path = os.path.join(ctx.prefix_dir, mid_filename)
 
                 if not (
                     os.path.isfile(mid_path)
