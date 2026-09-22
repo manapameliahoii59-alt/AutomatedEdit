@@ -67,6 +67,7 @@ class ClipEditViewModel(ViewModel):
     batchExecutionStarted = Signal(object)  # BatchExecutionSummary
     batchExecutionUpdated = Signal(object, str, int, int)  # record, action_text, current_index, total_count
     batchExecutionFinished = Signal(object)  # BatchExecutionSummary
+    quotaExceeded = Signal(str, str, int, int)  # action, message, current_count, limit
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -552,9 +553,22 @@ class ClipEditViewModel(ViewModel):
     def _ensure_can_clip(self, project_name: str) -> bool:
         allowed, message = QuotaService.instance().check_remote("clip", project_name)
         if not allowed:
-            self.errorOccurred.emit(message)
+            if "今日剪辑剧目数已达上限" in message:
+                quota = QuotaService.instance().get_quota()
+                self.quotaExceeded.emit("clip", message, quota.clip_count, quota.clip_limit)
+            else:
+                self.errorOccurred.emit(message)
             return False
         return True
+
+    def check_batch_clip_quota(self, project_ids: list[str]) -> tuple[bool, str, int, int]:
+        """批量检查剪辑配额。返回 (allowed, message, remaining, total_new_needed)。"""
+        projects = [p for p in self._projects if p.id in project_ids]
+        names = [p.name for p in projects if p.name]
+        allowed, message, remaining = QuotaService.instance().can_clip_batch(names, refresh=True)
+        quota = QuotaService.instance().get_quota()
+        new_names = [n for n in names if not QuotaService.instance()._drama_in_list(n, quota.clipped_dramas)]
+        return allowed, message, remaining, len(new_names)
 
     def _ensure_access_allowed(self) -> bool:
         if access_control.is_blocked():

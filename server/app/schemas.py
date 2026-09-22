@@ -776,6 +776,9 @@ class InviteInfoOut(BaseModel):
     invitee_count: int
     total_reward_clips: int
     current_reward_per_invite: int
+    reward_valid_days: int = 30
+    max_permanent_clip_limit: int = 15
+    active_bonus_clips: int = 0
     max_rewards_per_user: int
     is_enabled: bool
     daily_clip_limit: int
@@ -788,6 +791,8 @@ class InviteBindRequest(BaseModel):
 class InviteBindResponse(BaseModel):
     ok: bool
     reward: int
+    valid_days: int = 30
+    expires_at: str | None = None
     new_clip_limit: int
     inviter_username: str
     message: str

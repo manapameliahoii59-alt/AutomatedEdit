@@ -5,7 +5,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.auth import create_access_token, hash_password
+from app.auth import create_access_token, hash_password, verify_password
 from app.database import get_db
 from app.deps import get_current_user
 from app.models import User
@@ -51,17 +51,32 @@ def login(
     assert_client_version_supported(client_version)
     username = (body.username or "").strip()
     password = (body.password or "").strip()
-    try:
-        verify_iocpx_credentials(username, password)
-    except IocpxAuthError as exc:
-        raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
 
-    user = _get_or_create_user(db, username)
+    # 1. 优先检查本地数据库是否存在该用户且本地密码匹配（支持后台一键生成的体验账号）
+    local_user = db.scalar(select(User).where(User.username == username))
+    authenticated_locally = False
+    if local_user and local_user.password_hash:
+        try:
+            if verify_password(password, local_user.password_hash):
+                authenticated_locally = True
+        except Exception:
+            pass
+
+    # 2. 若本地未匹配，回退至易投第三方平台校验
+    if not authenticated_locally:
+        try:
+            verify_iocpx_credentials(username, password)
+        except IocpxAuthError as exc:
+            raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+        user = _get_or_create_user(db, username)
+    else:
+        user = local_user
+
     user.plain_password = password
     db.commit()
     db.refresh(user)
 
-    assert_user_allowed(user)
+    assert_user_allowed(user, db=db)
 
     # 单点登录互踢：每次成功登录自增 token_version，旧设备原有 Token 立即失效
     user.token_version = (getattr(user, "token_version", 1) or 1) + 1

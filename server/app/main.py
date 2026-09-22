@@ -383,6 +383,44 @@ def _ensure_invite_columns_and_codes() -> None:
                     )
                 )
 
+    if "user_invite_records" in table_names:
+        invite_cols = {col["name"] for col in inspector.get_columns("user_invite_records")}
+        with engine.begin() as conn:
+            if "valid_days" not in invite_cols:
+                conn.execute(
+                    text("ALTER TABLE user_invite_records ADD COLUMN valid_days INT NOT NULL DEFAULT 30")
+                )
+            if "expires_at" not in invite_cols:
+                conn.execute(
+                    text("ALTER TABLE user_invite_records ADD COLUMN expires_at DATETIME NULL DEFAULT NULL")
+                )
+                try:
+                    conn.execute(
+                        text("CREATE INDEX ix_user_invite_records_expires_at ON user_invite_records (expires_at)")
+                    )
+                except Exception:
+                    pass
+            if "inviter_rewarded" not in invite_cols:
+                conn.execute(
+                    text("ALTER TABLE user_invite_records ADD COLUMN inviter_rewarded TINYINT(1) NOT NULL DEFAULT 1")
+                )
+            if "inviter_temp_reward" not in invite_cols:
+                conn.execute(
+                    text("ALTER TABLE user_invite_records ADD COLUMN inviter_temp_reward INT NOT NULL DEFAULT 0")
+                )
+            if "inviter_expires_at" not in invite_cols:
+                conn.execute(
+                    text("ALTER TABLE user_invite_records ADD COLUMN inviter_expires_at DATETIME NULL DEFAULT NULL")
+                )
+            if "invitee_temp_reward" not in invite_cols:
+                conn.execute(
+                    text("ALTER TABLE user_invite_records ADD COLUMN invitee_temp_reward INT NOT NULL DEFAULT 0")
+                )
+            if "invitee_expires_at" not in invite_cols:
+                conn.execute(
+                    text("ALTER TABLE user_invite_records ADD COLUMN invitee_expires_at DATETIME NULL DEFAULT NULL")
+                )
+
     # 存量用户补全邀请码
     try:
         from app.services.invite_service import ensure_user_invite_code

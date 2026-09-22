@@ -1286,7 +1286,11 @@ def _thinking_params(
     - 智谱 GLM-5.x 为始终思考模型，不支持 disabled（HTTP 400 code=1210），
       须显式 enabled 并用 reasoning_effort 压到 low 档；
     - 其余模型按用户开关控制：开启则 enabled，未开启则 disabled（默认关闭以提速）；
-    - 硅基流动 / 通义千问在未开启思考时不传 thinking 参数，避免网关入参校验报错。
+    - 通义千问（DashScope/Qwen 系列）：若未显式下发 thinking 参数，
+      网关对 Qwen3/Omni 等具备深度推理能力的模型会默认开启思考（CoT），在长剧本策划时
+      会产生数千 token 思考过程，导致单次调用耗时 3~5 分钟并触发读取超时（HTTP read timeout）；
+      因此未开启时必须显式下发 disabled 和 enable_thinking=False 以确保极速生成；开启时显式开启；
+    - 硅基流动若未开启思考则不传 thinking 参数，保持网关兼容性。
     """
     if provider_key == "zhipu" and str(model_name).strip().lower().startswith("glm-5"):
         return {
@@ -1294,10 +1298,16 @@ def _thinking_params(
             "reasoning_effort": ZHIPU_REASONING_EFFORT,
         }
     if thinking_enabled:
-        return {"thinking": {"type": "enabled"}}
-    if provider_key in ("siliconflow", "tongyi"):
+        params = {"thinking": {"type": "enabled"}}
+        if provider_key == "tongyi":
+            params["enable_thinking"] = True
+        return params
+    if provider_key == "siliconflow":
         return {}
-    return {"thinking": {"type": "disabled"}}
+    params = {"thinking": {"type": "disabled"}}
+    if provider_key == "tongyi":
+        params["enable_thinking"] = False
+    return params
 
 
 def _call_deepseek(
@@ -1347,6 +1357,8 @@ def _call_deepseek(
             "response_format": {"type": "json_object"},
             "max_tokens": MAX_OUTPUT_TOKENS,
         }
+        if "omni" in str(model_name).lower():
+            payload["modalities"] = ["text"]
         # thinking 策略：默认关闭提速；按开关控制开启/关闭，始终思考模型强制开启
         payload.update(
             _thinking_params(

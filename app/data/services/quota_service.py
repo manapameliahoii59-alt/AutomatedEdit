@@ -87,6 +87,15 @@ class QuotaService:
     def _deny_message(self) -> str:
         return access_control.random_error()
 
+    def _quota_exceeded_message(self, action: str) -> str:
+        if action == "clip" and self._quota.clip_limit > 0:
+            return f"今日剪辑剧目数已达上限（{self._quota.clip_limit} 部）"
+        if action == "plan" and self._quota.plan_limit > 0:
+            return f"今日策划剧目数已达上限（{self._quota.plan_limit} 部）"
+        if action == "download" and self._quota.download_limit > 0:
+            return f"今日下载剧目数已达上限（{self._quota.download_limit} 部）"
+        return self._deny_message()
+
     def can_plan(self, drama_name: str, *, refresh: bool = True) -> tuple[bool, str]:
         quota = self.refresh() if refresh else self._quota
         drama_name = (drama_name or "").strip()
@@ -95,7 +104,7 @@ class QuotaService:
         if self._drama_in_list(drama_name, quota.planned_dramas):
             return True, ""
         if quota.plan_limit > 0 and quota.plan_count >= quota.plan_limit:
-            return False, self._deny_message()
+            return False, f"今日策划剧目数已达上限（{quota.plan_limit} 部）"
         return True, ""
 
     def can_clip(self, drama_name: str, *, refresh: bool = True) -> tuple[bool, str]:
@@ -106,14 +115,38 @@ class QuotaService:
         if self._drama_in_list(drama_name, quota.clipped_dramas):
             return True, ""
         if quota.clip_limit > 0 and quota.clip_count >= quota.clip_limit:
-            return False, self._deny_message()
+            return False, f"今日剪辑剧目数已达上限（{quota.clip_limit} 部）"
         return True, ""
+
+    def can_clip_batch(
+        self, drama_names: list[str] | None = None, *, refresh: bool = True
+    ) -> tuple[bool, str, int]:
+        """批量检查剪辑配额。返回 (allowed, message, remaining_count)。"""
+        quota = self.refresh() if refresh else self._quota
+        names = []
+        for raw in drama_names or []:
+            text = (raw or "").strip()
+            if text and text not in names:
+                names.append(text)
+        new_names = [n for n in names if not self._drama_in_list(n, quota.clipped_dramas)]
+        if quota.clip_limit <= 0:
+            return True, "", 999999
+        remaining = max(0, quota.clip_limit - quota.clip_count)
+        if not new_names:
+            return remaining > 0 or quota.clip_limit <= 0, "", remaining
+        if quota.clip_count + len(new_names) > quota.clip_limit:
+            if remaining == 0:
+                msg = f"今日剪辑剧目数已达上限（{quota.clip_limit} 部）"
+            else:
+                msg = f"今日剩余剪辑额度为 {remaining} 部，无法处理选中的 {len(new_names)} 部新剧目"
+            return False, msg, remaining
+        return True, "", remaining
 
     def can_download(self, drama_names: list[str] | None = None, *, refresh: bool = True) -> tuple[bool, str]:
         """检查是否允许下载；可传入本批剧名，一并校验每日上限。"""
         quota = self.refresh() if refresh else self._quota
         if not quota.download_enabled:
-            return False, self._deny_message()
+            return False, "当前账号未开通视频下载功能"
         names = []
         for raw in drama_names or []:
             text = (raw or "").strip()
@@ -121,7 +154,7 @@ class QuotaService:
                 names.append(text)
         if not names:
             if not quota.can_download:
-                return False, self._deny_message()
+                return False, self._quota_exceeded_message("download")
             return True, ""
         new_names = [
             n for n in names if not self._drama_in_list(n, quota.downloaded_dramas)
@@ -130,7 +163,7 @@ class QuotaService:
             quota.download_limit > 0
             and quota.download_count + len(new_names) > quota.download_limit
         ):
-            return False, self._deny_message()
+            return False, f"今日下载剧目数已达上限（{quota.download_limit} 部）"
         return True, ""
 
     def check_remote(self, action: str, drama_name: str) -> tuple[bool, str]:
@@ -143,8 +176,13 @@ class QuotaService:
                 self._quota = DailyQuota.from_api(data["quota"])
             if data.get("allowed"):
                 return True, ""
-            return False, self._deny_message()
+            # 安全白名单校验：仅当服务端明确返回已知的配额超限文本时展示，防止泄露未授权或底层报错
+            raw_msg = str(data.get("message") or "").strip()
+            if raw_msg.startswith(("今日剪辑剧目数已达上限", "今日策划剧目数已达上限", "今日下载剧目数已达上限", "当前账号未开通")):
+                return False, raw_msg
+            return False, self._quota_exceeded_message(action)
         except ApiError as exc:
+            # 403（账号被后台封禁/停用/到期）或 401（未登录/失效），坚决保持原有的混淆报错，不暴露内部原因
             if exc.status_code in {403, 429}:
                 return False, self._deny_message()
             return True, ""

@@ -146,6 +146,12 @@ def test_plan_llm_preset_roundtrip():
     assert tym == "qwen3.7-flash"
     assert plan_llm_preset_label(typ, tym) == "通义千问 / qwen3.7-flash"
 
+    ty_omni = encode_plan_llm_preset("tongyi", "qwen3.8-omni-flash")
+    ty_op, ty_om = decode_plan_llm_preset(ty_omni)
+    assert ty_op == "tongyi"
+    assert ty_om == "qwen3.8-omni-flash"
+    assert plan_llm_preset_label(ty_op, ty_om) == "通义千问 / Qwen3.8-Omni-Flash"
+
 
 def test_plan_llm_preset_deepseek_flash_normalized():
     from app.services.plan_secrets import (
@@ -450,10 +456,31 @@ def test_call_deepseek_payload_by_provider(monkeypatch):
     )
     assert err9 is None
     assert captured["json"].get("thinking") == {"type": "enabled"}
+    assert captured["json"].get("enable_thinking") is True
+    assert captured["headers"]["Authorization"] == "Bearer sk-x"
+
+    content10, _e10, err10 = plan_director._call_deepseek(
+        api_url="https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions",
+        model_name="qwen3.8-omni-flash",
+        compressed_script="x",
+        count=1,
+        group_type="U",
+        key_pool=pool,
+        min_duration_seconds=150,
+        max_duration_seconds=300,
+        plan_mode="long",
+        provider="tongyi",
+        llm_session_id="",
+        thinking_enabled=False,
+    )
+    assert err10 is None
+    assert captured["json"].get("thinking") == {"type": "disabled"}
+    assert captured["json"].get("enable_thinking") is False
+    assert captured["json"].get("modalities") == ["text"]
     assert captured["headers"]["Authorization"] == "Bearer sk-x"
 
 
-def test_resolve_plan_llm_config_siliconflow_and_tongyi():
+def test_resolve_plan_llm_config_siliconflow_and_tongyi(monkeypatch):
     from app.services.plan_secrets import (
         normalize_plan_llm_provider,
         normalize_plan_llm_model,
@@ -523,5 +550,64 @@ def test_resolve_plan_llm_config_siliconflow_and_tongyi():
     assert cfg_ty["keys"] == "ds-fallback-key"
     assert cfg_ty["thinking_enabled"] is True
     assert "dashscope.aliyuncs.com" in cfg_ty["api_url"]
+
+    # 通义千问：环境变量 DASHSCOPE_API_KEY 回退与 omni 模型 modalities 校验
+    import os
+    import queue
+    from unittest.mock import patch
+    from app.services import plan_director
+
+    monkeypatch.setenv("DASHSCOPE_API_KEY", "sk-env-dashscope-123")
+
+    class _MockTYSecretEnv:
+        plan_decrypt_key = "abc"
+        plan_llm_provider = "tongyi"
+        plan_llm_model = "qwen3.8-omni-flash"
+        deepseek_keys = ""
+        dashscope_key = ""
+        plan_thinking_enabled = False
+
+    class _MockDbTYEnv:
+        def query(self, *_args):
+            return self
+        def filter(self, *_args):
+            return self
+        def first(self):
+            return _MockTYSecretEnv()
+
+    cfg_omni = resolve_plan_llm_config(_MockDbTYEnv(), 3)
+    assert cfg_omni["model"] == "qwen3.8-omni-flash"
+    assert cfg_omni["keys"] == "sk-env-dashscope-123"
+
+    # 验证调用 _call_deepseek 时自动带上 modalities=["text"]
+    captured_omni: dict = {}
+    def _fake_client_post_omni(_self, url, headers=None, json=None):
+        captured_omni["url"] = url
+        captured_omni["headers"] = headers
+        captured_omni["json"] = json
+        class _R:
+            status_code = 200
+            def json(self):
+                return {"choices": [{"message": {"content": '{"starts":[],"ends":[]}'}}]}
+        return _R()
+
+    omni_pool = queue.Queue()
+    omni_pool.put("sk-omni-key")
+    with patch("httpx.Client.post", _fake_client_post_omni):
+        content, _elapsed, err = plan_director._call_deepseek(
+            api_url="https://maas.qianwenaiapi.com/compatible-mode/v1/chat/completions",
+            model_name="qwen3.8-omni-flash",
+            compressed_script="script_text",
+            count=1,
+            group_type="A",
+            key_pool=omni_pool,
+            min_duration_seconds=60,
+            max_duration_seconds=120,
+            provider="tongyi",
+        )
+    assert err is None
+    assert captured_omni["json"].get("modalities") == ["text"]
+    assert captured_omni["json"].get("model") == "qwen3.8-omni-flash"
+    assert captured_omni["headers"]["Authorization"] == "Bearer sk-omni-key"
 
 

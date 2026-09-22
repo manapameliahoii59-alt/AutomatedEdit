@@ -58,14 +58,29 @@
 
     window.resetTableLayout = async function (tableKey) {
       if (!tableKey) return;
-      const askConfirm = window["conf" + "irm"];
-      if (askConfirm && !askConfirm("确定恢复该表格的默认列宽与排序吗？")) return;
+      const ask = window.showAdminConfirm
+        ? await window.showAdminConfirm({
+            title: "恢复出厂设置",
+            content: "确定恢复该表格的默认列宽、列排序与显隐提示设置吗？",
+            confirmText: "确定恢复",
+            cancelText: "取消",
+            type: "danger",
+          })
+        : confirm("确定恢复该表格的默认列宽、列排序与显隐提示设置吗？");
+      if (!ask) return;
       try {
+        localStorage.removeItem("admin_grid_cfg_" + tableKey);
         localStorage.setItem("admin_grid_cfg_" + tableKey, "[]");
       } catch (e) {}
       try {
         await fetch("/admin/api/table-config/" + encodeURIComponent(tableKey), { method: "DELETE" });
-        window.location.reload();
+        const grid = (window._adminGridInstances && window._adminGridInstances[tableKey]) || window._currentAdminGridInstance;
+        if (grid && grid.resetToDefault) {
+          grid.resetToDefault();
+          if (window.showAdminToast) window.showAdminToast("已恢复出厂默认表头设置", "success");
+        } else {
+          window.location.reload();
+        }
       } catch (e) {
         console.warn("重置失败", e);
       }
@@ -577,22 +592,34 @@
           return Math.max(200, Math.floor(host.clientHeight) - 2) + "px";
         };
 
-        let activeColumns = (options.columns || []).map((c) => Object.assign({}, c));
+        const initialColumns = (options.columns || []).map((c) => Object.assign({}, c));
+        let activeColumns = initialColumns.map((c) => Object.assign({}, c));
         const tableKey = options.tableKey ? String(options.tableKey).trim() : null;
         const storageKey = tableKey ? "admin_grid_cfg_" + tableKey : null;
 
         const applySavedColumns = function (savedCols) {
           if (!Array.isArray(savedCols) || !savedCols.length) return false;
+          const nonFieldLeading = [];
           const colMap = new Map();
           activeColumns.forEach((c) => {
-            if (c && c.field) colMap.set(c.field, Object.assign({}, c));
+            if (c && c.field) {
+              colMap.set(c.field, Object.assign({}, c));
+            } else if (c) {
+              nonFieldLeading.push(Object.assign({}, c));
+            }
           });
-          const merged = [];
+          const merged = [...nonFieldLeading];
           savedCols.forEach((sc) => {
             if (sc && sc.field && colMap.has(sc.field)) {
               const col = colMap.get(sc.field);
               if (sc.width && typeof sc.width === "number" && sc.width > 20) {
                 col.width = sc.width;
+              }
+              if (sc.visible !== undefined) {
+                col.visible = Boolean(sc.visible);
+              }
+              if (sc.showOverflow !== undefined) {
+                col.showOverflow = Boolean(sc.showOverflow);
               }
               merged.push(col);
               colMap.delete(sc.field);
@@ -643,31 +670,36 @@
 
         // 2. 防抖持久化保存表格配置到后端与本地缓存
         let saveTimer = null;
+        const doSave = function () {
+          if (!tableKey) return;
+          try {
+            const savedColumns = [];
+            activeColumns.forEach((col) => {
+              if (col && col.field) {
+                savedColumns.push({
+                  field: col.field,
+                  width: Math.round(col.width || 0),
+                  visible: col.visible !== false,
+                  showOverflow: Boolean(col.showOverflow),
+                });
+              }
+            });
+            if (!savedColumns.length) return;
+            try {
+              localStorage.setItem(storageKey, JSON.stringify(savedColumns));
+            } catch (e) {}
+            fetch("/admin/api/table-config/" + encodeURIComponent(tableKey), {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ columns: savedColumns, updated_at: new Date().toISOString() }),
+            }).catch((err) => console.warn("保存表格排版失败:", err));
+          } catch (err) {}
+        };
+
         const saveConfig = function () {
           if (!tableKey) return;
           clearTimeout(saveTimer);
-          saveTimer = setTimeout(() => {
-            try {
-              const savedColumns = [];
-              activeColumns.forEach((col) => {
-                if (col && col.field) {
-                  savedColumns.push({
-                    field: col.field,
-                    width: Math.round(col.width || 0),
-                  });
-                }
-              });
-              if (!savedColumns.length) return;
-              try {
-                localStorage.setItem(storageKey, JSON.stringify(savedColumns));
-              } catch (e) {}
-              fetch("/admin/api/table-config/" + encodeURIComponent(tableKey), {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ columns: savedColumns, updated_at: new Date().toISOString() }),
-              }).catch((err) => console.warn("保存表格排版失败:", err));
-            } catch (err) {}
-          }, 300);
+          saveTimer = setTimeout(doSave, 300);
         };
 
         // 3. 构建原生 DOM 结构
@@ -697,9 +729,10 @@
           colgroup.innerHTML = "";
           thead.innerHTML = "";
 
+          const visibleCols = activeColumns.filter((col) => col.visible !== false);
           const tr = document.createElement("tr");
 
-          activeColumns.forEach((col, colIdx) => {
+          visibleCols.forEach((col, colIdx) => {
             const colTag = document.createElement("col");
             if (col.width) {
               colTag.style.width = col.width + "px";
@@ -870,11 +903,12 @@
         // 5. 渲染表格数据体
         function renderBody() {
           tbody.innerHTML = "";
+          const visibleCols = activeColumns.filter((col) => col.visible !== false);
           if (rowsData.length === 0) {
             const tr = document.createElement("tr");
             const td = document.createElement("td");
             td.className = "empty";
-            td.colSpan = Math.max(1, activeColumns.length);
+            td.colSpan = Math.max(1, visibleCols.length);
             td.textContent = "暂无数据";
             tr.appendChild(td);
             tbody.appendChild(tr);
@@ -885,7 +919,7 @@
             const tr = document.createElement("tr");
             tr.setAttribute("data-row-index", String(rowIndex));
 
-            activeColumns.forEach((col) => {
+            visibleCols.forEach((col) => {
               const td = document.createElement("td");
               if (col.className) td.className = col.className;
               if (col.fixed === "right") td.classList.add("fixed-right");
@@ -936,9 +970,14 @@
 
               if (col.showOverflow) {
                 td.classList.add("ellipsis");
-                if (!td.title && td.textContent) {
-                  td.title = td.textContent;
+                const fullText = (td.textContent || "").trim();
+                if (fullText) {
+                  td.setAttribute("data-overflow-tooltip", fullText);
                 }
+              } else {
+                td.classList.remove("ellipsis");
+                td.removeAttribute("data-overflow-tooltip");
+                td.setAttribute("data-no-tooltip", "1");
               }
 
               // 单元格事件绑定
@@ -997,11 +1036,31 @@
         }
 
         const instance = {
+          getTableKey: () => tableKey,
+          getAllColumns: () => activeColumns,
           getColumnByField: (f) => activeColumns.find((c) => c && c.field === f),
           getColumnById: (id) => activeColumns.find((c) => c && (c.id === id || c.field === id)),
           loadColumn: async (cols) => {
             activeColumns = cols.slice();
             renderGrid();
+          },
+          updateColumnStates: (newStates) => {
+            activeColumns.forEach((col) => {
+              if (col && col.field && newStates.has(col.field)) {
+                const state = newStates.get(col.field);
+                col.visible = state.visible;
+                col.showOverflow = state.showOverflow;
+              }
+            });
+            renderGrid();
+            doSave();
+          },
+          resetToDefault: () => {
+            activeColumns = initialColumns.map((c) => Object.assign({}, c));
+            renderGrid();
+            if (storageKey) {
+              try { localStorage.setItem(storageKey, "[]"); } catch (e) {}
+            }
           },
           recalculate: () => {
             onWindowResize();
@@ -1014,6 +1073,10 @@
 
         window._currentAdminGridInstance = instance;
         window._currentAdminGridApp = instance;
+        window._adminGridInstances = window._adminGridInstances || {};
+        if (tableKey) {
+          window._adminGridInstances[tableKey] = instance;
+        }
         el._adminGrid = instance;
         return instance;
       } catch (err) {
@@ -1162,3 +1225,506 @@
         });
       });
     };
+
+// ==========================================================================
+// 剪贴板文本快速复制工具函数 (支持现代 Clipboard API 与经典 execCommand 降级)
+// ==========================================================================
+function copyTextToClipboard(text) {
+  if (navigator.clipboard && window.isSecureContext) {
+    return navigator.clipboard.writeText(text);
+  }
+  return new Promise((resolve, reject) => {
+    try {
+      const textArea = document.createElement("textarea");
+      textArea.value = text;
+      textArea.style.position = "fixed";
+      textArea.style.top = "-9999px";
+      textArea.style.left = "-9999px";
+      textArea.setAttribute("readonly", "");
+      document.body.appendChild(textArea);
+      textArea.focus();
+      textArea.select();
+      const successful = document.execCommand("copy");
+      document.body.removeChild(textArea);
+      if (successful) resolve();
+      else reject(new Error("execCommand failed"));
+    } catch (err) {
+      reject(err);
+    }
+  });
+}
+window.copyTextToClipboard = copyTextToClipboard;
+
+// ==========================================================================
+// 表格单元格溢出提示浮层控制器 (支持移入交互、划词选区与一键复制)
+// ==========================================================================
+(function initAdminTableTooltip() {
+  let tooltipEl = null;
+  let contentEl = null;
+  let arrowEl = null;
+
+  let currentTargetTd = null;
+  let currentText = "";
+  let showTimer = null;
+  let hideTimer = null;
+
+  function ensureTooltipDom() {
+    if (tooltipEl) return tooltipEl;
+    tooltipEl = document.getElementById("admin-table-tooltip");
+    if (!tooltipEl) {
+      tooltipEl = document.createElement("div");
+      tooltipEl.id = "admin-table-tooltip";
+      tooltipEl.className = "admin-table-tooltip";
+      tooltipEl.setAttribute("role", "tooltip");
+      tooltipEl.setAttribute("aria-hidden", "true");
+      tooltipEl.innerHTML = `
+        <div class="admin-table-tooltip__content"></div>
+        <div class="admin-table-tooltip__arrow"></div>
+      `;
+      document.body.appendChild(tooltipEl);
+    }
+
+    contentEl = tooltipEl.querySelector(".admin-table-tooltip__content");
+    arrowEl = tooltipEl.querySelector(".admin-table-tooltip__arrow");
+
+    // 移入或在气泡本体内移动时，清除隐藏倒计时，保持显示
+    tooltipEl.addEventListener("mouseenter", () => {
+      if (hideTimer) {
+        clearTimeout(hideTimer);
+        hideTimer = null;
+      }
+    });
+    tooltipEl.addEventListener("mousemove", () => {
+      if (hideTimer) {
+        clearTimeout(hideTimer);
+        hideTimer = null;
+      }
+    });
+
+    // 移出气泡本体时，启动防抖隐藏倒计时
+    tooltipEl.addEventListener("mouseleave", (e) => {
+      const related = e.relatedTarget;
+      if (related && currentTargetTd && currentTargetTd.contains(related)) {
+        return;
+      }
+      if (hideTimer) clearTimeout(hideTimer);
+      hideTimer = setTimeout(hideTooltip, 350);
+    });
+
+    return tooltipEl;
+  }
+
+  function hideTooltip() {
+    if (showTimer) {
+      clearTimeout(showTimer);
+      showTimer = null;
+    }
+    if (hideTimer) {
+      clearTimeout(hideTimer);
+      hideTimer = null;
+    }
+    currentTargetTd = null;
+    if (tooltipEl) {
+      tooltipEl.classList.remove("is-show");
+      tooltipEl.setAttribute("aria-hidden", "true");
+      tooltipEl.style.display = "none";
+    }
+  }
+
+  function showTooltip(td, text) {
+    if (!td || !text) return;
+    ensureTooltipDom();
+    currentTargetTd = td;
+    currentText = text;
+
+    contentEl.textContent = text;
+
+    // 预渲染以获取精确尺寸
+    tooltipEl.style.display = "block";
+    tooltipEl.style.visibility = "hidden";
+    tooltipEl.classList.remove("placement-top", "placement-bottom");
+
+    const cellRect = td.getBoundingClientRect();
+    const tipRect = tooltipEl.getBoundingClientRect();
+    const margin = 8;
+
+    let placement = "top";
+    let top = cellRect.top - tipRect.height - margin;
+    // 如果上方空间不足，且下方空间更大，翻转至下方展示
+    if (top < 8 && (window.innerHeight - cellRect.bottom > tipRect.height + margin)) {
+      placement = "bottom";
+      top = cellRect.bottom + margin;
+    } else if (top < 8) {
+      top = 8;
+    }
+
+    // 水平居中对齐单元格，并在视口边界内做贴边约束
+    const cellCenter = cellRect.left + cellRect.width / 2;
+    let left = cellCenter - tipRect.width / 2;
+    const minLeft = 8;
+    const maxLeft = Math.max(minLeft, window.innerWidth - tipRect.width - 8);
+    const clampedLeft = Math.max(minLeft, Math.min(left, maxLeft));
+
+    // 计算气泡指示小三角水平偏移
+    const arrowLeft = Math.max(12, Math.min(cellCenter - clampedLeft - 4, tipRect.width - 20));
+
+    tooltipEl.className = "admin-table-tooltip is-show placement-" + placement;
+    tooltipEl.style.top = Math.round(top) + "px";
+    tooltipEl.style.left = Math.round(clampedLeft) + "px";
+    tooltipEl.style.visibility = "visible";
+    tooltipEl.setAttribute("aria-hidden", "false");
+
+    if (arrowEl) {
+      arrowEl.style.left = Math.round(arrowLeft) + "px";
+    }
+  }
+
+  function stripTableNativeTitles() {
+    try {
+      document.querySelectorAll(".admin-grid-table td[title], .ssr-table td[title], td.ellipsis[title]").forEach((td) => {
+        const t = td.getAttribute("title");
+        if (t && td.getAttribute("data-no-tooltip") !== "1") {
+          td.setAttribute("data-overflow-tooltip", t);
+        }
+        td.removeAttribute("title");
+      });
+    } catch (e) {}
+  }
+
+  // 全局事件委托：监听单元格悬停
+  document.addEventListener("mouseover", (e) => {
+    const td = e.target.closest ? e.target.closest("td") : null;
+    if (!td) return;
+    const table = td.closest(".admin-grid-table, .ssr-table");
+    if (!table) return;
+
+    // 剔除原生 title 避免浏览器弹出原生不可复制的黄色/灰色浮层
+    if (td.hasAttribute("title")) {
+      const titleVal = td.getAttribute("title");
+      if (titleVal && td.getAttribute("data-no-tooltip") !== "1") {
+        td.setAttribute("data-overflow-tooltip", titleVal);
+      }
+      td.removeAttribute("title");
+    }
+
+    if (currentTargetTd === td) {
+      // 仍然在当前单元格内移动，清除可能存在的隐藏定时器
+      if (hideTimer) {
+        clearTimeout(hideTimer);
+        hideTimer = null;
+      }
+      return;
+    }
+
+    // 若移入了另一个单元格，且旧单元格提示仍在显示，先关闭旧气泡
+    if (currentTargetTd && currentTargetTd !== td) {
+      hideTooltip();
+    }
+
+    // 1. 如果该单元格所属列关闭了超长提示 (data-no-tooltip="1")，坚决不弹
+    if (td.getAttribute("data-no-tooltip") === "1") return;
+
+    // 2. 检查是否真正发生物理截断（内容超宽溢出产生省略号）
+    // 至少溢出 2px 以上才视为截断，防止由于亚像素渲染误差导致误判
+    const isOverflowing = (td.scrollWidth - td.clientWidth) >= 2;
+    if (!isOverflowing) return;
+
+    // 3. 只有设置了 ellipsis 类或显式带有 data-overflow-tooltip 的溢出单元格才触发提示
+    const isEllipsis = td.classList.contains("ellipsis") || td.hasAttribute("data-overflow-tooltip");
+    if (!isEllipsis) return;
+
+    const rawTooltip = td.getAttribute("data-overflow-tooltip");
+    const cellText = (rawTooltip || td.textContent || "").trim();
+    if (!cellText) return;
+
+    if (hideTimer) {
+      clearTimeout(hideTimer);
+      hideTimer = null;
+    }
+    if (showTimer) {
+      clearTimeout(showTimer);
+    }
+    showTimer = setTimeout(() => {
+      showTooltip(td, cellText);
+    }, 120);
+  });
+
+  document.addEventListener("mouseout", (e) => {
+    const td = e.target.closest ? e.target.closest("td") : null;
+    if (!td) return;
+
+    const related = e.relatedTarget;
+    if (related && (td.contains(related) || (tooltipEl && tooltipEl.contains(related)))) {
+      return;
+    }
+
+    if (showTimer) {
+      clearTimeout(showTimer);
+      showTimer = null;
+    }
+
+    if (currentTargetTd === td) {
+      if (hideTimer) clearTimeout(hideTimer);
+      hideTimer = setTimeout(hideTooltip, 380);
+    }
+  });
+
+  // 页面滚动、表格容器滚动、窗口缩放、ESC 与点击外部时隐藏
+  window.addEventListener("scroll", hideTooltip, true);
+  window.addEventListener("resize", hideTooltip);
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") hideTooltip();
+  });
+  document.addEventListener("mousedown", (e) => {
+    if (tooltipEl && tooltipEl.contains(e.target)) return;
+    if (currentTargetTd && currentTargetTd.contains(e.target)) return;
+    hideTooltip();
+  });
+
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", stripTableNativeTitles);
+  } else {
+    stripTableNativeTitles();
+  }
+
+  window.stripTableNativeTitles = stripTableNativeTitles;
+})();
+
+// ==========================================================================
+// 表格个性化设置弹窗控制器 (栏位显隐控制、超长溢出提示开关与恢复默认)
+// ==========================================================================
+window.openTableSettingsModal = function (tableKey) {
+  if (!tableKey) return;
+  const grid = (window._adminGridInstances && window._adminGridInstances[tableKey]) || window._currentAdminGridInstance;
+  if (!grid) {
+    console.warn("未找到表格实例:", tableKey);
+    return;
+  }
+
+  // 获取当前所有栏位配置（排除非字段列如选择复选框）
+  const allCols = grid.getAllColumns ? grid.getAllColumns() : [];
+  const configurableCols = allCols.filter((col) => col && col.field && col.type !== "checkbox");
+  if (!configurableCols.length) {
+    if (window.showAdminToast) window.showAdminToast("该表格无可选配置栏位", "info");
+    return;
+  }
+
+  // 移除既有弹窗
+  const existing = document.getElementById("adminTableSettingsMask");
+  if (existing) existing.remove();
+
+  const mask = document.createElement("div");
+  mask.id = "adminTableSettingsMask";
+  mask.className = "admin-table-settings-mask";
+
+  let colItemsHtml = "";
+  configurableCols.forEach((col) => {
+    const isVisible = col.visible !== false;
+    const isOverflow = Boolean(col.showOverflow);
+    const title = col.title || col.field;
+    colItemsHtml += `
+      <div class="table-col-item ${!isVisible ? 'is-disabled' : ''}" data-field="${col.field}">
+        <div class="table-col-name">
+          <span>${title}</span>
+          <span style="font-size:11px;color:#909399;font-weight:normal;">(${col.field})</span>
+        </div>
+        <div class="table-col-options">
+          <label class="table-col-check" title="是否在表格中显示此栏位">
+            <input type="checkbox" class="col-visible-chk" ${isVisible ? "checked" : ""}>
+            <span>显示</span>
+          </label>
+          <label class="table-col-check" title="内容超长出现省略号时，悬停是否显示完整内容浮层">
+            <input type="checkbox" class="col-overflow-chk" ${isOverflow ? "checked" : ""}>
+            <span>超长提示</span>
+          </label>
+        </div>
+      </div>
+    `;
+  });
+
+  mask.innerHTML = `
+    <div class="admin-table-settings-dialog" role="dialog" aria-modal="true">
+      <div class="admin-table-settings-head">
+        <h3 class="admin-table-settings-title">
+          <span>⚙️ 表格个性化设置</span>
+        </h3>
+        <button type="button" class="admin-table-settings-close" id="adminTableSettingsClose" aria-label="关闭">×</button>
+      </div>
+      <div class="admin-table-settings-body">
+        <div class="table-settings-tip">
+          <span style="font-size:15px;line-height:1;">💡</span>
+          <div>自定义勾选控制各栏位的显示状态；仅在开启“超长提示”且单元格内容真正溢出出现省略号时，鼠标悬停才会弹出提示浮层。</div>
+        </div>
+        <div class="table-settings-toolbar">
+          <div class="toolbar-left">
+            <span>栏位列表（共 ${configurableCols.length} 项）</span>
+          </div>
+          <div class="toolbar-right">
+            <a id="btnSettingsSelectAllVisible">显示全选</a>
+            <a id="btnSettingsToggleVisible">显示反选</a>
+            <a id="btnSettingsSelectAllOverflow">提示全开</a>
+            <a id="btnSettingsClearAllOverflow">提示全关</a>
+          </div>
+        </div>
+        <div class="table-col-list" id="tableColList">
+          ${colItemsHtml}
+        </div>
+      </div>
+      <div class="admin-table-settings-foot">
+        <div class="foot-left">
+          <button type="button" class="el-button" id="adminTableSettingsReset" style="color: #f56c6c; border-color: #fbc4c4; background: #fef0f0;" title="恢复默认列宽、列顺序、显隐与提示设置">
+            🔄 恢复出厂设置
+          </button>
+        </div>
+        <div class="foot-right">
+          <button type="button" class="el-button" id="adminTableSettingsCancel">取消</button>
+          <button type="button" class="el-button el-button--primary" id="adminTableSettingsSave">保存设置</button>
+        </div>
+      </div>
+    </div>
+  `;
+
+  document.body.appendChild(mask);
+
+  const btnClose = mask.querySelector("#adminTableSettingsClose");
+  const btnCancel = mask.querySelector("#adminTableSettingsCancel");
+  const btnSave = mask.querySelector("#adminTableSettingsSave");
+  const btnReset = mask.querySelector("#adminTableSettingsReset");
+
+  const btnAllVis = mask.querySelector("#btnSettingsSelectAllVisible");
+  const btnToggleVis = mask.querySelector("#btnSettingsToggleVisible");
+  const btnAllOver = mask.querySelector("#btnSettingsSelectAllOverflow");
+  const btnClearOver = mask.querySelector("#btnSettingsClearAllOverflow");
+
+  const colList = mask.querySelector("#tableColList");
+
+  let closed = false;
+  const cleanup = () => {
+    if (closed) return;
+    closed = true;
+    document.removeEventListener("keydown", handleKey);
+    mask.classList.remove("is-open");
+    setTimeout(() => mask.remove(), 200);
+  };
+
+  const handleKey = (e) => {
+    if (e.key === "Escape") {
+      e.preventDefault();
+      cleanup();
+    }
+  };
+  document.addEventListener("keydown", handleKey);
+
+  // 监听显示复选框切换，联动置灰视觉效果
+  colList.querySelectorAll(".col-visible-chk").forEach((chk) => {
+    chk.addEventListener("change", (e) => {
+      const item = e.target.closest(".table-col-item");
+      if (item) item.classList.toggle("is-disabled", !e.target.checked);
+    });
+  });
+
+  // 工具栏快捷操作
+  btnAllVis.onclick = () => {
+    colList.querySelectorAll(".col-visible-chk").forEach((chk) => {
+      chk.checked = true;
+      const item = chk.closest(".table-col-item");
+      if (item) item.classList.remove("is-disabled");
+    });
+  };
+
+  btnToggleVis.onclick = () => {
+    colList.querySelectorAll(".col-visible-chk").forEach((chk) => {
+      chk.checked = !chk.checked;
+      const item = chk.closest(".table-col-item");
+      if (item) item.classList.toggle("is-disabled", !chk.checked);
+    });
+  };
+
+  btnAllOver.onclick = () => {
+    colList.querySelectorAll(".col-overflow-chk").forEach((chk) => {
+      chk.checked = true;
+    });
+  };
+
+  btnClearOver.onclick = () => {
+    colList.querySelectorAll(".col-overflow-chk").forEach((chk) => {
+      chk.checked = false;
+    });
+  };
+
+  // 保存设置
+  btnSave.onclick = () => {
+    const items = colList.querySelectorAll(".table-col-item");
+    let visibleCount = 0;
+    const newStates = new Map();
+
+    items.forEach((item) => {
+      const field = item.getAttribute("data-field");
+      const vis = item.querySelector(".col-visible-chk").checked;
+      const ovf = item.querySelector(".col-overflow-chk").checked;
+      if (vis) visibleCount++;
+      newStates.set(field, { visible: vis, showOverflow: ovf });
+    });
+
+    if (visibleCount === 0) {
+      if (window.showAdminToast) {
+        window.showAdminToast("请至少保留一个显示的栏位", "warning");
+      }
+      return;
+    }
+
+    if (grid.updateColumnStates) {
+      grid.updateColumnStates(newStates);
+    }
+    cleanup();
+    if (window.showAdminToast) {
+      window.showAdminToast("表格设置已更新并保存", "success");
+    }
+  };
+
+  // 恢复出厂设置（原“重置表头”功能）
+  btnReset.onclick = async () => {
+    const ask = window.showAdminConfirm
+      ? await window.showAdminConfirm({
+          title: "恢复出厂默认设置",
+          content: "确定要清除该表格的所有自定义排版（列宽、列排序、栏位显隐与提示设置）并恢复默认吗？",
+          confirmText: "确定恢复",
+          cancelText: "取消",
+          type: "danger",
+        })
+      : confirm("确定恢复该表格的默认列宽、列排序与显隐提示设置吗？");
+
+    if (!ask) return;
+
+    try {
+      localStorage.removeItem("admin_grid_cfg_" + tableKey);
+      localStorage.setItem("admin_grid_cfg_" + tableKey, "[]");
+    } catch (e) {}
+
+    try {
+      await fetch("/admin/api/table-config/" + encodeURIComponent(tableKey), { method: "DELETE" });
+    } catch (e) {}
+
+    cleanup();
+
+    if (grid.resetToDefault) {
+      grid.resetToDefault();
+      if (window.showAdminToast) {
+        window.showAdminToast("已恢复出厂默认表头设置", "success");
+      }
+    } else {
+      window.location.reload();
+    }
+  };
+
+  btnClose.onclick = cleanup;
+  btnCancel.onclick = cleanup;
+  mask.onclick = (e) => {
+    if (e.target === mask) cleanup();
+  };
+
+  requestAnimationFrame(() => {
+    mask.classList.add("is-open");
+  });
+};
+

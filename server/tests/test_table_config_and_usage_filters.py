@@ -196,10 +196,11 @@ def test_usage_page_draggable_and_reset_elements(client_env):
     assert resp.status_code == 200
     # 验证 tableKey 传入
     assert 'tableKey: "admin_usage_table"' in resp.text
-    # 验证重置表头按钮存在
-    assert "resetTableLayout('admin_usage_table')" in resp.text
-    # 验证 admin.js 与 admin.css 中的拖拽与恢复机制存在
+    # 验证表格设置按钮存在（支持栏位显隐与溢出提示配置）
+    assert "openTableSettingsModal('admin_usage_table')" in resp.text
+    # 验证 admin.js 与 admin.css 中的拖拽、恢复与设置机制存在
     js_resp = c.get("/static/admin/admin.js")
+    assert "window.openTableSettingsModal" in js_resp.text
     assert "window.resetTableLayout" in js_resp.text
     css_resp = c.get("/static/admin/admin.css")
     assert "is-draggable-col" in css_resp.text

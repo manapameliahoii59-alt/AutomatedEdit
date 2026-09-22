@@ -43,14 +43,14 @@
   /* 统计指标卡 */
   .stat-cards {
     display: grid;
-    grid-template-columns: repeat(4, 1fr);
+    grid-template-columns: repeat(6, 1fr);
     gap: 16px;
     margin-bottom: 20px;
   }
-  @media (max-width: 1200px) {
-    .stat-cards { grid-template-columns: repeat(2, 1fr); }
+  @media (max-width: 1400px) {
+    .stat-cards { grid-template-columns: repeat(3, 1fr); }
   }
-  @media (max-width: 640px) {
+  @media (max-width: 768px) {
     .stat-cards { grid-template-columns: 1fr; }
   }
   .stat-card {
@@ -59,30 +59,40 @@
     padding: 16px 20px;
     border: 1px solid #e4e7ed;
     box-shadow: 0 2px 10px rgba(0, 0, 0, 0.03);
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
   }
-  .stat-card__title { font-size: 13px; color: #909399; }
-  .stat-card__value { font-size: 22px; font-weight: 700; color: #303133; }
-  .stat-card__sub { font-size: 12px; color: #a8abb2; }
+  .stat-card__title {
+    font-size: 13px;
+    color: #909399;
+    margin-bottom: 8px;
+  }
+  .stat-card__value {
+    font-size: 26px;
+    font-weight: 700;
+    color: #303133;
+    line-height: 1.2;
+    margin-bottom: 4px;
+  }
+  .stat-card__sub {
+    font-size: 12px;
+    color: #a8abb2;
+  }
 
   /* 配置面板卡片 */
   .config-card {
     background: #fff;
     border-radius: 8px;
-    padding: 20px;
     border: 1px solid #e4e7ed;
     box-shadow: 0 2px 10px rgba(0, 0, 0, 0.03);
+    padding: 20px;
     margin-bottom: 24px;
   }
   .config-card-head {
     display: flex;
-    align-items: center;
     justify-content: space-between;
+    align-items: center;
     margin-bottom: 16px;
     padding-bottom: 12px;
-    border-bottom: 1px solid #ebeef5;
+    border-bottom: 1px solid #f0f2f5;
   }
   .config-card-title {
     font-size: 15px;
@@ -94,29 +104,39 @@
   }
   .config-form-row {
     display: grid;
-    grid-template-columns: repeat(3, 1fr) auto;
-    gap: 20px;
+    grid-template-columns: 1fr 1fr 1fr 1fr 1fr auto;
+    gap: 16px;
     align-items: flex-end;
   }
-  @media (max-width: 1000px) {
-    .config-form-row { grid-template-columns: 1fr; }
+  @media (max-width: 1400px) {
+    .config-form-row {
+      grid-template-columns: 1fr 1fr 1fr;
+    }
   }
-  .form-item {
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
+  @media (max-width: 900px) {
+    .config-form-row {
+      grid-template-columns: 1fr 1fr;
+    }
+  }
+  @media (max-width: 640px) {
+    .config-form-row {
+      grid-template-columns: 1fr;
+    }
   }
   .form-item label {
+    display: block;
     font-size: 13px;
     font-weight: 500;
     color: #606266;
+    margin-bottom: 8px;
   }
   .form-item .hint {
     font-size: 12px;
     color: #909399;
+    margin-top: 4px;
+    line-height: 1.4;
   }
 
-  /* 邀请列表表格卡片 */
   .table-card {
     background: #fff;
     border-radius: 8px;
@@ -165,7 +185,7 @@
         <span style="color: #e6a23c;">🎁</span>
         <span>邀请管理与裂变激励</span>
       </h1>
-      <p>配置用户专属邀请码裂变规则，动态调整双方每日剪辑上限奖励，实时审计邀请关系与流水明细。</p>
+      <p>配置用户专属邀请码裂变规则，动态调整双方每日剪辑上限奖励与有效期限，实时审计邀请关系与流水明细。</p>
     </div>
   </div>
 
@@ -185,6 +205,22 @@
       <div class="stat-card__title">当前单次奖励</div>
       <div class="stat-card__value" style="color: #e6a23c;">+{{ config.reward_clip_limit }} <small style="font-size: 14px; font-weight: normal; color: #909399;">首/人</small></div>
       <div class="stat-card__sub">每成功邀请 1 人双方均增加</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-card__title">永久额度上限</div>
+      <div class="stat-card__value" style="color: #67c23a;">{{ config.max_permanent_clip_limit }} <small style="font-size: 14px; font-weight: normal; color: #909399;">首</small></div>
+      <div class="stat-card__sub">达到此上限后超出部分为临时奖励</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-card__title">奖励有效期限</div>
+      <div class="stat-card__value" style="color: #409eff;">
+        {% if config.reward_valid_days > 0 %}
+        {{ config.reward_valid_days }} <small style="font-size: 14px; font-weight: normal; color: #909399;">天</small>
+        {% else %}
+        <span style="color: #67c23a; font-size: 18px;">永久有效</span>
+        {% endif %}
+      </div>
+      <div class="stat-card__sub">兑换成功后临时上限有效期</div>
     </div>
     <div class="stat-card">
       <div class="stat-card__title">单人奖励人数上限</div>
@@ -211,13 +247,33 @@
     <form method="post" action="/admin/invites/settings">
       <div class="config-form-row">
         <div class="form-item">
-          <label for="reward_clip_limit">单次双方奖励每日剪辑上限 (首):</label>
+          <label for="reward_clip_limit">单次双方奖励剪辑上限 (首):</label>
           <div class="el-input">
             <div class="el-input__wrapper">
               <input class="el-input__inner" id="reward_clip_limit" name="reward_clip_limit" type="number" min="1" max="100" value="{{ config.reward_clip_limit }}" required />
             </div>
           </div>
-          <div class="hint">被邀请人成功兑换后，邀请人与被邀请人各增加此数值（如 5 或 10）</div>
+          <div class="hint">每成功邀请 1 人双方均增加此额度（如 5 或 10）</div>
+        </div>
+
+        <div class="form-item">
+          <label for="max_permanent_clip_limit">永久额度上限 (首):</label>
+          <div class="el-input">
+            <div class="el-input__wrapper">
+              <input class="el-input__inner" id="max_permanent_clip_limit" name="max_permanent_clip_limit" type="number" min="1" max="1000" value="{{ config.max_permanent_clip_limit }}" required />
+            </div>
+          </div>
+          <div class="hint">优先补足至此永久上限（默认 15 首），超出部分全部计为临时额度</div>
+        </div>
+
+        <div class="form-item">
+          <label for="reward_valid_days">超出永久上限的临时有效天数 (天):</label>
+          <div class="el-input">
+            <div class="el-input__wrapper">
+              <input class="el-input__inner" id="reward_valid_days" name="reward_valid_days" type="number" min="0" max="3650" value="{{ config.reward_valid_days }}" required />
+            </div>
+          </div>
+          <div class="hint">提升剪辑上限的有效期限（如 30 天）。填 0 表示永久有效</div>
         </div>
 
         <div class="form-item">
@@ -266,7 +322,7 @@
         </form>
       </div>
       <div class="head-actions">
-        <button type="button" class="el-button" onclick="resetTableLayout('admin_invites_table')" title="恢复表格的默认列宽与列顺序">重置表头</button>
+        <button type="button" class="el-button" onclick="openTableSettingsModal('admin_invites_table')" title="自定义表格栏位显隐与提示设置">⚙️ 表格设置</button>
       </div>
     </div>
 
@@ -274,11 +330,15 @@
       <thead>
         <tr>
           <th style="width: 60px;">ID</th>
-          <th style="min-width: 160px; text-align: left; padding-left: 14px;">邀请人账号</th>
-          <th style="width: 120px;">使用的邀请码</th>
-          <th style="min-width: 160px; text-align: left; padding-left: 14px;">被邀请新用户</th>
-          <th style="width: 140px;">双方奖励剪辑数</th>
-          <th style="width: 180px;">绑定兑换时间</th>
+          <th style="min-width: 140px; text-align: left; padding-left: 14px;">邀请人账号</th>
+          <th style="width: 105px;">使用的邀请码</th>
+          <th style="min-width: 140px; text-align: left; padding-left: 14px;">被邀请新用户</th>
+          <th style="width: 105px;">基础奖励</th>
+          <th style="min-width: 220px; text-align: left; padding-left: 14px;">双方实际奖励构成</th>
+          <th style="width: 90px;">临时有效期</th>
+          <th style="width: 160px;">到期时间</th>
+          <th style="width: 85px;">状态</th>
+          <th style="width: 160px;">绑定兑换时间</th>
         </tr>
       </thead>
       <tbody>
@@ -295,13 +355,22 @@
             <strong style="color: #409eff;">{{ r.invitee_username }}</strong>
           </td>
           <td>
-            <span style="color: #67c23a; font-weight: 600;">+{{ r.reward_clip_limit }} 首/天</span>
+            <span style="color: #e6a23c; font-weight: 600;">+{{ r.reward_clip_limit }} 首</span>
+          </td>
+          <td style="text-align: left; padding-left: 14px; font-size: 13px;">
+            <div><span style="color: #909399;">邀请人:</span> <span style="font-weight: 500; color: #303133;">{{ r.inviter_reward_desc }}</span></div>
+            <div><span style="color: #909399;">被邀请:</span> <span style="font-weight: 500; color: #409eff;">{{ r.invitee_reward_desc }}</span></div>
+          </td>
+          <td>{{ r.valid_days_label }}</td>
+          <td style="font-size: 12px; color: {% if r.is_expired %}#909399{% else %}#303133{% endif %};">{{ r.expires_at }}</td>
+          <td>
+            <span class="tag {{ r.status_tag }}">{{ r.status_label }}</span>
           </td>
           <td style="color: #909399; font-size: 12px;">{{ r.created_at }}</td>
         </tr>
         {% else %}
         <tr>
-          <td colspan="6" style="text-align: center; padding: 40px; color: #909399;">
+          <td colspan="10" style="text-align: center; padding: 40px; color: #909399;">
             暂无邀请记录数据
           </td>
         </tr>
@@ -336,7 +405,7 @@
         {
           field: "id",
           title: "ID",
-          width: 70,
+          width: 65,
           slots: {
             default: ({ row }) => [Vue.h("span", { style: "color: #909399;" }, `#${row.id}`)],
           },
@@ -344,7 +413,7 @@
         {
           field: "inviter_username",
           title: "邀请人账号",
-          minWidth: 160,
+          minWidth: 140,
           slots: {
             default: ({ row }) => [Vue.h("strong", { style: "color: #303133;" }, row.inviter_username)],
           },
@@ -352,7 +421,7 @@
         {
           field: "inviter_code",
           title: "使用的邀请码",
-          width: 130,
+          width: 105,
           slots: {
             default: ({ row }) => [Vue.h("span", { class: "invite-badge" }, row.inviter_code)],
           },
@@ -360,23 +429,71 @@
         {
           field: "invitee_username",
           title: "被邀请新用户",
-          minWidth: 160,
+          minWidth: 140,
           slots: {
             default: ({ row }) => [Vue.h("strong", { style: "color: #409eff;" }, row.invitee_username)],
           },
         },
         {
           field: "reward_clip_limit",
-          title: "双方奖励剪辑数",
-          width: 140,
+          title: "基础奖励",
+          width: 105,
           slots: {
-            default: ({ row }) => [Vue.h("span", { style: "color: #67c23a; font-weight: 600;" }, `+${row.reward_clip_limit} 首/天`)],
+            default: ({ row }) => [Vue.h("span", { style: "color: #e6a23c; font-weight: 600;" }, `+${row.reward_clip_limit} 首`)],
+          },
+        },
+        {
+          field: "combined_reward_desc",
+          title: "双方实际奖励构成",
+          minWidth: 220,
+          slots: {
+            default: ({ row }) => [
+              Vue.h("div", { style: "font-size: 13px; line-height: 1.4;" }, [
+                Vue.h("div", [
+                  Vue.h("span", { style: "color: #909399;" }, "邀请人: "),
+                  Vue.h("span", { style: "font-weight: 500; color: #303133;" }, row.inviter_reward_desc),
+                ]),
+                Vue.h("div", [
+                  Vue.h("span", { style: "color: #909399;" }, "被邀请: "),
+                  Vue.h("span", { style: "font-weight: 500; color: #409eff;" }, row.invitee_reward_desc),
+                ]),
+              ]),
+            ],
+          },
+        },
+        {
+          field: "valid_days_label",
+          title: "临时有效期",
+          width: 95,
+        },
+        {
+          field: "expires_at",
+          title: "到期时间",
+          width: 160,
+          slots: {
+            default: ({ row }) => [
+              Vue.h(
+                "span",
+                { style: `font-size: 12px; color: ${row.is_expired ? "#909399" : "#303133"};` },
+                row.expires_at
+              ),
+            ],
+          },
+        },
+        {
+          field: "status_label",
+          title: "状态",
+          width: 85,
+          slots: {
+            default: ({ row }) => [
+              Vue.h("span", { class: `tag ${row.status_tag}` }, row.status_label),
+            ],
           },
         },
         {
           field: "created_at",
           title: "绑定兑换时间",
-          width: 180,
+          width: 160,
           slots: {
             default: ({ row }) => [Vue.h("span", { style: "color: #909399; font-size: 12px;" }, row.created_at)],
           },

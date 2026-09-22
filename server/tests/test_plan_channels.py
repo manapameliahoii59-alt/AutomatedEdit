@@ -466,6 +466,7 @@ def test_admin_channels_siliconflow_and_tongyi(admin_client_fixture):
         ("siliconflow", "deepseek-ai/DeepSeek-V4-Flash", "SF DS V4 Flash"),
         ("siliconflow", "deepseek-ai/DeepSeek-V3.2", "SF DS V3.2"),
         ("tongyi", "qwen3.7-flash", "TY Qwen Flash"),
+        ("tongyi", "qwen3.8-omni-flash", "TY Qwen Omni Flash"),
     ]
 
     for prov, model, name in models_to_test:
@@ -494,6 +495,7 @@ def test_admin_channels_siliconflow_and_tongyi(admin_client_fixture):
     assert "deepseek-ai/DeepSeek-V4-Flash" in get_res.text
     assert "deepseek-ai/DeepSeek-V3.2" in get_res.text
     assert "qwen3.7-flash" in get_res.text
+    assert "qwen3.8-omni-flash" in get_res.text
 
     # 测试连通性探测接口
     with patch("httpx.Client") as mock_client_cls:
@@ -518,11 +520,77 @@ def test_admin_channels_siliconflow_and_tongyi(admin_client_fixture):
             "/admin/channels/channel/test",
             data={
                 "provider": "tongyi",
-                "api_url": "",
-                "model_name": "qwen3.7-flash",
+                "api_url": "https://maas.qianwenaiapi.com/compatible-mode/v1/chat/completions",
+                "model_name": "qwen3.8-omni-flash",
                 "api_key": "sk-ty-test",
             },
         )
         assert ty_test.status_code == 200
         assert ty_test.json()["success"] is True
+        # 验证 omni 模型自动携带 modalities=["text"]
+        call_kwargs = mock_client.post.call_args[1]
+        assert call_kwargs["json"].get("modalities") == ["text"]
+
+
+def test_group_channel_select_ui_and_save(admin_client_fixture):
+    client, Session = admin_client_fixture
+
+    # 1. 验证 channels 页面包含新的 select 多选与 tag 容器组件
+    resp = client.get("/admin/channels")
+    assert resp.status_code == 200
+    assert "grp_channel_select" in resp.text
+    assert "grp_selected_tags_container" in resp.text
+    assert "onSelectChannelToAdd" in resp.text
+    assert "renderSelectedChannelTags" in resp.text
+    assert "channel-tag-box" in resp.text
+
+    # 2. 先创建两个渠道
+    db = Session()
+    ch1 = LlmChannel(
+        name="主力测试渠道1",
+        provider="deepseek",
+        api_url="https://api.deepseek.com",
+        model_name="deepseek-flash",
+        api_keys="sk-test-1",
+        priority=1,
+        is_active=True,
+    )
+    ch2 = LlmChannel(
+        name="备用测试渠道2",
+        provider="zhipu",
+        api_url="https://open.bigmodel.cn/api/paas/v4",
+        model_name="glm-5.3-flash",
+        api_keys="sk-test-2",
+        priority=2,
+        is_active=True,
+    )
+    db.add_all([ch1, ch2])
+    db.commit()
+    ch1_id, ch2_id = ch1.id, ch2.id
+    db.close()
+
+    # 3. 模拟前端通过 select 选中的渠道 Tag 提交表单保存策略组
+    save_resp = client.post(
+        "/admin/channels/group/save",
+        data={
+            "name": "自选 Tag 策略组",
+            "dispatch_mode": "serial",
+            "channel_ids": [str(ch1_id), str(ch2_id)],
+            "max_loops_per_channel": "3",
+            "is_default": "1",
+        },
+        follow_redirects=True,
+    )
+    assert save_resp.status_code == 200
+    assert "自选 Tag 策略组" in save_resp.text
+
+    # 4. 验证数据库中策略组保存的渠道 ID 顺序准确无误
+    db = Session()
+    saved_grp = db.query(LlmGroup).filter(LlmGroup.name == "自选 Tag 策略组").first()
+    assert saved_grp is not None
+    assert saved_grp.channel_ids == f"{ch1_id},{ch2_id}"
+    assert saved_grp.is_default is True
+    db.close()
+
+
 

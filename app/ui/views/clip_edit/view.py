@@ -105,6 +105,7 @@ from app.data.models.batch_execution_record import (
     DramaTimingRecord,
 )
 from app.data.services.access_control_service import access_control
+from app.data.services.quota_service import QuotaService
 from app.ui.components.batch_execution_dialog import BatchExecutionDialog
 
 from .view_model import ClipEditViewModel
@@ -370,9 +371,37 @@ class ClipEditPage(ScrollArea):
         self.vm.batchExecutionFinished.connect(self._on_batch_execution_finished)
         self.vm.messageReceived.connect(self._on_message_received)
         self.vm.errorOccurred.connect(lambda msg: show_error_toast(self, msg))
+        self.vm.quotaExceeded.connect(self._on_quota_exceeded)
         self.vm.settingsLoaded.connect(self._on_settings_loaded)
         self._refresh_table(self.vm.get_projects())
         qconfig.themeChanged.connect(lambda *_: self._refresh_table(self.vm.get_projects()))
+
+    def _on_quota_exceeded(
+        self, action: str, message: str, current_count: int, limit: int
+    ):
+        self._show_quota_exceeded_dialog(action, message, current_count, limit)
+
+    def _show_quota_exceeded_dialog(
+        self, action: str, message: str, current_count: int, limit: int
+    ) -> bool:
+        """弹出配额超限对话框，提供「前往设置查看/提升额度」快捷跳转。"""
+        action_name = "剪辑" if action == "clip" else ("策划" if action == "plan" else "下载")
+        title = f"{action_name}配额已达上限"
+        content = (
+            f"您今日已成功{action_name} {current_count} / {limit} 部剧目，已达到每日{action_name}上限。\n\n"
+            "💡 提示：您可以通过邀请好友注册兑换邀请码获取永久与临时剪辑配额加成，或前往「设置」页面查看详情。"
+        )
+        w = Dialog(title, content, self.window())
+        setup_confirm_dialog(w, window_title=title)
+        w.yesButton.setText("前往设置查看/提升额度")
+        w.cancelButton.setText("知道了")
+        w.setFixedWidth(460)
+        if w.exec():
+            win = self.window()
+            if hasattr(win, "switchTo") and hasattr(win, "settingInterface"):
+                win.switchTo(win.settingInterface)
+            return True
+        return False
 
     def _on_message_received(self, msg: str):
         if (
@@ -578,6 +607,26 @@ class ClipEditPage(ScrollArea):
         if not ids:
             show_dialog(self, "请先勾选要处理的剧目", "提示")
             return
+
+        allowed, msg, remaining, needed = self.vm.check_batch_clip_quota(ids)
+        if not allowed:
+            if remaining == 0:
+                quota = QuotaService.instance().get_quota()
+                self._show_quota_exceeded_dialog("clip", msg, quota.clip_count, quota.clip_limit)
+                return
+            else:
+                w = Dialog(
+                    "剪辑配额提醒",
+                    f"今日剩余可用剪辑配额为 {remaining} 部，本次共勾选了 {needed} 部新剧目。\n\n超出配额的部分将在剪辑时被跳过，是否继续处理？",
+                    self.window(),
+                )
+                setup_confirm_dialog(w, window_title="剪辑配额提醒")
+                w.yesButton.setText("继续处理")
+                w.cancelButton.setText("取消")
+                w.setFixedWidth(450)
+                if not w.exec():
+                    return
+
         self.vm.batch_render(ids)
 
     def _open_encode_settings(self):
@@ -1022,13 +1071,23 @@ class ClipEditPage(ScrollArea):
         if auto_select_all:
             ids = [p.id for p in self.vm.get_projects()]
 
+        allowed, msg, remaining, needed = self.vm.check_batch_clip_quota(ids)
+        if not allowed and remaining == 0:
+            quota = QuotaService.instance().get_quota()
+            self._show_quota_exceeded_dialog("clip", msg, quota.clip_count, quota.clip_limit)
+            return
+
+        quota_tip = ""
+        if not allowed and remaining > 0:
+            quota_tip = f"\n\n⚠️ 注意：今日剩余可用剪辑配额为 {remaining} 部（本次共包含 {needed} 部新剧目），超出配额的剧目将无法完成最终渲染。"
+
         w = Dialog(
             "一键执行",
-            f"确认对{'全部' if auto_select_all else '选中的'} {len(ids)} 个剧目执行「识别视频 → 方案策划 → 动态渲染」完整流程吗？",
+            f"确认对{'全部' if auto_select_all else '选中的'} {len(ids)} 个剧目执行「识别视频 → 方案策划 → 动态渲染」完整流程吗？{quota_tip}",
             self.window(),
         )
         setup_confirm_dialog(w, window_title="一键执行")
-        w.setFixedWidth(440)
+        w.setFixedWidth(460)
         if w.exec():
             try:
                 if auto_select_all:

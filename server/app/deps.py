@@ -46,7 +46,7 @@ def get_current_user(
                 detail="您的账号已在另一台设备登录，当前会话已过期失效，请重新登录",
             )
 
-    assert_user_allowed(user)
+    assert_user_allowed(user, db=db)
     return user
 
 

@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{% block title %}{{ app_name }} 后台{% endblock %}</title>
-  <link rel="stylesheet" href="/static/admin/admin.css">
+  <link rel="stylesheet" href="/static/admin/admin.css?v=20260922_tooltip">
 </head>
 <body>
   <div class="admin-shell">
@@ -30,7 +30,7 @@
     </main>
   </div>
   <!-- 后台核心轻量交互与原生表格组件 -->
-  <script src="/static/admin/admin.js?v=20260920_v2"></script>
+  <script src="/static/admin/admin.js?v=20260922_tooltip"></script>
 
   {% if missing_plan_keys_users %}
   <div class="missing-keys-dialog-mask" id="missing-keys-dialog" role="dialog" aria-modal="true" aria-labelledby="missing-keys-title">

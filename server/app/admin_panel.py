@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import json
-from datetime import date, datetime
+import secrets
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Annotated, Any
 from urllib.parse import urlencode
@@ -33,8 +34,14 @@ from app.models import (
     UserMachine,
     UserSettings,
 )
+from app.auth import hash_password
 from app.services import client_version as client_version_service
-from app.services.invite_service import get_invite_config, set_invite_config
+from app.services.invite_service import (
+    ensure_user_invite_code,
+    get_invite_config,
+    set_invite_config,
+)
+from app.services.user_access import sync_expired_users
 from app.services.plan_secrets import (
     PLAN_LLM_PRESET_CHOICES,
     PLAN_LLM_PROVIDER_DEEPSEEK,
@@ -471,6 +478,12 @@ def users_list(
     q: str = "",
     page: int = Query(default=1, ge=1),
 ):
+    # 自动同步已过期的体验/限期账号：将 is_active 自动更新为 False 并失效 Token
+    try:
+        sync_expired_users(db)
+    except Exception:
+        pass
+
     stmt = select(User).options(
         joinedload(User.secrets),
         joinedload(User.settings),
@@ -532,6 +545,125 @@ def users_list(
             total_pages=total_pages,
             total=total,
         ),
+    )
+
+
+@router.post("/users/create-trial")
+async def create_trial_user(request: Request, db: Db):
+    if not _is_logged_in(request):
+        return JSONResponse({"ok": False, "message": "未登录"}, status_code=401)
+
+    content_type = request.headers.get("content-type", "")
+    if "application/json" in content_type:
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+    else:
+        form = await request.form()
+        body = dict(form)
+
+    trial_days_raw = body.get("trial_days", 7)
+    try:
+        trial_days = max(1, int(trial_days_raw))
+    except (TypeError, ValueError):
+        trial_days = 7
+
+    custom_username = str(body.get("username", "") or "").strip()
+    custom_password = str(body.get("password", "") or "").strip()
+
+    try:
+        daily_plan_limit = max(0, int(body.get("daily_plan_limit", 30) or 30))
+    except (TypeError, ValueError):
+        daily_plan_limit = 30
+
+    try:
+        daily_clip_limit = max(0, int(body.get("daily_clip_limit", 30) or 30))
+    except (TypeError, ValueError):
+        daily_clip_limit = 30
+
+    try:
+        daily_download_limit = max(0, int(body.get("daily_download_limit", 30) or 30))
+    except (TypeError, ValueError):
+        daily_download_limit = 30
+
+    # 1. 确定用户名
+    if custom_username:
+        exists = db.scalar(select(User).where(User.username == custom_username))
+        if exists:
+            return JSONResponse(
+                {"ok": False, "message": f"用户名「{custom_username}」已存在，请换一个"},
+                status_code=400,
+            )
+        username = custom_username
+    else:
+        # 自动生成随机账号 trial_xxxxxx
+        username = ""
+        for _ in range(30):
+            cand = f"trial_{secrets.token_hex(3)}"
+            if not db.scalar(select(User).where(User.username == cand)):
+                username = cand
+                break
+        if not username:
+            username = f"trial_{int(datetime.now().timestamp())}"
+
+    # 2. 确定密码
+    if custom_password:
+        password = custom_password
+    else:
+        # 自动生成 8 位安全随机密码（大小写字母与数字组合）
+        chars = "abcdefghjkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+        password = "".join(secrets.choice(chars) for _ in range(8))
+
+    today = datetime.now(timezone.utc).date()
+    valid_until = today + timedelta(days=trial_days)
+
+    user = User(
+        username=username,
+        password_hash=hash_password(password),
+        plain_password=password,
+        role="user",
+        is_active=True,
+        valid_until=valid_until,
+        daily_plan_limit=daily_plan_limit,
+        daily_clip_limit=daily_clip_limit,
+        daily_download_limit=daily_download_limit,
+    )
+    db.add(user)
+    db.commit()
+    db.refresh(user)
+
+    # 分配专属邀请码
+    try:
+        ensure_user_invite_code(db, user)
+    except Exception:
+        pass
+
+    share_text = (
+        f"【AutomatedEdit 体验账号】\n"
+        f"账号：{username}\n"
+        f"密码：{password}\n"
+        f"体验有效期：{valid_until.isoformat()}（{trial_days}天）\n"
+        f"桌面端权限：已开启"
+    )
+
+    return JSONResponse(
+        {
+            "ok": True,
+            "message": "体验账号创建成功",
+            "user": {
+                "id": user.id,
+                "username": user.username,
+                "password": password,
+                "valid_until": valid_until.isoformat(),
+                "trial_days": trial_days,
+                "is_active": True,
+                "daily_clip_limit": daily_clip_limit,
+                "daily_plan_limit": daily_plan_limit,
+                "daily_download_limit": daily_download_limit,
+            },
+            "share_text": share_text,
+        }
     )
 
 
@@ -1829,8 +1961,65 @@ def invites_page(
         .all()
     )
 
+    now = datetime.now()
     items = []
     for r in records:
+        raw_days = getattr(r, "valid_days", 30)
+        valid_days_label = f"{raw_days} 天" if raw_days and raw_days > 0 else "永久有效"
+
+        inviter_temp = getattr(r, "inviter_temp_reward", 0) or 0
+        inviter_perm = max(0, r.reward_clip_limit - inviter_temp)
+        inviter_exp = getattr(r, "inviter_expires_at", None)
+
+        invitee_temp = getattr(r, "invitee_temp_reward", 0) or 0
+        invitee_perm = max(0, r.reward_clip_limit - invitee_temp)
+        invitee_exp = getattr(r, "invitee_expires_at", None)
+
+        has_temp = (inviter_temp > 0) or (invitee_temp > 0) or (r.expires_at is not None)
+
+        # 兼容历史迁移数据：若旧记录没有填写 inviter_temp_reward，但 expires_at 有值，则视为临时奖励
+        if not has_temp and r.expires_at is not None:
+            has_temp = True
+            inviter_temp = r.reward_clip_limit
+            inviter_perm = 0
+            invitee_temp = r.reward_clip_limit
+            invitee_perm = 0
+            inviter_exp = r.expires_at
+            invitee_exp = r.expires_at
+
+        # 最晚临时到期时间
+        valid_exp_list = [d for d in [inviter_exp, invitee_exp, r.expires_at] if d is not None]
+        latest_exp = max(valid_exp_list) if valid_exp_list else None
+
+        if not has_temp:
+            status_label = "永久有效"
+            status_tag = "tag-info"
+            is_expired = False
+            expires_at_str = "永久有效"
+        else:
+            is_expired = bool(latest_exp and latest_exp <= now)
+            status_label = "已过期" if is_expired else "生效中"
+            status_tag = "tag-off" if is_expired else "tag-ok"
+            expires_at_str = latest_exp.strftime("%Y-%m-%d %H:%M:%S") if latest_exp else "永久有效"
+
+        def _fmt_reward_desc(perm: int, temp: int, exp: datetime | None) -> str:
+            parts = []
+            if perm > 0:
+                parts.append(f"永久+{perm}")
+            if temp > 0:
+                exp_text = "已到期" if (exp and exp <= now) else f"临时+{temp}"
+                parts.append(exp_text if (exp and exp <= now) else f"临时+{temp}({raw_days}天)")
+            return " / ".join(parts) if parts else f"+{r.reward_clip_limit}"
+
+        inviter_reward_desc = _fmt_reward_desc(inviter_perm, inviter_temp, inviter_exp)
+        invitee_reward_desc = _fmt_reward_desc(invitee_perm, invitee_temp, invitee_exp)
+
+        # 综合奖励描述
+        if inviter_reward_desc == invitee_reward_desc:
+            combined_reward_desc = f"双方各 {inviter_reward_desc}"
+        else:
+            combined_reward_desc = f"邀请人: {inviter_reward_desc}；被邀请人: {invitee_reward_desc}"
+
         items.append(
             {
                 "id": r.id,
@@ -1838,6 +2027,19 @@ def invites_page(
                 "inviter_code": r.inviter.invite_code if r.inviter else "-",
                 "invitee_username": r.invitee.username if r.invitee else "已注销用户",
                 "reward_clip_limit": r.reward_clip_limit,
+                "inviter_perm": inviter_perm,
+                "inviter_temp": inviter_temp,
+                "inviter_reward_desc": inviter_reward_desc,
+                "invitee_perm": invitee_perm,
+                "invitee_temp": invitee_temp,
+                "invitee_reward_desc": invitee_reward_desc,
+                "combined_reward_desc": combined_reward_desc,
+                "valid_days": raw_days or 30,
+                "valid_days_label": valid_days_label,
+                "expires_at": expires_at_str,
+                "status_label": status_label,
+                "status_tag": status_tag,
+                "is_expired": is_expired,
                 "created_at": r.created_at.strftime("%Y-%m-%d %H:%M:%S")
                 if r.created_at
                 else "-",
@@ -1870,15 +2072,21 @@ def save_invite_settings(
     db: Db,
     reward_clip_limit: Annotated[str | None, Form()] = None,
     max_rewards_per_user: Annotated[str | None, Form()] = None,
+    reward_valid_days: Annotated[str | None, Form()] = None,
+    max_permanent_clip_limit: Annotated[str | None, Form()] = None,
     is_enabled: Annotated[str | None, Form()] = None,
 ):
     reward = _parse_int(reward_clip_limit, 5)
     max_rewards = _parse_int(max_rewards_per_user, 0)
+    valid_days = _parse_int(reward_valid_days, 30)
+    max_permanent = _parse_int(max_permanent_clip_limit, 15)
     enabled = is_enabled == "1" or is_enabled == "true" or is_enabled == "on"
     set_invite_config(
         db,
         reward_clip_limit=reward,
         max_rewards_per_user=max_rewards,
+        reward_valid_days=valid_days,
+        max_permanent_clip_limit=max_permanent,
         is_enabled=enabled,
     )
     return RedirectResponse("/admin/invites?msg=settings_saved", status_code=302)

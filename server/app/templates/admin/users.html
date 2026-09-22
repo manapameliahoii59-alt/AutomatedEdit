@@ -13,7 +13,8 @@
     {% if q %}<a href="/admin/users" class="el-button" style="text-decoration: none;">重置</a>{% endif %}
   </form>
   <div class="head-actions">
-    <button type="button" class="el-button" onclick="resetTableLayout('admin_users_table')" title="恢复表格的默认列宽与列顺序">重置表头</button>
+    <button type="button" class="el-button el-button--primary" onclick="openCreateTrialModal()" title="一键生成体验账号（默认7天体验期，到期自动关闭桌面端权限）">⚡ 生成体验账号</button>
+    <button type="button" class="el-button" onclick="openTableSettingsModal('admin_users_table')" title="自定义表格栏位显隐与提示设置">⚙️ 表格设置</button>
   </div>
 </div>
 {% if missing_plan_keys_users %}
@@ -67,6 +68,150 @@
   <div id="user-grid"></div>
 </div>
 {{ pager("/admin/users", page, total_pages, total, q) }}
+
+<!-- 模态框 1：生成体验账号配置 -->
+<div class="missing-keys-dialog-mask" id="create-trial-modal" style="display: none; align-items: center; justify-content: center; z-index: 2100;">
+  <div class="missing-keys-dialog" style="max-width: 480px; width: 90%; border-radius: 8px; box-shadow: 0 16px 36px rgba(0,0,0,0.18); overflow: hidden; background: #fff;">
+    <div class="missing-keys-dialog__head" style="padding: 16px 20px; background: #fff; border-bottom: 1px solid #ebeef5; display: flex; align-items: center; justify-content: space-between;">
+      <h3 class="missing-keys-dialog__title" style="font-size: 16px; margin: 0; display: flex; align-items: center; gap: 8px; color: #303133;">
+        <span style="display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 26px; border-radius: 50%; background: #ecf5ff; color: #409eff; font-size: 14px; font-weight: bold;">⚡</span>
+        一键生成体验账号
+      </h3>
+      <button type="button" class="missing-keys-dialog__close" onclick="closeCreateTrialModal()">&times;</button>
+    </div>
+    <div class="missing-keys-dialog__body" style="padding: 20px; font-size: 13px; color: #606266; line-height: 1.5; max-height: 70vh; overflow-y: auto;">
+      <div style="background: #fdf6ec; border: 1px solid #faecd8; border-radius: 6px; padding: 10px 14px; color: #e6a23c; font-size: 12px; margin-bottom: 16px;">
+        💡 提示：该账号默认开通「允许使用桌面端」权限，体验期结束后系统将自动关闭桌面端访问权限。
+      </div>
+
+      <!-- 体验天数 -->
+      <div style="margin-bottom: 16px;">
+        <label class="lbl-strong" style="display: block; font-weight: 600; margin-bottom: 6px; color: #303133;">体验天数 (天)</label>
+        <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
+          <div class="el-input" style="width: 100px;">
+            <div class="el-input__wrapper">
+              <input class="el-input__inner" type="number" id="trial-days" value="7" min="1" max="365" oninput="updateTrialExpiryPreview()">
+            </div>
+          </div>
+          <button type="button" class="el-button btn-sm" onclick="setQuickTrialDays(3)" style="padding: 4px 10px; font-size: 12px;">3天</button>
+          <button type="button" class="el-button btn-sm" onclick="setQuickTrialDays(7)" style="padding: 4px 10px; font-size: 12px; border-color: #409eff; color: #409eff;">7天(默认)</button>
+          <button type="button" class="el-button btn-sm" onclick="setQuickTrialDays(14)" style="padding: 4px 10px; font-size: 12px;">14天</button>
+          <button type="button" class="el-button btn-sm" onclick="setQuickTrialDays(30)" style="padding: 4px 10px; font-size: 12px;">30天</button>
+        </div>
+        <div id="trial-expiry-preview" style="margin-top: 6px; font-size: 12px; color: #409eff; font-weight: 500;"></div>
+      </div>
+
+      <!-- 账号设置 -->
+      <div style="margin-bottom: 16px;">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+          <label class="lbl-strong" style="font-weight: 600; margin: 0; color: #303133;">体验账号名称</label>
+          <button type="button" class="el-button btn-sm" onclick="refreshRandomUsername()" style="padding: 2px 8px; font-size: 11px; height: 22px;">🔄 换一个</button>
+        </div>
+        <div class="el-input">
+          <div class="el-input__wrapper">
+            <input class="el-input__inner" type="text" id="trial-username" placeholder="自动随机 trial_xxxxxx" autocomplete="off">
+          </div>
+        </div>
+        <div style="font-size: 11px; color: #909399; margin-top: 4px;">支持留空自动随机生成，也可手动修改为专属指定账号</div>
+      </div>
+
+      <!-- 密码设置 -->
+      <div style="margin-bottom: 16px;">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+          <label class="lbl-strong" style="font-weight: 600; margin: 0; color: #303133;">登录初始密码</label>
+          <button type="button" class="el-button btn-sm" onclick="refreshRandomPassword()" style="padding: 2px 8px; font-size: 11px; height: 22px;">🔄 换一个</button>
+        </div>
+        <div class="el-input">
+          <div class="el-input__wrapper">
+            <input class="el-input__inner" type="text" id="trial-password" placeholder="自动随机 8 位安全密码" autocomplete="off">
+          </div>
+        </div>
+        <div style="font-size: 11px; color: #909399; margin-top: 4px;">客户端登录密码，生成后可在后台用户列表或编辑页随时查看明文</div>
+      </div>
+
+      <!-- 每日额度设置 -->
+      <div style="padding-top: 10px; border-top: 1px dashed #ebeef5;">
+        <label class="lbl-strong" style="display: block; font-weight: 600; margin-bottom: 8px; color: #303133;">每日限额配置（首/天）</label>
+        <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px;">
+          <div>
+            <div style="font-size: 12px; color: #606266; margin-bottom: 4px;">剪辑上限</div>
+            <div class="el-input">
+              <div class="el-input__wrapper">
+                <input class="el-input__inner" type="number" id="trial-clip-limit" value="30" min="0">
+              </div>
+            </div>
+          </div>
+          <div>
+            <div style="font-size: 12px; color: #606266; margin-bottom: 4px;">策划上限</div>
+            <div class="el-input">
+              <div class="el-input__wrapper">
+                <input class="el-input__inner" type="number" id="trial-plan-limit" value="30" min="0">
+              </div>
+            </div>
+          </div>
+          <div>
+            <div style="font-size: 12px; color: #606266; margin-bottom: 4px;">下载上限</div>
+            <div class="el-input">
+              <div class="el-input__wrapper">
+                <input class="el-input__inner" type="number" id="trial-download-limit" value="30" min="0">
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="missing-keys-dialog__foot" style="padding: 12px 20px; background: #fafbfc; border-top: 1px solid #ebeef5; display: flex; justify-content: flex-end; gap: 10px;">
+      <button type="button" class="el-button" onclick="closeCreateTrialModal()">取消</button>
+      <button type="button" class="el-button el-button--primary" id="btn-submit-trial" onclick="submitCreateTrial()">立即生成体验账号</button>
+    </div>
+  </div>
+</div>
+
+<!-- 模态框 2：体验账号生成成功与快捷复制 -->
+<div class="missing-keys-dialog-mask" id="trial-success-modal" style="display: none; align-items: center; justify-content: center; z-index: 2200;">
+  <div class="missing-keys-dialog" style="max-width: 460px; width: 90%; border-radius: 8px; box-shadow: 0 16px 36px rgba(0,0,0,0.18); overflow: hidden; background: #fff;">
+    <div class="missing-keys-dialog__head" style="padding: 16px 20px; background: #f0f9eb; border-bottom: 1px solid #e1f3d8; display: flex; align-items: center; justify-content: space-between;">
+      <h3 class="missing-keys-dialog__title" style="font-size: 16px; margin: 0; display: flex; align-items: center; gap: 8px; color: #67c23a;">
+        <span style="font-size: 18px;">🎉</span>
+        体验账号生成成功
+      </h3>
+      <button type="button" class="missing-keys-dialog__close" onclick="finishTrialModal()">&times;</button>
+    </div>
+    <div class="missing-keys-dialog__body" style="padding: 20px; font-size: 13px; color: #606266; line-height: 1.6;">
+      <div style="margin-bottom: 12px; font-size: 13px; color: #303133;">
+        体验账号已创建完毕，到期后系统将<strong>自动关闭桌面端访问权限</strong>：
+      </div>
+      <div style="background: #fafafa; border: 1px solid #ebeef5; border-radius: 6px; padding: 12px 16px; margin-bottom: 14px;">
+        <div style="display: flex; justify-content: space-between; margin-bottom: 6px;">
+          <span style="color: #909399;">登录账号：</span>
+          <strong id="res-username" style="color: #303133; font-family: monospace; font-size: 14px;"></strong>
+        </div>
+        <div style="display: flex; justify-content: space-between; margin-bottom: 6px;">
+          <span style="color: #909399;">登录密码：</span>
+          <strong id="res-password" style="color: #e6a23c; font-family: monospace; font-size: 14px;"></strong>
+        </div>
+        <div style="display: flex; justify-content: space-between; margin-bottom: 6px;">
+          <span style="color: #909399;">体验天数：</span>
+          <span><strong id="res-days">7</strong> 天</span>
+        </div>
+        <div style="display: flex; justify-content: space-between; margin-bottom: 6px;">
+          <span style="color: #909399;">有效期限：</span>
+          <span id="res-expiry" style="color: #409eff; font-weight: 600;"></span>
+        </div>
+        <div style="display: flex; justify-content: space-between;">
+          <span style="color: #909399;">桌面端权限：</span>
+          <span class="tag tag-ok">正常授权（到期自动关闭）</span>
+        </div>
+      </div>
+      <div style="font-size: 12px; color: #909399; margin-bottom: 6px;">已预先为您排版好发送给用户的文本内容：</div>
+      <pre id="res-share-text" style="background: #f4f4f5; border: 1px solid #e4e7ed; border-radius: 6px; padding: 10px 12px; font-size: 12px; color: #303133; white-space: pre-wrap; font-family: Consolas, monospace; line-height: 1.6; margin: 0; user-select: all;"></pre>
+    </div>
+    <div class="missing-keys-dialog__foot" style="padding: 12px 20px; background: #fafbfc; border-top: 1px solid #ebeef5; display: flex; justify-content: flex-end; gap: 10px;">
+      <button type="button" class="el-button el-button--primary" id="btn-copy-credentials" onclick="copyTrialCredentials()">📋 复制账号信息</button>
+      <button type="button" class="el-button" onclick="finishTrialModal()">完成并刷新</button>
+    </div>
+  </div>
+</div>
 {% endblock %}
 {% block scripts %}
 <script>
@@ -102,6 +247,159 @@
         },
       ],
     });
+  }
+
+  // --- 体验账号生成交互逻辑 ---
+  function _randTrialUsername() {
+    const chars = "abcdefhkmnprstuvwxyz23456789";
+    let s = "";
+    for (let i = 0; i < 6; i++) {
+      s += chars.charAt(Math.floor(Math.random() * chars.length));
+    }
+    return "trial_" + s;
+  }
+
+  function _randTrialPassword() {
+    const chars = "abcdefghjkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+    let s = "";
+    for (let i = 0; i < 8; i++) {
+      s += chars.charAt(Math.floor(Math.random() * chars.length));
+    }
+    return s;
+  }
+
+  function updateTrialExpiryPreview() {
+    const days = parseInt(document.getElementById("trial-days").value, 10) || 7;
+    const d = new Date();
+    d.setDate(d.getDate() + days);
+    const yyyy = d.getFullYear();
+    const mm = String(d.getMonth() + 1).padStart(2, "0");
+    const dd = String(d.getDate()).padStart(2, "0");
+    const el = document.getElementById("trial-expiry-preview");
+    if (el) {
+      el.innerText = `（预计到期时间：${yyyy}-${mm}-${dd}，到期自动关闭桌面端）`;
+    }
+  }
+
+  function setQuickTrialDays(days) {
+    const inp = document.getElementById("trial-days");
+    if (inp) {
+      inp.value = days;
+      updateTrialExpiryPreview();
+    }
+  }
+
+  function refreshRandomUsername() {
+    const inp = document.getElementById("trial-username");
+    if (inp) inp.value = _randTrialUsername();
+  }
+
+  function refreshRandomPassword() {
+    const inp = document.getElementById("trial-password");
+    if (inp) inp.value = _randTrialPassword();
+  }
+
+  function openCreateTrialModal() {
+    refreshRandomUsername();
+    refreshRandomPassword();
+    document.getElementById("trial-days").value = "7";
+    document.getElementById("trial-clip-limit").value = "30";
+    document.getElementById("trial-plan-limit").value = "30";
+    document.getElementById("trial-download-limit").value = "30";
+    updateTrialExpiryPreview();
+    const m = document.getElementById("create-trial-modal");
+    if (m) m.style.display = "flex";
+  }
+
+  function closeCreateTrialModal() {
+    const m = document.getElementById("create-trial-modal");
+    if (m) m.style.display = "none";
+  }
+
+  async function submitCreateTrial() {
+    const btn = document.getElementById("btn-submit-trial");
+    if (btn) {
+      btn.disabled = true;
+      btn.innerText = "正在生成…";
+    }
+
+    const payload = {
+      username: (document.getElementById("trial-username").value || "").trim(),
+      password: (document.getElementById("trial-password").value || "").trim(),
+      trial_days: parseInt(document.getElementById("trial-days").value, 10) || 7,
+      daily_clip_limit: parseInt(document.getElementById("trial-clip-limit").value, 10) || 30,
+      daily_plan_limit: parseInt(document.getElementById("trial-plan-limit").value, 10) || 30,
+      daily_download_limit: parseInt(document.getElementById("trial-download-limit").value, 10) || 30,
+    };
+
+    try {
+      const resp = await fetch("/admin/users/create-trial", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      const data = await resp.json();
+      if (!resp.ok || !data.ok) {
+        alert(data.message || "生成失败，请重试");
+        return;
+      }
+      closeCreateTrialModal();
+      openTrialSuccessModal(data);
+    } catch (err) {
+      alert("生成请求失败: " + err);
+    } finally {
+      if (btn) {
+        btn.disabled = false;
+        btn.innerText = "立即生成体验账号";
+      }
+    }
+  }
+
+  function openTrialSuccessModal(data) {
+    const u = data.user || {};
+    document.getElementById("res-username").innerText = u.username || "";
+    document.getElementById("res-password").innerText = u.password || "";
+    document.getElementById("res-days").innerText = u.trial_days || "7";
+    document.getElementById("res-expiry").innerText = u.valid_until || "";
+    document.getElementById("res-share-text").innerText = data.share_text || "";
+
+    const copyBtn = document.getElementById("btn-copy-credentials");
+    if (copyBtn) {
+      copyBtn.innerText = "📋 复制账号信息";
+      copyBtn.style.background = "";
+      copyBtn.style.borderColor = "";
+    }
+
+    const m = document.getElementById("trial-success-modal");
+    if (m) m.style.display = "flex";
+  }
+
+  function closeTrialSuccessModal() {
+    const m = document.getElementById("trial-success-modal");
+    if (m) m.style.display = "none";
+  }
+
+  function finishTrialModal() {
+    closeTrialSuccessModal();
+    window.location.reload();
+  }
+
+  function copyTrialCredentials() {
+    const text = document.getElementById("res-share-text").innerText;
+    if (window.copyTextToClipboard) {
+      window.copyTextToClipboard(text);
+    } else if (navigator.clipboard) {
+      navigator.clipboard.writeText(text);
+    }
+    const btn = document.getElementById("btn-copy-credentials");
+    if (btn) {
+      btn.innerText = "已复制 ✓";
+      btn.style.background = "#67c23a";
+      btn.style.borderColor = "#67c23a";
+    }
+    if (window.showAdminToast) {
+      window.showAdminToast("体验账号信息已复制到剪贴板！", "success");
+    }
   }
 </script>
 {% endblock %}

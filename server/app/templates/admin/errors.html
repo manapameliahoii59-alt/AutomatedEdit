@@ -23,7 +23,7 @@
     </div>
   </div>
   <div class="head-actions" style="display: flex; gap: 8px; align-items: center;">
-    <button type="button" class="el-button" onclick="resetTableLayout('admin_errors_table')" title="恢复表格的默认列宽与列顺序">重置表头</button>
+    <button type="button" class="el-button" onclick="openTableSettingsModal('admin_errors_table')" title="自定义表格栏位显隐与提示设置">⚙️ 表格设置</button>
     <form id="batchResolveForm" method="post" action="/admin/errors/batch-resolve" style="margin: 0;">
       {% if q %}<input type="hidden" name="q" value="{{ q }}">{% endif %}
       <button

@@ -637,14 +637,19 @@
     }
     .ssr-table .empty { text-align: center; color: #909399; padding: 32px 12px; }
     .tag {
-      display: inline-block;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
       padding: 0 8px;
-      height: 22px;
-      line-height: 22px;
+      height: 24px;
+      line-height: 1;
       font-size: 12px;
       border-radius: 4px;
       background: #f4f4f5;
       color: #909399;
+      vertical-align: middle;
+      box-sizing: border-box;
+      white-space: nowrap;
     }
     .tag-ok { background: #f0f9eb; color: #67c23a; }
     .tag-off { background: #fef0f0; color: #f56c6c; }
@@ -1014,3 +1019,262 @@
       .search { min-width: 0; width: 100%; }
       .head { flex-direction: column; align-items: stretch; }
     }
+
+    /* ==========================================================================
+       表格单元格溢出提示浮层 (支持移入交互、划词选区与一键复制)
+       ========================================================================== */
+    .admin-table-tooltip {
+      position: fixed;
+      z-index: 999999;
+      display: none;
+      opacity: 0;
+      pointer-events: none;
+      background: #303133;
+      color: #ffffff;
+      border-radius: 4px;
+      box-shadow: 0 6px 18px rgba(0, 0, 0, 0.22);
+      padding: 8px 12px;
+      font-size: 12px;
+      line-height: 1.5;
+      font-family: inherit;
+      transition: opacity 0.15s cubic-bezier(0.645, 0.045, 0.355, 1);
+      box-sizing: border-box;
+      max-width: min(560px, 92vw);
+      min-width: 40px;
+    }
+    .admin-table-tooltip.is-show {
+      display: block;
+      opacity: 1;
+      pointer-events: auto;
+    }
+    .admin-table-tooltip__content {
+      color: #f0f2f5;
+      word-break: break-all;
+      white-space: pre-wrap;
+      user-select: text;
+      -webkit-user-select: text;
+      cursor: text;
+      overflow: visible;
+    }
+    .admin-table-tooltip__arrow {
+      position: absolute;
+      width: 8px;
+      height: 8px;
+      background: #303133;
+      transform: rotate(45deg);
+      pointer-events: none;
+    }
+    .admin-table-tooltip.placement-top .admin-table-tooltip__arrow {
+      bottom: -4px;
+    }
+    .admin-table-tooltip.placement-bottom .admin-table-tooltip__arrow {
+      top: -4px;
+    }
+
+    /* 隐形悬停过渡桥梁：填充气泡与单元格之间的间隙，确保鼠标移动到气泡过程中不会丢失 hover 状态 */
+    .admin-table-tooltip::before {
+      content: "";
+      position: absolute;
+      left: -10px;
+      right: -10px;
+      height: 18px;
+      pointer-events: auto;
+      background: transparent;
+    }
+    .admin-table-tooltip.placement-top::before {
+      bottom: -16px;
+    }
+    .admin-table-tooltip.placement-bottom::before {
+      top: -16px;
+    }
+
+    /* ==========================================================================
+       表格个性化设置弹窗 (Table Column & Tooltip Settings Modal)
+       ========================================================================== */
+    .admin-table-settings-mask {
+      position: fixed;
+      inset: 0;
+      z-index: 2200;
+      background: rgba(0, 0, 0, 0.45);
+      backdrop-filter: blur(2px);
+      display: none;
+      align-items: center;
+      justify-content: center;
+      opacity: 0;
+      transition: opacity 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+    }
+    .admin-table-settings-mask.is-open {
+      display: flex;
+      opacity: 1;
+    }
+    .admin-table-settings-dialog {
+      width: min(680px, 94vw);
+      max-height: min(88vh, 850px);
+      background: #ffffff;
+      border-radius: 8px;
+      box-shadow: 0 16px 40px rgba(0, 0, 0, 0.22), 0 2px 8px rgba(0, 0, 0, 0.06);
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+      transform: scale(0.94);
+      transition: transform 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+    }
+    .admin-table-settings-mask.is-open .admin-table-settings-dialog {
+      transform: scale(1);
+    }
+    .admin-table-settings-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 16px 20px 14px;
+      border-bottom: 1px solid #ebeef5;
+      background: #fafbfc;
+    }
+    .admin-table-settings-title {
+      margin: 0;
+      font-size: 15px;
+      font-weight: 650;
+      color: #303133;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .admin-table-settings-close {
+      border: none;
+      background: transparent;
+      font-size: 20px;
+      line-height: 1;
+      color: #909399;
+      cursor: pointer;
+      padding: 2px 6px;
+      border-radius: 4px;
+      transition: color 0.15s, background 0.15s;
+    }
+    .admin-table-settings-close:hover {
+      background: #f2f3f5;
+      color: #303133;
+    }
+    .admin-table-settings-body {
+      padding: 18px 20px;
+      font-size: 13px;
+      color: #606266;
+      overflow-y: auto;
+      flex: 1;
+    }
+    .table-settings-tip {
+      background: #fdf6ec;
+      border: 1px solid #faecd8;
+      border-radius: 6px;
+      padding: 10px 14px;
+      color: #e6a23c;
+      font-size: 12px;
+      line-height: 1.5;
+      margin-bottom: 16px;
+      display: flex;
+      align-items: flex-start;
+      gap: 8px;
+    }
+    .table-settings-toolbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 8px 12px;
+      background: #f5f7fa;
+      border-radius: 4px;
+      margin-bottom: 12px;
+      font-size: 12px;
+    }
+    .table-settings-toolbar .toolbar-left {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      color: #606266;
+      font-weight: 600;
+    }
+    .table-settings-toolbar .toolbar-right {
+      display: flex;
+      gap: 12px;
+    }
+    .table-settings-toolbar a {
+      color: #409eff;
+      text-decoration: none;
+      cursor: pointer;
+      user-select: none;
+    }
+    .table-settings-toolbar a:hover {
+      text-decoration: underline;
+    }
+    .table-col-list {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      max-height: min(54vh, 480px);
+      overflow-y: auto;
+      padding-right: 4px;
+    }
+    .table-col-item {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 11px 16px;
+      border: 1px solid #ebeef5;
+      border-radius: 6px;
+      background: #ffffff;
+      transition: all 0.15s ease;
+    }
+    .table-col-item:hover {
+      background: #fafbfc;
+      border-color: #dcdfe6;
+    }
+    .table-col-item.is-disabled {
+      opacity: 0.55;
+      background: #f9fafc;
+    }
+    .table-col-name {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-weight: 500;
+      color: #303133;
+      font-size: 13px;
+    }
+    .table-col-options {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+    }
+    .table-col-check {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      cursor: pointer;
+      font-size: 12px;
+      color: #606266;
+      user-select: none;
+    }
+    .table-col-check input[type="checkbox"] {
+      cursor: pointer;
+      accent-color: #409eff;
+      width: 15px;
+      height: 15px;
+      margin: 0;
+    }
+    .admin-table-settings-foot {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 14px 20px;
+      border-top: 1px solid #ebeef5;
+      background: #fafbfc;
+    }
+    .admin-table-settings-foot .foot-left {
+      display: flex;
+      align-items: center;
+    }
+    .admin-table-settings-foot .foot-right {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+

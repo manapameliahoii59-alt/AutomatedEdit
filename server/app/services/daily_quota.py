@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import datetime
 
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
@@ -56,10 +57,24 @@ def _resolve_limit(user_value: int) -> int:
     return max(0, int(user_value or 0))
 
 
-def get_user_limits(user: User) -> tuple[int, int, int]:
+def get_user_limits(
+    user: User, db: Session | None = None, now: datetime | None = None
+) -> tuple[int, int, int]:
+    base_clip = _resolve_limit(user.daily_clip_limit)
+    if base_clip > 0 and db is not None:
+        try:
+            from app.services.invite_service import get_user_active_invite_bonus
+
+            bonus = get_user_active_invite_bonus(db, user.id, now=now)
+            clip_limit = base_clip + bonus
+        except Exception:
+            clip_limit = base_clip
+    else:
+        clip_limit = base_clip
+
     return (
         _resolve_limit(user.daily_plan_limit),
-        _resolve_limit(user.daily_clip_limit),
+        clip_limit,
         _resolve_limit(getattr(user, "daily_download_limit", 0) or 0),
     )
 
@@ -81,8 +96,10 @@ def _resolve_enabled_tabs(user: User) -> list[str]:
     return tabs
 
 
-def build_daily_quota(db: Session, user: User) -> DailyQuotaOut:
-    plan_limit, clip_limit, download_limit = get_user_limits(user)
+def build_daily_quota(
+    db: Session, user: User, now: datetime | None = None
+) -> DailyQuotaOut:
+    plan_limit, clip_limit, download_limit = get_user_limits(user, db=db, now=now)
     download_enabled = _is_download_enabled(user)
     enabled_tabs = _resolve_enabled_tabs(user)
     row = _get_or_create_today(db, user.id)

@@ -34,6 +34,7 @@ class Settings(BaseSettings):
     # 通义千问 Tongyi 策划通道
     tongyi_api_url: str = "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions"
     tongyi_model: str = "qwen3.7-flash"
+    dashscope_api_key: str = ""
 
     # 对外访问根地址（反代后建议配置，用于拼安装包下载链接）
     # 例：https://api.example.com

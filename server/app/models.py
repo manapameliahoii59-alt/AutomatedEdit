@@ -251,6 +251,13 @@ class UserInviteRecord(Base):
     inviter_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
     invitee_id: Mapped[int] = mapped_column(ForeignKey("users.id"), unique=True, index=True)
     reward_clip_limit: Mapped[int] = mapped_column(Integer, default=5)
+    valid_days: Mapped[int] = mapped_column(Integer, default=30)
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, default=None, index=True)
+    inviter_rewarded: Mapped[bool] = mapped_column(Boolean, default=True)
+    inviter_temp_reward: Mapped[int] = mapped_column(Integer, default=0)
+    inviter_expires_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, default=None, index=True)
+    invitee_temp_reward: Mapped[int] = mapped_column(Integer, default=0)
+    invitee_expires_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, default=None, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), index=True)
 
     inviter: Mapped["User"] = relationship("User", foreign_keys=[inviter_id])

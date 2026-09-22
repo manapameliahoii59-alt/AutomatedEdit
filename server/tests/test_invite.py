@@ -1,6 +1,7 @@
 """用户专属邀请码生成、防刷防互邀校验、动态奖励与管理后台测试。"""
 
 import sys
+from datetime import datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -24,6 +25,8 @@ from app.services.invite_service import (
     bind_invite_code,
     ensure_user_invite_code,
     get_invite_config,
+    get_user_active_invite_bonus,
+    get_user_effective_clip_limit,
     get_user_invite_info,
     set_invite_config,
 )
@@ -84,11 +87,11 @@ def test_bind_invite_code_success(in_memory_db):
     assert res["new_clip_limit"] == 35
     assert res["inviter_username"] == "inviter"
 
-    # 验证双方配额均增加 5
+    # 验证双方有效配额均增加 5，且流水记录正确包含 30 天有效期
     db.refresh(inviter)
     db.refresh(invitee)
-    assert inviter.daily_clip_limit == 35
-    assert invitee.daily_clip_limit == 35
+    assert get_user_effective_clip_limit(db, inviter) == 35
+    assert get_user_effective_clip_limit(db, invitee) == 35
     assert invitee.invited_by_id == inviter.id
 
     # 验证流水记录
@@ -97,6 +100,8 @@ def test_bind_invite_code_success(in_memory_db):
     assert records[0].inviter_id == inviter.id
     assert records[0].invitee_id == invitee.id
     assert records[0].reward_clip_limit == 5
+    assert records[0].valid_days == 30
+    assert records[0].expires_at is not None
 
 
 def test_cannot_bind_self(in_memory_db):
@@ -172,8 +177,8 @@ def test_dynamic_reward_config(in_memory_db):
     assert res["reward"] == 10
     assert res["new_clip_limit"] == 40
 
-    db.refresh(a)
-    assert a.daily_clip_limit == 40
+    assert get_user_effective_clip_limit(db, a) == 40
+    assert get_user_effective_clip_limit(db, b) == 40
 
 
 def test_max_rewards_per_user_limit(in_memory_db):
@@ -188,18 +193,16 @@ def test_max_rewards_per_user_limit(in_memory_db):
 
     # 第 1 次被邀请，双方都加
     bind_invite_code(db, b, code)
-    db.refresh(inviter)
-    assert inviter.daily_clip_limit == 35
+    assert get_user_effective_clip_limit(db, inviter) == 35
+    assert get_user_effective_clip_limit(db, b) == 35
 
     # 第 2 次被邀请，inviter 达到上限不再加，但 c 依然能获得奖励
     res = bind_invite_code(db, c, code)
     assert res["reward"] == 5
     assert res["new_clip_limit"] == 35
 
-    db.refresh(inviter)
-    db.refresh(c)
-    assert inviter.daily_clip_limit == 35  # 上限生效，保持 35 不再加
-    assert c.daily_clip_limit == 35       # 被邀请人正常增加
+    assert get_user_effective_clip_limit(db, inviter) == 35  # 上限生效，保持 35 不再加
+    assert get_user_effective_clip_limit(db, c) == 35  # 被邀请人正常增加
 
 
 def test_feature_disabled(in_memory_db):
@@ -312,6 +315,8 @@ def test_admin_invites_page_and_settings(monkeypatch, in_memory_db):
             data={
                 "reward_clip_limit": "8",
                 "max_rewards_per_user": "50",
+                "reward_valid_days": "15",
+                "max_permanent_clip_limit": "20",
                 "is_enabled": "1",
             },
             follow_redirects=False,
@@ -322,5 +327,207 @@ def test_admin_invites_page_and_settings(monkeypatch, in_memory_db):
         cfg = get_invite_config(db)
         assert cfg["reward_clip_limit"] == 8
         assert cfg["max_rewards_per_user"] == 50
+        assert cfg["reward_valid_days"] == 15
+        assert cfg["max_permanent_clip_limit"] == 20
         assert cfg["is_enabled"] is True
+
+
+def test_invite_reward_expiry_after_30_days(in_memory_db):
+    """测试邀请奖励在30天有效期内生效，逾期后平稳自然失效。"""
+    from app.services.daily_quota import build_daily_quota
+
+    db = in_memory_db
+    set_invite_config(db, reward_clip_limit=5, reward_valid_days=30, max_rewards_per_user=10)
+
+    user_a = _create_test_user(db, "userA", clip_limit=30)
+    user_b = _create_test_user(db, "userB", clip_limit=30)
+    code_a = ensure_user_invite_code(db, user_a)
+
+    bind_res = bind_invite_code(db, user_b, code_a)
+    assert bind_res["reward"] == 5
+    assert bind_res["valid_days"] == 30
+    assert bind_res["expires_at"] is not None
+
+    record = db.query(UserInviteRecord).filter_by(invitee_id=user_b.id).first()
+    assert record is not None
+    assert record.valid_days == 30
+    assert record.expires_at is not None
+
+    start_time = record.created_at or datetime.now()
+
+    # 1. 刚绑定或 15 天后：在有效期内，双方额度均为 35
+    day15 = start_time + timedelta(days=15)
+    assert get_user_active_invite_bonus(db, user_a.id, now=day15) == 5
+    assert get_user_effective_clip_limit(db, user_a, now=day15) == 35
+    assert get_user_active_invite_bonus(db, user_b.id, now=day15) == 5
+    assert get_user_effective_clip_limit(db, user_b, now=day15) == 35
+
+    # 验证 daily_quota 服务配额正确加上临时加成
+    quota_day15 = build_daily_quota(db, user_a, now=day15)
+    assert quota_day15.clip_limit == 35
+
+    # 2. 31 天后：已超过 30 天，临时奖励自然失效，回退至基准额度 30
+    day31 = start_time + timedelta(days=31)
+    assert get_user_active_invite_bonus(db, user_a.id, now=day31) == 0
+    assert get_user_effective_clip_limit(db, user_a, now=day31) == 30
+    assert get_user_active_invite_bonus(db, user_b.id, now=day31) == 0
+    assert get_user_effective_clip_limit(db, user_b, now=day31) == 30
+
+    # 验证 daily_quota 服务在过期后回退
+    quota_day31 = build_daily_quota(db, user_a, now=day31)
+    assert quota_day31.clip_limit == 30
+
+    # 3. 验证个人中心邀请信息接口在过期前后的展示
+    info_day15 = get_user_invite_info(db, user_a, now=day15)
+    assert info_day15["active_bonus_clips"] == 5
+    assert info_day15["total_reward_clips"] == 5
+    assert info_day15["daily_clip_limit"] == 35
+
+    info_day31 = get_user_invite_info(db, user_a, now=day31)
+    assert info_day31["active_bonus_clips"] == 0
+    assert info_day31["total_reward_clips"] == 5  # 历史累计奖励依然记录
+    assert info_day31["daily_clip_limit"] == 30
+
+
+def test_invite_reward_permanent_when_zero(in_memory_db):
+    """测试 reward_valid_days 为 0 时为永久奖励。"""
+    db = in_memory_db
+    set_invite_config(db, reward_clip_limit=5, reward_valid_days=0)
+
+    user_a = _create_test_user(db, "userA", clip_limit=30)
+    user_b = _create_test_user(db, "userB", clip_limit=30)
+    code_a = ensure_user_invite_code(db, user_a)
+
+    bind_res = bind_invite_code(db, user_b, code_a)
+    assert bind_res["valid_days"] == 0
+    assert bind_res["expires_at"] is None
+
+    record = db.query(UserInviteRecord).filter_by(invitee_id=user_b.id).first()
+    assert record.valid_days == 0
+    assert record.expires_at is None
+
+    # 即使过了 365 天，依然有效
+    far_future = datetime.now() + timedelta(days=365)
+    assert get_user_active_invite_bonus(db, user_a.id, now=far_future) == 5
+    assert get_user_effective_clip_limit(db, user_a, now=far_future) == 35
+    assert get_user_effective_clip_limit(db, user_b, now=far_future) == 35
+
+
+def test_invite_permanent_cap_at_15_and_temp_beyond(in_memory_db):
+    """测试用户需求核心逻辑：
+    1. 初始剪辑上限为 10 首；
+    2. 邀请 1 个人增加 5 首，未超永久上限 15，永久额度变为 15，临时额度为 0；
+    3. 再次邀请 1 个人，已达永久上限 15，超出部分记为 30 天临时额度 5，总有效额度为 20；
+    4. 30 天临时额度到期后，额度自然回落至永久额度 15（不会回到 10）。
+    """
+    db = in_memory_db
+    set_invite_config(
+        db,
+        reward_clip_limit=5,
+        reward_valid_days=30,
+        max_permanent_clip_limit=15,
+        max_rewards_per_user=0,
+    )
+
+    user_a = _create_test_user(db, "userA", clip_limit=10)
+    user_b = _create_test_user(db, "userB", clip_limit=10)
+    user_c = _create_test_user(db, "userC", clip_limit=10)
+
+    code_a = ensure_user_invite_code(db, user_a)
+
+    # 1. user_a 邀请 user_b
+    bind_res_b = bind_invite_code(db, user_b, code_a)
+    assert bind_res_b["reward"] == 5
+
+    # user_a 永久额度从 10 提升至 15
+    db.refresh(user_a)
+    db.refresh(user_b)
+    assert user_a.daily_clip_limit == 15
+    assert get_user_active_invite_bonus(db, user_a.id) == 0
+    assert get_user_effective_clip_limit(db, user_a) == 15
+
+    # user_b 永久额度从 10 提升至 15
+    assert user_b.daily_clip_limit == 15
+    assert get_user_active_invite_bonus(db, user_b.id) == 0
+    assert get_user_effective_clip_limit(db, user_b) == 15
+
+    rec_b = db.query(UserInviteRecord).filter_by(invitee_id=user_b.id).first()
+    assert rec_b.inviter_temp_reward == 0
+    assert rec_b.invitee_temp_reward == 0
+
+    # 2. user_a 再次邀请 user_c
+    bind_res_c = bind_invite_code(db, user_c, code_a)
+    assert bind_res_c["reward"] == 5
+
+    db.refresh(user_a)
+    db.refresh(user_c)
+    # user_a 已达到 15 永久上限，daily_clip_limit 依然保持 15
+    assert user_a.daily_clip_limit == 15
+    # 超出部分 5 记为临时额度
+    assert get_user_active_invite_bonus(db, user_a.id) == 5
+    # 总有效上限 = 15(永久) + 5(临时) = 20
+    assert get_user_effective_clip_limit(db, user_a) == 20
+
+    # user_c 初始为 10，空间为 5，因此全部增加为永久额度 15
+    assert user_c.daily_clip_limit == 15
+    assert get_user_active_invite_bonus(db, user_c.id) == 0
+    assert get_user_effective_clip_limit(db, user_c) == 15
+
+    rec_c = db.query(UserInviteRecord).filter_by(invitee_id=user_c.id).first()
+    assert rec_c.inviter_temp_reward == 5
+    assert rec_c.inviter_expires_at is not None
+    assert rec_c.invitee_temp_reward == 0
+
+    # 3. 经过 15 天：临时额度仍在有效期内，user_a 仍为 20
+    day15 = datetime.now() + timedelta(days=15)
+    assert get_user_active_invite_bonus(db, user_a.id, now=day15) == 5
+    assert get_user_effective_clip_limit(db, user_a, now=day15) == 20
+
+    # 4. 经过 31 天：临时额度过期，user_a 额度平稳回归永久上限 15，而不是回退到 10
+    day31 = datetime.now() + timedelta(days=31)
+    assert get_user_active_invite_bonus(db, user_a.id, now=day31) == 0
+    assert get_user_effective_clip_limit(db, user_a, now=day31) == 15
+
+    # user_b 与 user_c 均为永久额度 15，不受 30 天限制
+    assert get_user_effective_clip_limit(db, user_b, now=day31) == 15
+    assert get_user_effective_clip_limit(db, user_c, now=day31) == 15
+
+
+def test_invite_partial_split_headroom(in_memory_db):
+    """测试部分空间填补永久额度、剩余部分转为临时额度的场景：
+    例如用户当前额度为 12，永久上限为 15，单次奖励为 5。
+    空间仅剩 3：
+    - 永久提升 +3（物理额度变 15）
+    - 临时提升 +2（30天有效期）
+    - 当前总有效额度 = 15 + 2 = 17
+    - 30天后临时额度失效，回归 15
+    """
+    db = in_memory_db
+    set_invite_config(
+        db,
+        reward_clip_limit=5,
+        reward_valid_days=30,
+        max_permanent_clip_limit=15,
+    )
+
+    user_a = _create_test_user(db, "userA", clip_limit=12)
+    user_b = _create_test_user(db, "userB", clip_limit=10)
+    code_a = ensure_user_invite_code(db, user_a)
+
+    bind_invite_code(db, user_b, code_a)
+
+    db.refresh(user_a)
+    assert user_a.daily_clip_limit == 15  # 12 + 3 = 15 永久
+    assert get_user_active_invite_bonus(db, user_a.id) == 2  # 临时 +2
+    assert get_user_effective_clip_limit(db, user_a) == 17
+
+    rec = db.query(UserInviteRecord).filter_by(invitee_id=user_b.id).first()
+    assert rec.inviter_temp_reward == 2
+    assert rec.invitee_temp_reward == 0  # user_b 从 10 升到 15 全部是永久
+
+    day31 = datetime.now() + timedelta(days=31)
+    assert get_user_active_invite_bonus(db, user_a.id, now=day31) == 0
+    assert get_user_effective_clip_limit(db, user_a, now=day31) == 15
+
+
 

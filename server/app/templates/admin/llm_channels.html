@@ -130,11 +130,18 @@
   .admin-table tr:hover { background: #fafbfc; }
 
   .tag {
-    display: inline-block;
-    padding: 2px 8px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    height: 24px;
+    padding: 0 8px;
     border-radius: 4px;
     font-size: 12px;
     font-weight: 500;
+    line-height: 1;
+    vertical-align: middle;
+    box-sizing: border-box;
+    white-space: nowrap;
   }
   .tag-primary { background: #ecf5ff; color: #409eff; border: 1px solid #d9ecff; }
   .tag-success { background: #f0f9eb; color: #67c23a; border: 1px solid #e1f3d8; }
@@ -144,8 +151,11 @@
   .tag-sf { background: #f9f0ff; color: #722ed1; border: 1px solid #d3adf7; }
   .tag-ty { background: #e6f7ff; color: #096dd9; border: 1px solid #91d5ff; }
   .preset-pill {
-    display: inline-block;
-    padding: 2px 8px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    height: 24px;
+    padding: 0 8px;
     margin: 3px 4px 3px 0;
     border-radius: 4px;
     background: #f4f4f5;
@@ -154,6 +164,9 @@
     cursor: pointer;
     font-size: 12px;
     font-family: monospace;
+    line-height: 1;
+    vertical-align: middle;
+    box-sizing: border-box;
     transition: all 0.15s ease-in-out;
     user-select: none;
   }
@@ -255,6 +268,83 @@
     font-size: 13px;
     color: #606266;
     cursor: pointer;
+  }
+  .channel-select-wrap {
+    margin-top: 4px;
+  }
+  .channel-tag-box {
+    display: inline-flex;
+    align-items: center;
+    height: 28px;
+    padding: 0 8px 0 10px;
+    background: #ecf5ff;
+    color: #409eff;
+    border: 1px solid #d9ecff;
+    border-radius: 4px;
+    font-size: 12px;
+    line-height: 1;
+    gap: 6px;
+    user-select: none;
+    transition: all 0.15s ease;
+    box-sizing: border-box;
+    vertical-align: middle;
+  }
+  .channel-tag-box .tag-priority {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    height: 18px;
+    line-height: 1;
+    font-weight: 700;
+    color: #096dd9;
+    background: #e6f7ff;
+    padding: 0 5px;
+    border-radius: 3px;
+    font-size: 11px;
+    box-sizing: border-box;
+  }
+  .channel-tag-box .tag-text {
+    display: inline-flex;
+    align-items: center;
+    line-height: 1;
+  }
+  .channel-tag-box .tag-remove {
+    cursor: pointer;
+    font-size: 14px;
+    line-height: 1;
+    color: #909399;
+    margin-left: 2px;
+    border-radius: 50%;
+    width: 16px;
+    height: 16px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.15s;
+    font-weight: bold;
+    box-sizing: border-box;
+  }
+  .channel-tag-box .tag-remove:hover {
+    background-color: #f56c6c;
+    color: #ffffff;
+  }
+  .channel-tags-container {
+    min-height: 46px;
+    margin-top: 8px;
+    padding: 8px 10px;
+    background: #fafbfc;
+    border: 1px dashed #dcdfe6;
+    border-radius: 4px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    align-items: center;
+    box-sizing: border-box;
+  }
+  .channel-tags-empty {
+    color: #909399;
+    font-size: 12px;
+    user-select: none;
   }
 </style>
 
@@ -517,7 +607,7 @@
         <div class="form-row">
           <label for="ch_keys">策划 API Keys (支持多个 Key，逗号分隔，系统自动轮询)</label>
           <textarea class="form-textarea" id="ch_keys" name="api_keys" rows="3" placeholder="sk-xxx, sk-yyy"></textarea>
-          <div class="form-tip">留空时且选 DeepSeek 时可回落到全局 .env 配置。</div>
+          <div class="form-tip">留空时：DeepSeek 可回落到 DEEPSEEK_API_KEYS；通义千问可回落到 DASHSCOPE_API_KEY。</div>
         </div>
         <div style="display: flex; gap: 20px;">
           <div class="form-row" style="flex: 1;">
@@ -555,7 +645,7 @@
       <h3 id="groupModalTitle">新建调度策略组</h3>
       <button type="button" class="modal-close" onclick="closeGroupModal()">&times;</button>
     </div>
-    <form action="/admin/channels/group/save" method="post" id="groupForm">
+    <form action="/admin/channels/group/save" method="post" id="groupForm" onsubmit="return validateGroupForm()">
       <div class="modal-body">
         <input type="hidden" name="group_id" id="grp_id" value="">
         <div class="form-row">
@@ -578,18 +668,25 @@
           </div>
         </div>
         <div class="form-row">
-          <label>选择参与此组的模型渠道（可按优先级勾选） <span style="color: #f56c6c;">*</span></label>
-          <div style="display: flex; flex-direction: column; gap: 8px; max-height: 180px; overflow-y: auto; border: 1px solid #dcdfe6; padding: 10px; border-radius: 4px;">
-            {% for ch in channels %}
-            <label class="form-check">
-              <input type="checkbox" name="channel_ids" value="{{ ch.id }}" class="grp-ch-checkbox" id="grp_ch_{{ ch.id }}">
-              <span>[P{{ ch.priority }}] {{ ch.name }} ({{ ch.provider_label or ch.provider }} / {{ ch.model_name }})</span>
-            </label>
-            {% else %}
-            <div style="color: #909399; font-size: 12px;">暂无渠道，请先创建渠道。</div>
-            {% endfor %}
+          <label for="grp_channel_select">选择参与此组的模型渠道（按调度优先级添加） <span style="color: #f56c6c;">*</span></label>
+          <div class="channel-select-wrap">
+            <select id="grp_channel_select" class="form-select" onchange="onSelectChannelToAdd(this.value)">
+              <option value="">-- 点击下拉选择模型渠道加入此策略组 --</option>
+              {% for ch in channels %}
+              <option value="{{ ch.id }}" id="grp_opt_ch_{{ ch.id }}">
+                [P{{ ch.priority }}] {{ ch.name }} ({{ ch.provider_label or ch.provider }} / {{ ch.model_name }})
+              </option>
+              {% else %}
+              <option value="" disabled>暂无可用的模型渠道，请先创建渠道</option>
+              {% endfor %}
+            </select>
           </div>
-          <div class="form-tip">串行模式下将按照渠道列表的优先级 P1 → P2 → P3 依次接力。</div>
+          <div id="grp_selected_tags_container" class="channel-tags-container">
+            <span class="channel-tags-empty">尚未选择任何模型渠道，请从上方下拉框选择添加</span>
+          </div>
+          <!-- 隐藏提交字段容器 -->
+          <div id="grp_hidden_channel_inputs"></div>
+          <div class="form-tip">💡 提示：从上方下拉框选择渠道即可加入本策略组，下方将以 Tag 标签展示已选渠道；点击 Tag 上的 ✕ 即可移除。串行模式将按照选中渠道的优先级 P1 → P2 → P3 依次接力。</div>
         </div>
         <div class="form-row">
           <label for="grp_loops">串行下单渠道最大尝试轮次</label>
@@ -612,6 +709,101 @@
 </div>
 
 <script>
+const ALL_CHANNELS = {{ channels|tojson|safe }};
+let selectedGroupChannelIds = [];
+
+function escapeHtml(str) {
+  if (!str) return '';
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
+}
+
+function onSelectChannelToAdd(val) {
+  if (!val) return;
+  const chId = parseInt(val, 10);
+  if (!isNaN(chId) && !selectedGroupChannelIds.includes(chId)) {
+    selectedGroupChannelIds.push(chId);
+    renderSelectedChannelTags();
+  }
+  const sel = document.getElementById('grp_channel_select');
+  if (sel) sel.value = '';
+}
+
+function removeSelectedChannel(chId) {
+  selectedGroupChannelIds = selectedGroupChannelIds.filter(id => id !== chId);
+  renderSelectedChannelTags();
+}
+
+function renderSelectedChannelTags() {
+  const container = document.getElementById('grp_selected_tags_container');
+  const hiddenInputs = document.getElementById('grp_hidden_channel_inputs');
+  const selectElem = document.getElementById('grp_channel_select');
+  if (!container || !hiddenInputs) return;
+
+  container.innerHTML = '';
+  hiddenInputs.innerHTML = '';
+
+  if (selectedGroupChannelIds.length === 0) {
+    container.innerHTML = '<span class="channel-tags-empty">尚未选择任何模型渠道，请从上方下拉框选择添加</span>';
+  } else {
+    selectedGroupChannelIds.forEach((id, index) => {
+      const ch = ALL_CHANNELS.find(c => c.id === id);
+      const tag = document.createElement('div');
+      tag.className = 'channel-tag-box';
+
+      const priorityText = ch ? `P${ch.priority}` : `#${index + 1}`;
+      const nameText = ch ? ch.name : `渠道 #${id}`;
+      const modelText = ch ? `${ch.provider_label || ch.provider} / ${ch.model_name}` : '';
+
+      tag.innerHTML = `
+        <span class="tag-priority">${priorityText}</span>
+        <span class="tag-text"><strong>${escapeHtml(nameText)}</strong>&nbsp;(${escapeHtml(modelText)})</span>
+        <span class="tag-remove" title="移除此渠道" onclick="removeSelectedChannel(${id})">&times;</span>
+      `;
+      container.appendChild(tag);
+
+      const input = document.createElement('input');
+      input.type = 'hidden';
+      input.name = 'channel_ids';
+      input.value = id;
+      hiddenInputs.appendChild(input);
+    });
+  }
+
+  if (selectElem) {
+    Array.from(selectElem.options).forEach(opt => {
+      if (!opt.value) return;
+      const optId = parseInt(opt.value, 10);
+      const isSelected = selectedGroupChannelIds.includes(optId);
+      opt.disabled = isSelected;
+      const ch = ALL_CHANNELS.find(c => c.id === optId);
+      if (ch) {
+        opt.text = `[P${ch.priority}] ${ch.name} (${ch.provider_label || ch.provider} / ${ch.model_name})${isSelected ? ' (已添加)' : ''}`;
+      }
+    });
+  }
+}
+
+function validateGroupForm() {
+  const nameInput = document.getElementById('grp_name');
+  if (!nameInput || !nameInput.value.trim()) {
+    alert('策略组名称不能为空！');
+    if (nameInput) nameInput.focus();
+    return false;
+  }
+  if (selectedGroupChannelIds.length === 0) {
+    alert('请从下拉框中至少选择一个参与此组的模型渠道！');
+    const sel = document.getElementById('grp_channel_select');
+    if (sel) sel.focus();
+    return false;
+  }
+  return true;
+}
+
 const PROVIDER_METAS = {
   deepseek: {
     defaultModel: 'deepseek-flash',
@@ -644,10 +836,10 @@ const PROVIDER_METAS = {
     nameHint: '如：硅基流动 Qwen3.8-27B'
   },
   tongyi: {
-    defaultModel: 'qwen3.7-flash',
-    models: ['qwen3.7-flash'],
-    url: 'https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions',
-    nameHint: '如：通义千问 Qwen3.7-Flash'
+    defaultModel: 'qwen3.8-omni-flash',
+    models: ['qwen3.8-omni-flash', 'qwen3.7-flash'],
+    url: 'https://maas.qianwenaiapi.com/compatible-mode/v1/chat/completions',
+    nameHint: '如：通义千问 Qwen3.8-Omni-Flash'
   }
 };
 
@@ -805,7 +997,9 @@ function openGroupModal() {
   document.getElementById('grp_mode_serial').checked = true;
   document.getElementById('grp_loops').value = 2;
   document.getElementById('grp_default').checked = false;
-  document.querySelectorAll('.grp-ch-checkbox').forEach(cb => cb.checked = true);
+  // 新建调度策略组时，不要默认全选，初始为空
+  selectedGroupChannelIds = [];
+  renderSelectedChannelTags();
   document.getElementById('groupModal').classList.add('is-open');
 }
 
@@ -821,15 +1015,19 @@ function editGroup(g) {
   document.getElementById('grp_loops').value = g.max_loops_per_channel || 2;
   document.getElementById('grp_default').checked = !!g.is_default;
 
-  const activeIds = (g.channel_ids || '').split(',').map(s => s.trim());
-  document.querySelectorAll('.grp-ch-checkbox').forEach(cb => {
-    cb.checked = activeIds.includes(cb.value);
-  });
+  const rawIds = (g.channel_ids || '')
+    .split(',')
+    .map(s => parseInt(s.trim(), 10))
+    .filter(n => !isNaN(n) && n > 0);
+  selectedGroupChannelIds = rawIds;
+  renderSelectedChannelTags();
   document.getElementById('groupModal').classList.add('is-open');
 }
 
 function closeGroupModal() {
   document.getElementById('groupModal').classList.remove('is-open');
+  selectedGroupChannelIds = [];
+  renderSelectedChannelTags();
 }
 
 async function deleteChannelConfirm(channelId, channelName) {

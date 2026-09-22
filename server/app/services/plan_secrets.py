@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from typing import TypedDict
 
 from sqlalchemy.orm import Session
@@ -72,6 +73,10 @@ PLAN_LLM_PRESET_CHOICES: tuple[tuple[str, str], ...] = (
     (
         f"{PLAN_LLM_PROVIDER_SILICONFLOW}|deepseek-ai/DeepSeek-V3.2",
         "硅基流动 / deepseek-ai/DeepSeek-V3.2",
+    ),
+    (
+        f"{PLAN_LLM_PROVIDER_TONGYI}|qwen3.8-omni-flash",
+        "通义千问 / Qwen3.8-Omni-Flash",
     ),
     (
         f"{PLAN_LLM_PROVIDER_TONGYI}|qwen3.7-flash",
@@ -238,7 +243,12 @@ def resolve_plan_llm_config(db: Session, user_id: int) -> PlanLlmConfig:
     )
     user_keys = (row.deepseek_keys or "").strip()
     if not user_keys and provider == PLAN_LLM_PROVIDER_TONGYI:
-        user_keys = (getattr(row, "dashscope_key", "") or "").strip()
+        user_keys = (
+            getattr(row, "dashscope_key", "")
+            or getattr(settings, "dashscope_api_key", "")
+            or os.environ.get("DASHSCOPE_API_KEY", "")
+            or ""
+        ).strip()
     keys = user_keys or (settings.deepseek_api_keys or "").strip()
     api_url = default_api_url_for_provider(provider)
 
@@ -286,6 +296,12 @@ def resolve_plan_llm_group(db: Session, user_id: int) -> dict | None:
                 channels_data = []
                 for ch in sorted_channels:
                     keys = (ch.api_keys or "").strip()
+                    if not keys and normalize_plan_llm_provider(ch.provider) == PLAN_LLM_PROVIDER_TONGYI:
+                        keys = (
+                            getattr(settings, "dashscope_api_key", "")
+                            or os.environ.get("DASHSCOPE_API_KEY", "")
+                            or ""
+                        ).strip()
                     if not keys:
                         keys = (settings.deepseek_api_keys or "").strip()
                     channels_data.append(
@@ -328,11 +344,17 @@ def test_channel_connection(
     import httpx
 
     key = str(api_key or "").strip()
+    p = normalize_plan_llm_provider(provider)
+    if not key and p == PLAN_LLM_PROVIDER_TONGYI:
+        key = (
+            getattr(settings, "dashscope_api_key", "")
+            or os.environ.get("DASHSCOPE_API_KEY", "")
+            or ""
+        ).strip()
     if not key:
-        return False, "未提供 API Key", 0
+        return False, "未提供 API Key（可填写或配置 DASHSCOPE_API_KEY 环境变量）", 0
     # 若有多个 key，测试第一个
     first_key = [k.strip() for k in key.split(",") if k.strip()][0]
-    p = normalize_plan_llm_provider(provider)
     url = (api_url or "").strip() or default_api_url_for_provider(p)
     model = (model_name or "").strip() or normalize_plan_llm_model("", provider=p)
     headers = {"Content-Type": "application/json"}
@@ -348,10 +370,18 @@ def test_channel_connection(
         "messages": [{"role": "user", "content": "ping"}],
         "max_tokens": 10,
     }
+    if "omni" in str(model).lower():
+        payload["modalities"] = ["text"]
     if p == PLAN_LLM_PROVIDER_ZHIPU:
         payload["thinking"] = {"type": "enabled"}
     elif thinking_enabled:
         payload["thinking"] = {"type": "enabled"}
+        if p == PLAN_LLM_PROVIDER_TONGYI:
+            payload["enable_thinking"] = True
+    else:
+        payload["thinking"] = {"type": "disabled"}
+        if p == PLAN_LLM_PROVIDER_TONGYI:
+            payload["enable_thinking"] = False
 
     t0 = time.monotonic()
     try:
