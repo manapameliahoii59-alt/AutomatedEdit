@@ -84,12 +84,64 @@ def _notify_target_status(opts: BatchDownloadOptions, label: str | None, status:
         opts.on_target_status(label, status)
 
 
-def _transcode_poll_interval_sec(poll_round: int) -> int:
-    """转码轮询间隔：第 1 次 60s，第 2 次 45s，第 3 次及以后 30s。"""
+def _transcode_poll_interval_sec(poll_round: int, *, with_jitter: bool = False) -> float:
+    """转码轮询间隔：第 1 次 60s，第 2 次 45s，第 3 次及以后 30s。启用 with_jitter 时叠加拟人动态抖动。"""
     if poll_round < 0:
-        return TRANSCODE_POLL_INTERVALS_SEC[0]
-    idx = min(poll_round, len(TRANSCODE_POLL_INTERVALS_SEC) - 1)
-    return TRANSCODE_POLL_INTERVALS_SEC[idx]
+        base = TRANSCODE_POLL_INTERVALS_SEC[0]
+    else:
+        idx = min(poll_round, len(TRANSCODE_POLL_INTERVALS_SEC) - 1)
+        base = TRANSCODE_POLL_INTERVALS_SEC[idx]
+    if with_jitter:
+        jitter = random.uniform(-3.5, 4.5)
+        return max(15.0, round(base + jitter, 1))
+    return float(base)
+
+
+def _calculate_adaptive_poll_interval(
+    overview_data: dict[str, Any] | None,
+    poll_round: int,
+) -> tuple[float, str]:
+    """根据平台 task_overview 队列深度自适应计算下一次探测间隔（含随机抖动）。
+
+    返回: (interval_sec, reason_desc)
+    """
+    if not overview_data:
+        base = _transcode_poll_interval_sec(poll_round, with_jitter=False)
+        jitter = random.uniform(-3.0, 4.0)
+        return max(15.0, round(base + jitter, 1)), "默认轮询"
+
+    pending_count = int(overview_data.get("pending_count") or 0)
+    compressing_count = int(overview_data.get("compressing_count") or 0)
+    encrypting_count = int(overview_data.get("encrypting_count") or 0)
+    estimated_wait = int(overview_data.get("estimated_wait_seconds") or 0)
+    auto_refresh_sec = int(overview_data.get("auto_refresh_seconds") or 120)
+
+    # 场景 1: 前方深度排队（排队 > 10 部 或 预估耗时 > 10 分钟）
+    if pending_count > 10 or estimated_wait > 600:
+        base = float(min(150, max(auto_refresh_sec, 90)))
+        jitter = random.uniform(-6.0, 8.0)
+        interval = max(60.0, round(base + jitter, 1))
+        return interval, f"深度排队({pending_count}部)"
+
+    # 场景 2: 临近完成（排队很少，处于加密或压缩打包阶段）
+    if compressing_count > 0 or encrypting_count > 0:
+        base = 30.0
+        jitter = random.uniform(-4.0, 5.0)
+        interval = max(18.0, round(base + jitter, 1))
+        return interval, "压缩打包中"
+
+    # 场景 3: 少量排队（1~10 部）
+    if pending_count > 0:
+        base = 60.0
+        jitter = random.uniform(-5.0, 6.0)
+        interval = max(35.0, round(base + jitter, 1))
+        return interval, f"排队中({pending_count}部)"
+
+    # 场景 4: 默认/常规
+    base = 45.0
+    jitter = random.uniform(-4.0, 5.0)
+    interval = max(20.0, round(base + jitter, 1))
+    return interval, "正常转码中"
 
 
 def _interruptible_sleep(
@@ -115,10 +167,10 @@ def _human_delay(
     base_sec: float,
     cancel_check: Callable[[], bool] | None,
     *,
-    jitter_min: float = 0.6,
-    jitter_max: float = 2.2,
+    jitter_min: float = 0.8,
+    jitter_max: float = 2.6,
 ) -> None:
-    """在基础间隔上叠加随机抖动，避免机械节奏。"""
+    """在基础间隔上叠加自适应随机抖动，避免机械节奏。"""
     if base_sec <= 0:
         return
     delay = base_sec + random.uniform(jitter_min, jitter_max)
@@ -455,13 +507,16 @@ def _resolve_episode_range(
 ) -> dict[str, Any]:
     from_ep = item.get("from", defaults["from"])
     to_ep = item.get("to", defaults["to"])
-    book_id = item.get("bookId")
+    book_id = item.get("bookId") or item.get("book_id")
     name = item["name"]
+    episode_amount = item.get("episodeAmount") or item.get("episode_amount")
 
-    drama = client.find_drama_by_name(name)
-    book_id = book_id or drama.get("book_id")
-    name = drama.get("series_name") or name
-    episode_amount = drama.get("episode_amount") or to_ep
+    # 若已在添加阶段解析出 book_id 与剧集总量，直接复用，避免下载启动时重复触发全量搜索
+    if not book_id or episode_amount is None:
+        drama = client.find_drama_by_name(name)
+        book_id = book_id or drama.get("book_id")
+        name = drama.get("series_name") or name
+        episode_amount = episode_amount or drama.get("episode_amount") or to_ep
 
     if to_ep > episode_amount:
         to_ep = episode_amount
@@ -765,6 +820,10 @@ def phase2_download_files(
         executor = ThreadPoolExecutor(max_workers=opts.concurrency)
         futures: dict[Any, dict[str, Any]] = {}
         cancelled = False
+        last_today_completed: int | None = None
+        last_processing_count: int | None = None
+        last_detail_fetch_time: float = 0.0
+        latest_overview: dict[str, Any] | None = None
 
         try:
             while (
@@ -777,18 +836,75 @@ def phase2_download_files(
 
                 task_map: dict[str, dict[str, Any]] = {}
                 if transcoding:
-                    query_end = str(int(time.time()))
-                    query_start = str(phase2_started_at - TASK_LIST_LOOKBACK_SEC)
+                    now = time.time()
+                    should_fetch_details = False
+
+                    # 第 1 级门禁：优先拉取轻量级任务总览 (task_overview)
                     try:
-                        task_map = client.fetch_download_tasks_by_ids(
-                            transcoding.keys(),
-                            start_time=query_start,
-                            end_time=query_end,
-                            page_size=DEFAULT_TASK_LIST_PAGE_SIZE,
-                            max_bulk_pages=BULK_TASK_LIST_MAX_PAGES,
-                        )
+                        overview_resp = client.fetch_download_task_overview()
+                        if overview_resp.get("code") == 0:
+                            latest_overview = overview_resp.get("data") or {}
                     except Exception as exc:
-                        logger.dev_only(f"   ⚠ 批量查询转码状态失败: {exc}")
+                        logger.dev_only(f"   ⚠ 获取任务概览失败: {exc}")
+                        latest_overview = None
+
+                    if latest_overview:
+                        curr_today_completed = int(latest_overview.get("today_completed_count") or 0)
+                        curr_processing_count = int(latest_overview.get("processing_count") or 0)
+                        pending_count = int(latest_overview.get("pending_count") or 0)
+                        compressing_count = int(latest_overview.get("compressing_count") or 0)
+
+                        if last_today_completed is None:
+                            # 首轮启动，必须拉取一次初始明细
+                            should_fetch_details = True
+                        elif curr_today_completed > last_today_completed:
+                            # 明确有新任务完成，立即拉取明细
+                            should_fetch_details = True
+                            logger.say("   ⚡ 探测到有新任务转码完成，正在获取任务详情...", "   ⚡ today_completed 递增，拉取明细")
+                        elif last_processing_count is not None and curr_processing_count < last_processing_count:
+                            # 处理中任务数减少（可能完成或失败），触发明细拉取
+                            should_fetch_details = True
+                        elif now - last_detail_fetch_time >= 150.0:
+                            # 达到 150 秒心跳兜底
+                            should_fetch_details = True
+                        elif pending_count == 0 and compressing_count > 0 and (now - last_detail_fetch_time >= 35.0):
+                            # 排队已清空且正在打包压缩，加快拉取频率
+                            should_fetch_details = True
+
+                        last_today_completed = curr_today_completed
+                        last_processing_count = curr_processing_count
+                    else:
+                        # 概览接口拉取异常时降级拉取明细
+                        should_fetch_details = True
+
+                    # 第 2 级明细拉取：仅在确实需要时才请求重型 task_list
+                    if should_fetch_details:
+                        query_end = str(int(time.time()))
+                        query_start = str(phase2_started_at - TASK_LIST_LOOKBACK_SEC)
+                        try:
+                            task_map = client.fetch_download_tasks_by_ids(
+                                transcoding.keys(),
+                                start_time=query_start,
+                                end_time=query_end,
+                                page_size=DEFAULT_TASK_LIST_PAGE_SIZE,
+                                max_bulk_pages=BULK_TASK_LIST_MAX_PAGES,
+                            )
+                            last_detail_fetch_time = time.time()
+                        except Exception as exc:
+                            logger.dev_only(f"   ⚠ 批量查询转码状态失败: {exc}")
+                    else:
+                        # 仍在深度排队中，跳过 task_list 并更新细化状态至 UI
+                        pending_cnt = int(latest_overview.get("pending_count") or 0)
+                        comp_cnt = int(latest_overview.get("compressing_count") or 0)
+                        if comp_cnt > 0:
+                            queue_status = "压缩打包中"
+                        elif pending_cnt > 0:
+                            queue_status = f"排队中(前{pending_cnt}部)"
+                        else:
+                            queue_status = "转码中"
+                        for download_id, job in transcoding.items():
+                            label = job.get("bookName") or job.get("name")
+                            _notify_target_status(opts, label, queue_status)
 
                 for download_id in list(transcoding.keys()):
                     job = transcoding[download_id]
@@ -941,11 +1057,29 @@ def phase2_download_files(
                         str(j.get("bookName") or j.get("name") or j.get("downloadId"))
                         for j in transcoding.values()
                     )
-                    poll_sec = _transcode_poll_interval_sec(transcode_poll_round)
+                    poll_sec, reason = _calculate_adaptive_poll_interval(
+                        latest_overview, transcode_poll_round
+                    )
+                    tip_str = ""
+                    if latest_overview:
+                        pending_cnt = int(latest_overview.get("pending_count") or 0)
+                        comp_cnt = int(latest_overview.get("compressing_count") or 0)
+                        est_sec = int(latest_overview.get("estimated_wait_seconds") or 0)
+                        est_min = max(1, round(est_sec / 60))
+                        tip_parts = []
+                        if pending_cnt > 0:
+                            tip_parts.append(f"排队 {pending_cnt} 部")
+                        if comp_cnt > 0:
+                            tip_parts.append(f"压缩 {comp_cnt} 部")
+                        if est_sec > 0:
+                            tip_parts.append(f"预计需 {est_min} 分钟")
+                        if tip_parts:
+                            tip_str = f" [{'，'.join(tip_parts)}]"
+
                     logger.both(
-                        f"⏳ 转码轮询中（第 {transcode_poll_round + 1} 轮）"
-                        f"：{len(transcoding)} 个待完成 — {waiting}"
-                        f"（{poll_sec}s 后再次查询）"
+                        f"⏳ 转码状态探测中（第 {transcode_poll_round + 1} 轮 · {reason}）"
+                        f"：{len(transcoding)} 个待完成 — {waiting}{tip_str}"
+                        f"（{int(poll_sec)}s 后再次探测）"
                     )
                     _interruptible_sleep(poll_sec, opts.cancel_check)
                     transcode_poll_round += 1

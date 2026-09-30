@@ -124,7 +124,7 @@ class VideoDownloadPage(ScrollArea):
         range_row.addWidget(self.to_input)
         range_row.addWidget(BodyLabel("集", self.scroll_widget))
         range_row.addStretch(1)
-        self.add_btn = PushButton(FIF.ADD, "添加剧目", self.scroll_widget)
+        self.add_btn = PrimaryPushButton(FIF.ADD, "添加剧目", self.scroll_widget)
         self.add_btn.clicked.connect(self._open_add_drama_dialog)
         range_row.addWidget(self.add_btn)
         self.reset_done_btn = PushButton("重置下载记录", self.scroll_widget)

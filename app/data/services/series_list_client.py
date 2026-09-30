@@ -28,6 +28,7 @@ PLAYER_INFO_PATH = "/novelsale/distributor/content/player/info/v2/"
 BATCH_DOWNLOAD_PATH = "/node/api/platform/distributor/playlet/batch_create_download_task/v6/"
 DOWNLOAD_TASK_LIST_PATH = "/node/api/platform/distributor/download_center/task_list/"
 DOWNLOAD_GET_URL_PATH = "/node/api/platform/distributor/download_center/get_url/"
+DOWNLOAD_TASK_OVERVIEW_PATH = "/node/api/platform/distributor/download_center/task_overview/"
 
 DOWNLOAD_TASK_STATUS_DONE = 2
 
@@ -73,6 +74,7 @@ class SeriesListClient:
         self._cookie_header: str = ""
         self._owner_thread_id: int | None = None
         self._closed = False
+        self._list_warmup_done = False
 
     def _assert_playwright_thread(self) -> None:
         owner = self._owner_thread_id
@@ -290,6 +292,12 @@ class SeriesListClient:
                     distributorid: String(app.distributor_id),
                     aduserid: adUserId,
                     'agw-js-conv': 'str',
+                    'sec-ch-ua': '"Google Chrome";v="131", "Chromium";v="131", "Not_A Brand";v="24"',
+                    'sec-ch-ua-mobile': '?0',
+                    'sec-ch-ua-platform': '"Windows"',
+                    'sec-fetch-dest': 'empty',
+                    'sec-fetch-mode': 'cors',
+                    'sec-fetch-site': 'same-origin',
                 };
                 if (!contentApi) {
                     headers['x-secsdk-csrf-token'] = 'DOWNGRADE';
@@ -351,6 +359,12 @@ class SeriesListClient:
                         aduserid: adUserId,
                         rootaduserid: rootAdUserId,
                         'agw-js-conv': 'str',
+                        'sec-ch-ua': '"Google Chrome";v="131", "Chromium";v="131", "Not_A Brand";v="24"',
+                        'sec-ch-ua-mobile': '?0',
+                        'sec-ch-ua-platform': '"Windows"',
+                        'sec-fetch-dest': 'empty',
+                        'sec-fetch-mode': 'cors',
+                        'sec-fetch-site': 'same-origin',
                         'x-secsdk-csrf-token': 'DOWNGRADE',
                         referer,
                     },
@@ -500,6 +514,15 @@ class SeriesListClient:
             f"&page_index=1&page_size={params['page_size']}"
         )
         return self._api_fetch(DOWNLOAD_TASK_LIST_PATH, params, platform=True, referer=referer)
+
+    def fetch_download_task_overview(self) -> dict[str, Any]:
+        """获取下载中心顶部任务概览（排队数、压缩数、今日完成数、预估耗时、推荐刷新间隔等）。"""
+        return self._api_fetch(
+            DOWNLOAD_TASK_OVERVIEW_PATH,
+            {},
+            platform=True,
+            referer="https://www.changdupingtai.com/sale/download-center",
+        )
 
     def find_download_task(self, download_id: str, options: dict[str, Any] | None = None) -> dict[str, Any] | None:
         opts = dict(options or {})
@@ -765,60 +788,6 @@ class SeriesListClient:
         except Exception:
             pass
 
-    def download_task_zip(
-        self,
-        download_id: str,
-        *,
-        wait_for_done: bool = True,
-        download_dir: Path | str | None = None,
-        dest_path: Path | str | None = None,
-        download_timeout_ms: int = 10 * 60 * 1000,
-        min_speed_kbps: int = 300,
-        warmup_sec: int = 20,
-        stall_sec: int = 45,
-        slow_window_sec: int = 30,
-        interval_ms: int = 5000,
-        timeout_ms: int = 10 * 60 * 1000,
-        cancel_check: Callable[[], bool] | None = None,
-    ) -> dict[str, Any]:
-        self._assert_playwright_thread()
-        task = self.find_download_task(download_id)
-        if wait_for_done:
-            deadline = time.time() + timeout_ms / 1000
-            while not task or task.get("task_status") != DOWNLOAD_TASK_STATUS_DONE:
-                if cancel_check and cancel_check():
-                    raise RuntimeError("下载已取消")
-                if time.time() > deadline:
-                    raise RuntimeError(f"等待下载任务超时: {download_id}")
-                assert self.page
-                self.page.wait_for_timeout(interval_ms)
-                task = self.find_download_task(download_id)
-
-        prepared = self.prepare_task_zip_download(
-            download_id,
-            download_dir=download_dir,
-            dest_path=dest_path,
-        )
-        dl_stats = self.download_zip_from_url(
-            prepared["downloadUrl"],
-            prepared["destPath"],
-            timeout_ms=download_timeout_ms,
-            min_speed_kbps=min_speed_kbps,
-            warmup_sec=warmup_sec,
-            stall_sec=stall_sec,
-            slow_window_sec=slow_window_sec,
-            cancel_check=cancel_check,
-        )
-        return {
-            "downloadId": download_id,
-            "bookName": prepared["bookName"],
-            "taskName": prepared["taskName"],
-            "filePath": dl_stats["filePath"],
-            "downloadUrl": prepared["downloadUrl"],
-            "avgSpeedKbps": dl_stats["avgSpeedKbps"],
-            "elapsedSec": dl_stats["elapsedSec"],
-        }
-
     def check_auth(self) -> dict[str, Any]:
         json_data = self.fetch_list({"page_index": "0", "page_size": "1"})
         return {
@@ -842,26 +811,29 @@ class SeriesListClient:
             "page_size": "10",
             **(options or {}),
         }
-        # 与网站一致：先拉一页列表再按剧名搜（否则部分剧名会返回 total=0）
-        self._api_fetch(
-            SERIES_LIST_PATH,
-            {
-                "sort_type": "1",
-                **date_range,
-                "sort_field": "8",
-                "aweme_user_new_version": "true",
-                "page_index": "0",
-                "page_size": "10",
-            },
-            referer=SHORT_PLAY_LIST_REFERER,
-            content_api=True,
-        )
+        # 与网站一致：仅在首个搜索前做一次列表预热，避免后续每搜一部都无端空刷列表
+        if not self._list_warmup_done:
+            self._api_fetch(
+                SERIES_LIST_PATH,
+                {
+                    "sort_type": "1",
+                    **date_range,
+                    "sort_field": "8",
+                    "aweme_user_new_version": "true",
+                    "page_index": "0",
+                    "page_size": "10",
+                },
+                referer=SHORT_PLAY_LIST_REFERER,
+                content_api=True,
+            )
+            self._list_warmup_done = True
         return self._api_fetch(
             SERIES_LIST_PATH, params, referer=SHORT_PLAY_LIST_REFERER, content_api=True
         )
 
     def _search_by_name_via_ui_trigger(self, keyword: str) -> dict[str, Any]:
         """通过页面筛选框触发搜索，拦截网站原生请求（与手动搜索一致）。"""
+        import random
         from urllib.parse import parse_qs, unquote, urlparse
 
         self._assert_playwright_thread()
@@ -907,7 +879,10 @@ class SeriesListClient:
                 keyword,
             )
             if not triggered:
-                self.page.keyboard.type(keyword, delay=30)
+                for ch in keyword:
+                    self.page.keyboard.type(ch)
+                    self.page.wait_for_timeout(random.randint(60, 160))
+                self.page.wait_for_timeout(random.randint(150, 300))
                 self.page.keyboard.press("Enter")
             self.page.wait_for_timeout(5000)
         finally:
@@ -918,8 +893,15 @@ class SeriesListClient:
             return body
         raise RuntimeError(f"页面搜索未返回结果: {keyword}")
 
-    def find_drama_by_name(self, name: str) -> dict[str, Any]:
-        """按剧名搜索并返回最佳匹配；失败时抛出带原因的 RuntimeError。"""
+    def find_drama_by_name(
+        self,
+        name: str,
+        *,
+        cached_drama: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """按剧名搜索并返回最佳匹配；失败时抛出带原因的 RuntimeError。若已传入 cached_drama 则直接返回。"""
+        if cached_drama and (cached_drama.get("book_id") or cached_drama.get("bookId")):
+            return cached_drama
         keywords = drama_search_keywords(name)
         if not keywords:
             raise RuntimeError("剧名不能为空")

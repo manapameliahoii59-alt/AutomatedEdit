@@ -338,37 +338,6 @@ class VideoDownloadViewModel(ViewModel):
             return
         self.messageReceived.emit(f"已重置下载记录（{count} 条），可重新下载相同剧目")
 
-    def add_target(self, name: str, from_ep: int | None = None, to_ep: int | None = None) -> None:
-        name = name.strip()
-        if not name:
-            self.errorOccurred.emit("剧名不能为空")
-            return
-        target = VideoDownloadTarget(
-            id=uuid.uuid4().hex,
-            name=name,
-            from_ep=from_ep if from_ep is not None else self._default_from,
-            to_ep=to_ep if to_ep is not None else self._default_to,
-        )
-        self._targets.append(target)
-        self.targetsChanged.emit(self._targets)
-
-    def add_targets_from_text(self, text: str) -> int:
-        names = [line.strip() for line in text.splitlines() if line.strip()]
-        if not names:
-            self.errorOccurred.emit("请至少输入一个剧名（每行一个）")
-            return 0
-        for name in names:
-            self._targets.append(
-                VideoDownloadTarget(
-                    id=uuid.uuid4().hex,
-                    name=name,
-                    from_ep=self._default_from,
-                    to_ep=self._default_to,
-                )
-            )
-        self.targetsChanged.emit(self._targets)
-        return len(names)
-
     def add_targets_from_text_with_lookup(self, text: str, *, auto_start: bool = False) -> None:
         names = [line.strip() for line in text.splitlines() if line.strip()]
         if not names:
@@ -396,9 +365,13 @@ class VideoDownloadViewModel(ViewModel):
                         raise RuntimeError("任务已取消")
 
                     results = []
-                    for name in names:
+                    for i, name in enumerate(names):
                         if self._is_cancelled():
                             raise RuntimeError("任务已取消")
+                        if i > 0:
+                            import random
+                            import time
+                            time.sleep(random.uniform(0.6, 1.3))
                         try:
                             drama = client.find_drama_by_name(name)
                             results.append(
@@ -406,6 +379,7 @@ class VideoDownloadViewModel(ViewModel):
                                     "input_name": name,
                                     "ok": True,
                                     "matched_name": drama.get("series_name") or name,
+                                    "drama_meta": drama,
                                 }
                             )
                         except RuntimeError as exc:
@@ -432,12 +406,18 @@ class VideoDownloadViewModel(ViewModel):
                 return
 
             for row in ok:
+                meta = row.get("drama_meta") or {}
                 self._targets.append(
                     VideoDownloadTarget(
                         id=uuid.uuid4().hex,
                         name=row["matched_name"],
                         from_ep=self._default_from,
                         to_ep=self._default_to,
+                        extra={
+                            "book_id": meta.get("book_id"),
+                            "episode_amount": meta.get("episode_amount"),
+                            "author": meta.get("author"),
+                        },
                     )
                 )
             self.targetsChanged.emit(self._targets)
@@ -467,60 +447,22 @@ class VideoDownloadViewModel(ViewModel):
         self._targets = [t for t in self._targets if t.id != target_id]
         self.targetsChanged.emit(self._targets)
 
-    def import_targets_json(self, file_path: str) -> None:
-        try:
-            raw = json.loads(Path(file_path).read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError) as exc:
-            self.errorOccurred.emit(f"读取 JSON 失败：{exc}")
-            return
-        if not isinstance(raw, list):
-            self.errorOccurred.emit("JSON 须为非空数组")
-            return
-
-        added = 0
-        for item in raw:
-            if not isinstance(item, dict):
-                continue
-            if item.get("id"):
-                self._targets.append(
-                    VideoDownloadTarget(
-                        id=uuid.uuid4().hex,
-                        name=str(item["id"]),
-                        from_ep=self._default_from,
-                        to_ep=self._default_to,
-                        status="待下载",
-                        extra={"task_id": str(item["id"]), "mode": "id"},
-                    )
-                )
-                added += 1
-                continue
-            name = item.get("name") or item.get("bookName")
-            if not name:
-                continue
-            self._targets.append(
-                VideoDownloadTarget(
-                    id=uuid.uuid4().hex,
-                    name=str(name),
-                    from_ep=int(item.get("from", self._default_from)),
-                    to_ep=int(item.get("to", self._default_to)),
-                    status="待下载",
-                )
-            )
-            added += 1
-
-        if added == 0:
-            self.errorOccurred.emit("未从 JSON 中解析到有效剧目")
-            return
-        self.targetsChanged.emit(self._targets)
-        self.messageReceived.emit(f"已从 JSON 导入 {added} 个剧目")
-
     def _targets_to_payload(self) -> list[dict]:
         payload = []
         for t in self._targets:
             if t.extra.get("mode") == "id" or t.extra.get("task_id"):
                 payload.append({"id": t.extra.get("task_id") or t.name})
             else:
-                payload.append({"name": t.name, "from": t.from_ep, "to": t.to_ep})
+                item_payload = {
+                    "name": t.name,
+                    "from": t.from_ep,
+                    "to": t.to_ep,
+                }
+                if t.extra.get("book_id"):
+                    item_payload["bookId"] = t.extra["book_id"]
+                if t.extra.get("episode_amount"):
+                    item_payload["episodeAmount"] = t.extra["episode_amount"]
+                payload.append(item_payload)
         return payload
 
     def _update_target_status(self, label: str, status: str) -> None:
