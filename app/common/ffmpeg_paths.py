@@ -96,21 +96,3 @@ def ensure_ffmpeg_on_path() -> str | None:
     ]
     os.environ["PATH"] = os.pathsep.join([ff_dir, *rest])
     return ff_dir
-
-
-def effective_ffmpeg_display() -> str:
-    from app.common.config import cfg
-
-    try:
-        return resolve_ffmpeg()
-    except FileNotFoundError:
-        return cfg.ffmpeg_path.value or "未找到（使用内置或系统 PATH）"
-
-
-def effective_ffprobe_display() -> str:
-    from app.common.config import cfg
-
-    try:
-        return resolve_ffprobe()
-    except FileNotFoundError:
-        return cfg.ffprobe_path.value or "未找到（使用内置或系统 PATH）"

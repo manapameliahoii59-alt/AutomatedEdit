@@ -1,40 +1,5 @@
-from typing import Callable, Dict
+from typing import Callable
 from PySide6.QtWidgets import QWidget
-from qfluentwidgets import FluentWindow, NavigationItemPosition
-
-class NavigationService:
-    def __init__(self):
-        self._routes: Dict[str, Callable[[], QWidget]] = {}
-        self._items = {}
-        self._window: FluentWindow = None
-        self._created_views = {}
-
-    def set_window(self, window: FluentWindow):
-        self._window = window
-
-    def register_route(self, route_key: str, factory: Callable[[], QWidget]):
-        """Register a route with a factory function for lazy loading."""
-        self._routes[route_key] = factory
-
-    def add_navigation_item(self, route_key: str, icon, text: str, position=NavigationItemPosition.TOP):
-        """Add item to navigation bar. View will be created only when clicked."""
-        if not self._window:
-            raise RuntimeError("NavigationService: Window not set")
-            
-        # We need a placeholder widget or we intercept the click.
-        # FluentWindow addSubInterface requires a widget. 
-        # Strategy: Create the widget immediately? No, that defeats lazy loading.
-        # Strategy: Create a placeholder widget or use custom logic.
-        # FluentWidgets API `addSubInterface` adds the widget to QStackedWidget.
-        # If we want true lazy loading, we might need to use `addSubInterface` with a dummy,
-        # then swap it, OR, check if QFluentWidgets supports lazy loading.
-        # QFluentWidgets doesn't support lazy loading out of the box easily without instantiation.
-        # However, we can use a "Proxy" widget that initializes the real content on showEvent.
-        
-        # Simpler approach for this refactor:
-        # Just register the route. The MainWindow will handle the lazy creation logic 
-        # by connecting to the navigation changed signal, OR we use a ProxyWidget.
-        pass
 
 class LazyViewProxy(QWidget):
     """A proxy widget that loads the real view content only when shown."""

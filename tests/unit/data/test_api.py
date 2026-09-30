@@ -1,13 +1,6 @@
 import requests
 import pytest
-from app.data.api.api import DemoApi, RemoteApi, ApiError
-
-
-class TestDemoApi:
-    def test_login_rejected(self):
-        api = DemoApi()
-        with pytest.raises(ApiError, match="未配置服务端"):
-            api.login("u", "p")
+from app.data.api.api import RemoteApi, ApiError
 
 
 class TestRemoteApi:

@@ -317,9 +317,3 @@ def compute_region_time_range(
 
     frame_ms = 34
     return playhead_ms, min(duration_ms, playhead_ms + frame_ms)
-
-
-@dataclass
-class EpisodeMaskState:
-    video_path: str
-    regions: list[MaskRegion] = field(default_factory=list)

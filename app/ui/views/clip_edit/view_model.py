@@ -144,10 +144,6 @@ class ClipEditViewModel(ViewModel):
 
         task_manager.submit_task(_do, on_success=lambda _ok: None, on_error=_on_error)
 
-    def save_output_resolution(self, resolution: str) -> None:
-        """本地已写入 cfg 后，后台同步成片分辨率到服务端。"""
-        self.save_clip_settings(output_resolution=resolution)
-
     def save_clip_settings(
         self,
         *,
@@ -213,34 +209,6 @@ class ClipEditViewModel(ViewModel):
             self.errorOccurred.emit(
                 sanitize_ui_error(
                     msg, stage="settings_sync", friendly="导出目录同步失败，请检查网络后重试"
-                )
-            )
-
-        task_manager.submit_task(_do, on_success=lambda _ok: None, on_error=_on_error)
-
-    def save_overlay_text_settings(
-        self,
-        *,
-        overlay_title: dict,
-        overlay_disclaimer: dict,
-    ) -> None:
-        """本地已写入 cfg 后，后台同步画面叠字到服务端。"""
-        api = get_api()
-        if not api._token:
-            return
-        patch = clip_edit_settings_patch(
-            overlay_title=overlay_title,
-            overlay_disclaimer=overlay_disclaimer,
-        )
-
-        def _do():
-            get_api().update_settings(patch)
-            return True
-
-        def _on_error(msg: str):
-            self.errorOccurred.emit(
-                sanitize_ui_error(
-                    msg, stage="settings_sync", friendly="画面文字设置同步失败，请检查网络后重试"
                 )
             )
 
@@ -1883,123 +1851,3 @@ class ClipEditViewModel(ViewModel):
             index=index,
             total=total,
         )
-
-    def _run_pipeline(
-        self,
-        project: DramaProject,
-        *,
-        index: int = 1,
-        total: int = 1,
-    ):
-        pid = project.id
-        pname = project.name
-        t_trans_start = time.perf_counter()
-
-        def step1():
-            TranscriptionService.transcribe(project)
-            return True
-
-        def step1_done(_ok):
-            trans_ms = int((time.perf_counter() - t_trans_start) * 1000)
-            self._update_status(pid, "transcribe", DramaStatus.DONE)
-            UsageService.report(
-                "batch_all_transcribe",
-                meta=pname,
-                duration_ms=trans_ms,
-                transcribe_ms=trans_ms,
-            )
-            t_plan_start = time.perf_counter()
-
-            def step2():
-                return AIDirectorService.plan(
-                    project,
-                    progress_callback=self._make_plan_progress_handler(pid),
-                )
-
-            def step2_done(result):
-                plan_ms = int((time.perf_counter() - t_plan_start) * 1000)
-                self._update_status(pid, "plan", DramaStatus.DONE)
-                from app.common.plan_settings import resolve_active_plan_params
-
-                mode = resolve_active_plan_params().get("mode")
-                UsageService.report(
-                    "batch_all_plan",
-                    meta=pname,
-                    duration_ms=plan_ms,
-                    plan_ms=plan_ms,
-                    plan_mode=mode,
-                )
-                self._report_plan_done(pname, duration_ms=plan_ms, plan_ms=plan_ms)
-                if not self._ensure_can_clip(pname):
-                    self._remove_task()
-                    self.messageReceived.emit(_format_plan_result_message(pname, result))
-                    return
-
-                t_render_start = time.perf_counter()
-
-                def step3_done(result: RenderResult):
-                    self._remove_task()
-                    render_ms = int(
-                        (
-                            result.total_seconds
-                            if getattr(result, "total_seconds", 0) > 0
-                            else (time.perf_counter() - t_render_start)
-                        )
-                        * 1000
-                    )
-                    self._update_status(pid, "render", DramaStatus.DONE)
-                    UsageService.report_render(
-                        result,
-                        meta=pname,
-                        transcribe_ms=trans_ms,
-                        plan_ms=plan_ms,
-                        render_ms=render_ms,
-                    )
-                    self._report_clip_done(pname, duration_ms=render_ms, render_ms=render_ms)
-                    self.messageReceived.emit(
-                        f"《{pname}》一键执行完成。\n"
-                        f"{self._format_render_message(pname, result)}"
-                    )
-                    self._finish_loading_if_idle()
-
-                def step3_err(msg):
-                    self._remove_task()
-                    self._update_status(pid, "render", DramaStatus.PENDING)
-                    if self._is_render_cancelled(msg):
-                        self.messageReceived.emit(f"《{pname}》渲染已取消")
-                    else:
-                        self.errorOccurred.emit(sanitize_render_error(msg, drama_name=pname))
-                    self._finish_loading_if_idle()
-
-                self._submit_render(
-                    project,
-                    on_success=step3_done,
-                    on_error=step3_err,
-                    index=index,
-                    total=total,
-                )
-
-            def step2_err(msg):
-                self._remove_task()
-                self._update_status(pid, "plan", DramaStatus.PENDING)
-                self.errorOccurred.emit(sanitize_plan_error(msg, drama_name=pname))
-
-            self._show_progress(
-                "正在策划",
-                pname,
-                project_id=pid,
-                index=index,
-                total=total,
-            )
-            self._update_status(pid, "plan", DramaStatus.IN_PROGRESS)
-            task_manager.submit_task(step2, on_success=step2_done, on_error=step2_err)
-
-        def step1_err(msg):
-            self._remove_task()
-            self._update_status(pid, "transcribe", DramaStatus.PENDING)
-            self.errorOccurred.emit(sanitize_transcribe_error(msg, drama_name=pname))
-
-        self._add_task()
-        self._show_progress("正在识别", pname, index=index, total=total)
-        self._update_status(pid, "transcribe", DramaStatus.IN_PROGRESS)
-        task_manager.submit_task(step1, on_success=step1_done, on_error=step1_err)

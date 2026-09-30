@@ -34,6 +34,7 @@ def test_ensure_bundled_does_not_import_config(monkeypatch, tmp_path):
     import builtins
     import sys
 
+    saved_modules = {}
     blocked = {"app.common.config", "qfluentwidgets", "PySide6"}
     for name in list(sys.modules):
         if (
@@ -41,7 +42,7 @@ def test_ensure_bundled_does_not_import_config(monkeypatch, tmp_path):
             or name.startswith("PySide6.")
             or name.startswith("qfluentwidgets")
         ):
-            sys.modules.pop(name, None)
+            saved_modules[name] = sys.modules.pop(name)
 
     real_import = builtins.__import__
 
@@ -53,5 +54,8 @@ def test_ensure_bundled_does_not_import_config(monkeypatch, tmp_path):
             raise AssertionError(f"early ffmpeg PATH must not import {name}")
         return real_import(name, globals, locals, fromlist, level)
 
-    monkeypatch.setattr(builtins, "__import__", _guard)
-    assert ensure_bundled_ffmpeg_on_path() is not None
+    try:
+        monkeypatch.setattr(builtins, "__import__", _guard)
+        assert ensure_bundled_ffmpeg_on_path() is not None
+    finally:
+        sys.modules.update(saved_modules)

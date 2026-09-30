@@ -8,11 +8,8 @@ from qfluentwidgets.common.config import Theme
 class MyIcon(FluentIconBase, Enum):
     """ My icon """
     SAVE = 'save'
-    OCR = 'ocr'
-    LOGOUT = 'logout'
     SAVE_SESSION = 'save_session'
     TOOL = 'tool'
-    SETTING = 'setting'
 
     def path(self, theme=Theme.AUTO):
         if theme == Theme.AUTO:

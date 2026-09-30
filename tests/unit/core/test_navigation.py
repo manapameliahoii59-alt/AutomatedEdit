@@ -1,7 +1,7 @@
 import pytest
 from unittest.mock import MagicMock
 from PySide6.QtWidgets import QWidget
-from app.core.navigation import LazyViewProxy, NavigationService
+from app.core.navigation import LazyViewProxy
 
 class TestLazyViewProxy:
     def test_lazy_loading(self, qtbot):
@@ -23,11 +23,3 @@ class TestLazyViewProxy:
         assert proxy._loaded
         factory.assert_called_once()
         assert proxy._real_view is not None
-
-class TestNavigationService:
-    def test_register_route(self):
-        """Test route registration"""
-        service = NavigationService()
-        factory = lambda: None
-        service.register_route("home", factory)
-        assert service._routes["home"] is factory

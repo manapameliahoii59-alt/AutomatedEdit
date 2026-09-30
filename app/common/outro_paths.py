@@ -448,32 +448,3 @@ def remove_outro_item(horizontal: bool, item_id: str) -> None:
     if data[key].get("selected") == item_id:
         data[key]["selected"] = ""
     _save_manifest(data)
-
-
-# ---- 兼容旧 API 名称（若外部仍引用）----
-
-def install_custom_outro(src_path: str | Path, *, horizontal: bool) -> Path:
-    return add_outro_item(src_path, horizontal=horizontal).video_path
-
-
-def clear_custom_outro(horizontal: bool) -> bool:
-    """清空该方向全部自定义并改回默认。"""
-    items = list_outro_items(horizontal)
-    for item in items:
-        remove_outro_item(horizontal, item.id)
-    set_selected_outro_id(horizontal, "")
-    return bool(items)
-
-
-def has_custom_outro(horizontal: bool) -> bool:
-    return bool(selected_outro_id(horizontal))
-
-
-def custom_outro_status_text(horizontal: bool) -> str:
-    selected = selected_outro_id(horizontal)
-    if not selected:
-        return "使用内置默认"
-    for item in list_outro_items(horizontal):
-        if item.id == selected:
-            return f"已选：{item.name}（{item.size_label}）"
-    return "使用内置默认"

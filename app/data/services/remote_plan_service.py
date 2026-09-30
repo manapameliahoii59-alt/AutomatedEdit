@@ -192,14 +192,3 @@ class RemotePlanService:
             time.sleep(cls.POLL_INTERVAL_SEC)
 
         raise RuntimeError("策划超时，请稍后重试")
-
-    @classmethod
-    def refresh_plan_key_from_server(cls) -> None:
-        api = cls._require_api()
-        try:
-            secrets = api.fetch_secrets()
-        except ApiError:
-            return
-        plan_key = (secrets.get("plan_decrypt_key") or "").strip()
-        if plan_key:
-            qconfig.set(cfg.plan_decrypt_key, aes_encrypt(plan_key))

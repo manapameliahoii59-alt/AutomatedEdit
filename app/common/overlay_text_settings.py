@@ -681,17 +681,8 @@ def compose_color_span_text(text: Any, spans: Any) -> str:
     return out
 
 
-def has_color_span_text(text: Any, spans: Any) -> bool:
-    """变色段能否产生可见文字（文案为空但只填变色字时也可渲染）。"""
-    return bool(compose_color_span_text(text, spans).strip())
-
-
 def font_filename(font_key: str) -> str:
     return _FONT_BY_KEY[clamp_font_key(font_key)][1]
-
-
-def font_label(font_key: str) -> str:
-    return _FONT_BY_KEY[clamp_font_key(font_key)][0]
 
 
 def _app_base_dir() -> Path:
@@ -744,13 +735,6 @@ def available_font_choices() -> list[tuple[str, str, str]]:
             out.append((key, label, filename))
     return out
 
-
-def known_font_keys() -> set[str]:
-    return set(_FONT_BY_KEY)
-
-
-def known_effect_ids() -> set[str]:
-    return set(_EFFECT_STYLES)
 
 def clamp_text_effect(value: Any) -> TextEffect:
     key = str(value or "").strip().lower()
@@ -809,17 +793,6 @@ def _outline_borderw(effect: TextEffect, fontsize: int) -> int:
 
 def effect_label(effect: TextEffect | str) -> str:
     return effect_style(effect)["label"]
-
-
-def effect_uses_glow(effect: TextEffect | str) -> bool:
-    """是否为外发光类（可调发光色）。综艺花字走 PNG，不算发光。"""
-    from app.common.huazi_styles import is_huazi_effect
-
-    eid = clamp_text_effect(effect)
-    if eid == "none" or is_huazi_effect(eid):
-        return False
-    style = effect_style(eid)
-    return bool(style["radii"] and style["steps"] > 0)
 
 
 def resolve_glow_color(style: OverlayTextStyle | dict) -> str:
@@ -1575,10 +1548,6 @@ def save_overlay_library_to_cfg(lib: OverlayTextLibrary) -> OverlayTextLibrary:
     return clamped
 
 
-def list_overlay_groups() -> list[OverlayTextGroup]:
-    return list(load_overlay_library_from_cfg()["groups"])
-
-
 def find_overlay_group(
     lib: OverlayTextLibrary, group_id: str
 ) -> OverlayTextGroup | None:
@@ -1610,10 +1579,6 @@ def resolve_active_overlay_group(
     if selected is not None:
         return selected
     return find_default_overlay_group(data)
-
-
-def get_selected_overlay_group() -> OverlayTextGroup:
-    return resolve_active_overlay_group()
 
 
 def set_selected_overlay_id(group_id: str | None) -> OverlayTextLibrary:
@@ -1667,24 +1632,6 @@ def load_overlay_disclaimer_from_cfg() -> OverlayTextStyle:
 
 def load_overlay_disclaimer2_from_cfg() -> OverlayTextStyle:
     return dict(resolve_active_overlay_group()["disclaimer2"])  # type: ignore[return-value]
-
-
-def save_overlay_styles_to_cfg(
-    title: dict | OverlayTextStyle,
-    disclaimer: dict | OverlayTextStyle,
-) -> tuple[OverlayTextStyle, OverlayTextStyle]:
-    """写回当前启用组（无启用则写默认组），并同步旧双字段。"""
-    lib = load_overlay_library_from_cfg()
-    active = resolve_active_overlay_group(lib)
-    title_c = clamp_overlay_style(dict(title), DEFAULT_TITLE)
-    disc_c = clamp_overlay_style(dict(disclaimer), DEFAULT_DISCLAIMER)
-    active = {
-        **active,
-        "title": title_c,
-        "disclaimer": disc_c,
-    }
-    upsert_overlay_group(active)
-    return title_c, disc_c
 
 
 def _style_equals_default(style: Any, defaults: dict[str, Any]) -> bool:
