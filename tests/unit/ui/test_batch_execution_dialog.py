@@ -339,6 +339,30 @@ class TestBatchExecutionDialogUi:
         assert "正在等待当前任务安全退出后关闭窗口" in dialog.status_label.text()
         dialog.close()
 
+    def test_batch_dialog_append_records(self, qapp):
+        dialog = BatchExecutionDialog(task_type="all")
+        rec1 = DramaTimingRecord(project_id="p1", project_name="剧目1", episode_count=50)
+        summary = BatchExecutionSummary(task_type="all", records=[rec1])
+        dialog.init_batch(summary)
+        assert dialog.table.rowCount() == 1
+        assert dialog.progress_bar.maximum() == 1
+        assert "共 1 部剧" in dialog.title_label.text()
+
+        rec2 = DramaTimingRecord(project_id="p2", project_name="剧目2", episode_count=60)
+        rec3 = DramaTimingRecord(project_id="p3", project_name="剧目3", episode_count=80)
+        dialog.append_records([rec2, rec3], total_count=3)
+
+        assert dialog.table.rowCount() == 3
+        assert dialog._id_to_row["p2"] == 1
+        assert dialog._id_to_row["p3"] == 2
+        assert dialog.table.item(1, 0).text() == "剧目2"
+        assert dialog.table.item(2, 0).text() == "剧目3"
+        assert dialog.progress_bar.maximum() == 3
+        assert "共 3 部剧" in dialog.title_label.text()
+        assert "0/3" in dialog.progress_detail_label.text()
+
+        dialog.close()
+
 
 
 

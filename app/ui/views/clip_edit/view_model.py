@@ -66,6 +66,7 @@ class ClipEditViewModel(ViewModel):
     settingsLoaded = Signal(dict)  # clip_edit namespace from server
     batchExecutionStarted = Signal(object)  # BatchExecutionSummary
     batchExecutionUpdated = Signal(object, str, int, int)  # record, action_text, current_index, total_count
+    batchExecutionTaskAppended = Signal(list, int)  # new_records, total_count
     batchExecutionFinished = Signal(object)  # BatchExecutionSummary
     quotaExceeded = Signal(str, str, int, int)  # action, message, current_count, limit
 
@@ -78,9 +79,50 @@ class ClipEditViewModel(ViewModel):
         self._loading_project_id: str | None = None
         self._loading_base_content = ""
         self._batch_cancel_requested = False
+        self._clip_quota_abort = False
+        self._clip_quota_notified = False
+        self._is_batch_running: bool = False
+        self._active_batch_queue: list[DramaProject] | None = None
+        self._active_batch_records: list[DramaTimingRecord] | None = None
         self._current_batch_summary: BatchExecutionSummary | None = None
         self.projectsChanged.emit(self._projects)
         self._load_settings_from_server()
+
+    def is_batch_running(self) -> bool:
+        """检查当前是否有任何批量任务（或一键执行）正在运行。"""
+        return bool(self._is_batch_running)
+
+    def append_to_batch_all(self, projects: list[DramaProject]) -> bool:
+        """若当前正在执行一键执行全流程，将新剧目动态追加到队尾排队执行。"""
+        if (
+            not self._is_batch_running
+            or self._active_batch_queue is None
+            or self._active_batch_records is None
+            or self._batch_cancel_requested
+            or self._clip_quota_abort
+        ):
+            return False
+
+        existing_ids = {p.id for p in self._active_batch_queue}
+        new_projects = [p for p in projects if p.id not in existing_ids]
+        if not new_projects:
+            return True
+
+        new_records: list[DramaTimingRecord] = []
+        for p in new_projects:
+            rec = DramaTimingRecord(
+                project_id=p.id,
+                project_name=p.name,
+                episode_count=p.episode_count,
+            )
+            self._active_batch_queue.append(p)
+            self._active_batch_records.append(rec)
+            if self._current_batch_summary:
+                self._current_batch_summary.records.append(rec)
+            new_records.append(rec)
+
+        self.batchExecutionTaskAppended.emit(new_records, len(self._active_batch_queue))
+        return True
 
     def _load_settings_from_server(self) -> None:
         def _do():
@@ -520,14 +562,20 @@ class ClipEditViewModel(ViewModel):
 
     def _ensure_can_clip(self, project_name: str) -> bool:
         allowed, message = QuotaService.instance().check_remote("clip", project_name)
-        if not allowed:
-            if "今日剪辑剧目数已达上限" in message:
+        if allowed:
+            self._clip_quota_abort = False
+            self._clip_quota_notified = False
+            return True
+        if "今日剪辑剧目数已达上限" in message:
+            self._clip_quota_abort = True
+            # 同一批任务内只弹一次上限提示，避免每部剧重复弹窗
+            if not self._clip_quota_notified:
+                self._clip_quota_notified = True
                 quota = QuotaService.instance().get_quota()
                 self.quotaExceeded.emit("clip", message, quota.clip_count, quota.clip_limit)
-            else:
-                self.errorOccurred.emit(message)
-            return False
-        return True
+        else:
+            self.errorOccurred.emit(message)
+        return False
 
     def check_batch_clip_quota(self, project_ids: list[str]) -> tuple[bool, str, int, int]:
         """批量检查剪辑配额。返回 (allowed, message, remaining, total_new_needed)。"""
@@ -696,6 +744,8 @@ class ClipEditViewModel(ViewModel):
     def start_render(self, project_id: str):
         if not self._ensure_access_allowed():
             return
+        self._clip_quota_abort = False
+        self._clip_quota_notified = False
         project = next((p for p in self._projects if p.id == project_id), None)
         if not project:
             self.errorOccurred.emit("未找到该剧目")
@@ -820,11 +870,13 @@ class ClipEditViewModel(ViewModel):
         summary = BatchExecutionSummary(task_type="transcribe", records=records)
         self._current_batch_summary = summary
         self._batch_cancel_requested = False
+        self._is_batch_running = True
         batch_started_at = time.perf_counter()
         self.batchExecutionStarted.emit(summary)
 
         def _run_at(index: int) -> None:
             if self._batch_cancel_requested:
+                self._is_batch_running = False
                 for i in range(index, total):
                     records[i].transcribe_status = "cancelled"
                 summary.is_cancelled = True
@@ -835,6 +887,7 @@ class ClipEditViewModel(ViewModel):
                 return
 
             if index >= total:
+                self._is_batch_running = False
                 summary.total_elapsed = time.perf_counter() - batch_started_at
                 self.batchExecutionFinished.emit(summary)
                 self._emit_batch_summary("批量识别完成", results, skipped)
@@ -944,11 +997,13 @@ class ClipEditViewModel(ViewModel):
         summary = BatchExecutionSummary(task_type="plan", records=records)
         self._current_batch_summary = summary
         self._batch_cancel_requested = False
+        self._is_batch_running = True
         batch_started_at = time.perf_counter()
         self.batchExecutionStarted.emit(summary)
 
         def _run_at(index: int) -> None:
             if self._batch_cancel_requested:
+                self._is_batch_running = False
                 for i in range(index, total):
                     records[i].plan_status = "cancelled"
                 summary.is_cancelled = True
@@ -959,6 +1014,7 @@ class ClipEditViewModel(ViewModel):
                 return
 
             if index >= total:
+                self._is_batch_running = False
                 summary.total_elapsed = time.perf_counter() - batch_started_at
                 self.batchExecutionFinished.emit(summary)
                 self._emit_batch_summary("批量策划完成", results, skipped)
@@ -1095,11 +1151,15 @@ class ClipEditViewModel(ViewModel):
         summary = BatchExecutionSummary(task_type="render", records=records)
         self._current_batch_summary = summary
         self._batch_cancel_requested = False
+        self._clip_quota_abort = False
+        self._clip_quota_notified = False
+        self._is_batch_running = True
         batch_started_at = time.perf_counter()
         self.batchExecutionStarted.emit(summary)
 
         def _run_at(index: int) -> None:
             if self._batch_cancel_requested:
+                self._is_batch_running = False
                 for i in range(index, total):
                     records[i].render_status = "cancelled"
                 summary.is_cancelled = True
@@ -1110,6 +1170,7 @@ class ClipEditViewModel(ViewModel):
                 return
 
             if index >= total:
+                self._is_batch_running = False
                 summary.total_elapsed = time.perf_counter() - batch_started_at
                 self.batchExecutionFinished.emit(summary)
                 root = resolve_clip_export_root()
@@ -1133,6 +1194,17 @@ class ClipEditViewModel(ViewModel):
                     index + 1,
                     total,
                 )
+                if self._clip_quota_abort:
+                    self._is_batch_running = False
+                    # 今日剪辑配额已用尽：停止后续渲染，避免每部剧重复弹窗
+                    for i in range(index + 1, total):
+                        records[i].render_status = "skipped"
+                        records[i].error_msg = "今日剪辑配额已用尽"
+                    summary.total_elapsed = time.perf_counter() - batch_started_at
+                    self.batchExecutionFinished.emit(summary)
+                    self.messageReceived.emit("今日剪辑配额已用尽，已停止批量渲染")
+                    self._finish_loading_if_idle()
+                    return
                 _run_at(index + 1)
                 return
 
@@ -1241,7 +1313,6 @@ class ClipEditViewModel(ViewModel):
             self.messageReceived.emit("没有符合条件的项目可执行一键流程")
             return
 
-        total = len(queue)
         records = [
             DramaTimingRecord(
                 project_id=p.id,
@@ -1253,21 +1324,32 @@ class ClipEditViewModel(ViewModel):
         summary = BatchExecutionSummary(task_type="all", records=records)
         self._current_batch_summary = summary
         self._batch_cancel_requested = False
+        self._clip_quota_abort = False
+        self._clip_quota_notified = False
+        self._is_batch_running = True
+        self._active_batch_queue = queue
+        self._active_batch_records = records
         batch_started_at = time.perf_counter()
         self.batchExecutionStarted.emit(summary)
 
         had_retries = False
+        pass1_completed_count = 0
 
         def _finish_batch():
+            self._is_batch_running = False
+            self._active_batch_queue = None
+            self._active_batch_records = None
             summary.total_elapsed = time.perf_counter() - batch_started_at
             self.batchExecutionFinished.emit(summary)
             if self._batch_cancel_requested:
                 self.messageReceived.emit("一键执行已取消")
+            elif self._clip_quota_abort:
+                self.messageReceived.emit("今日剪辑配额已用尽，已停止一键执行")
             else:
                 root = resolve_clip_export_root()
                 retry_suffix = "（含自动重试）" if had_retries else ""
                 self.messageReceived.emit(
-                    f"一键执行全部完成{retry_suffix}！成功 {summary.success_count}/{total} 部，"
+                    f"一键执行全部完成{retry_suffix}！成功 {summary.success_count}/{len(records)} 部，"
                     f"总耗时 {self._format_elapsed(summary.total_elapsed)}（导出目录：{root}）"
                 )
             self._finish_loading_if_idle()
@@ -1281,16 +1363,17 @@ class ClipEditViewModel(ViewModel):
             retry_idx: int = 0,
             retry_total: int = 0,
         ) -> None:
-            if self._batch_cancel_requested:
+            if self._batch_cancel_requested or self._clip_quota_abort:
                 on_done()
                 return
 
             pid = project.id
             pname = project.name
             prefix = "一键执行" if not is_retry else f"【自动重试 {retry_idx + 1}/{retry_total}】"
+            cur_total = lambda: len(queue)
 
             def _start_stage3():
-                if self._batch_cancel_requested:
+                if self._batch_cancel_requested or self._clip_quota_abort:
                     on_done()
                     return
                 if is_retry and rec.render_status == "done":
@@ -1304,7 +1387,7 @@ class ClipEditViewModel(ViewModel):
                         rec,
                         f"《{pname}》未获剪辑授权，跳过渲染",
                         queue_idx + 1,
-                        total,
+                        cur_total(),
                     )
                     on_done()
                     return
@@ -1316,13 +1399,13 @@ class ClipEditViewModel(ViewModel):
                     pname,
                     project_id=pid,
                     index=queue_idx + 1,
-                    total=total,
+                    total=cur_total(),
                 )
                 self.batchExecutionUpdated.emit(
                     rec,
-                    f"{prefix} (3/3 阶段：渲染) · 正在渲染第 {queue_idx + 1}/{total} 部：《{pname}》…",
+                    f"{prefix} (3/3 阶段：渲染) · 正在渲染第 {queue_idx + 1}/{cur_total()} 部：《{pname}》…",
                     queue_idx,
-                    total,
+                    cur_total(),
                 )
                 self._add_task()
                 t_render_start = time.perf_counter()
@@ -1352,7 +1435,7 @@ class ClipEditViewModel(ViewModel):
                         rec,
                         f"《{pname}》一键执行完成（总耗时 {rec.total_time:.1f}s）",
                         queue_idx + 1,
-                        total,
+                        cur_total(),
                     )
                     on_done()
 
@@ -1373,7 +1456,7 @@ class ClipEditViewModel(ViewModel):
                         rec,
                         f"《{pname}》渲染失败",
                         queue_idx + 1,
-                        total,
+                        cur_total(),
                     )
                     on_done()
 
@@ -1382,7 +1465,7 @@ class ClipEditViewModel(ViewModel):
                     on_success=step3_done,
                     on_error=step3_err,
                     index=queue_idx + 1,
-                    total=total,
+                    total=cur_total(),
                 )
 
             def _start_stage2():
@@ -1401,7 +1484,7 @@ class ClipEditViewModel(ViewModel):
                         rec,
                         f"《{pname}》配额不足，跳过策划",
                         queue_idx + 1,
-                        total,
+                        cur_total(),
                     )
                     on_done()
                     return
@@ -1413,13 +1496,13 @@ class ClipEditViewModel(ViewModel):
                     pname,
                     project_id=pid,
                     index=queue_idx + 1,
-                    total=total,
+                    total=cur_total(),
                 )
                 self.batchExecutionUpdated.emit(
                     rec,
-                    f"{prefix} (2/3 阶段：策划) · 正在策划第 {queue_idx + 1}/{total} 部：《{pname}》…",
+                    f"{prefix} (2/3 阶段：策划) · 正在策划第 {queue_idx + 1}/{cur_total()} 部：《{pname}》…",
                     queue_idx,
-                    total,
+                    cur_total(),
                 )
                 self._add_task()
                 t_plan_start = time.perf_counter()
@@ -1454,7 +1537,7 @@ class ClipEditViewModel(ViewModel):
                         rec,
                         f"《{pname}》策划完成（{rec.plan_time:.1f}s）",
                         queue_idx,
-                        total,
+                        cur_total(),
                     )
                     _start_stage3()
 
@@ -1477,7 +1560,7 @@ class ClipEditViewModel(ViewModel):
                         rec,
                         f"《{pname}》策划失败，跳过渲染",
                         queue_idx + 1,
-                        total,
+                        cur_total(),
                     )
                     on_done()
 
@@ -1490,12 +1573,12 @@ class ClipEditViewModel(ViewModel):
 
             rec.transcribe_status = "in_progress"
             self._update_status(pid, "transcribe", DramaStatus.IN_PROGRESS)
-            self._show_progress("正在识别", pname, index=queue_idx + 1, total=total)
+            self._show_progress("正在识别", pname, index=queue_idx + 1, total=cur_total())
             self.batchExecutionUpdated.emit(
                 rec,
-                f"{prefix} (1/3 阶段：识别) · 正在识别第 {queue_idx + 1}/{total} 部：《{pname}》…",
+                f"{prefix} (1/3 阶段：识别) · 正在识别第 {queue_idx + 1}/{cur_total()} 部：《{pname}》…",
                 queue_idx,
-                total,
+                cur_total(),
             )
             self._add_task()
             t_trans_start = time.perf_counter()
@@ -1524,7 +1607,7 @@ class ClipEditViewModel(ViewModel):
                     rec,
                     f"《{pname}》识别完成（{rec.transcribe_time:.1f}s）",
                     queue_idx,
-                    total,
+                    cur_total(),
                 )
                 _start_stage2()
 
@@ -1549,15 +1632,17 @@ class ClipEditViewModel(ViewModel):
                     rec,
                     f"《{pname}》识别失败，跳过后续步骤",
                     queue_idx + 1,
-                    total,
+                    cur_total(),
                 )
                 on_done()
 
             task_manager.submit_task(step1, on_success=step1_done, on_error=step1_err)
 
         def _run_pass1(index: int) -> None:
-            if self._batch_cancel_requested:
-                for i in range(index, total):
+            nonlocal pass1_completed_count, had_retries
+            current_total = len(queue)
+            if self._batch_cancel_requested or self._clip_quota_abort:
+                for i in range(index, current_total):
                     r = records[i]
                     if r.transcribe_status == "pending":
                         r.transcribe_status = "cancelled"
@@ -1568,9 +1653,14 @@ class ClipEditViewModel(ViewModel):
                 _finish_batch()
                 return
 
-            if index >= total:
+            if index >= current_total:
+                pass1_completed_count = current_total
                 # 首轮全部处理完毕，检查是否开启失败自动重试
-                if not self._batch_cancel_requested and bool(cfg.clip_auto_retry_failed.value):
+                if (
+                    not self._batch_cancel_requested
+                    and not self._clip_quota_abort
+                    and bool(cfg.clip_auto_retry_failed.value)
+                ):
                     failed_indexes = [
                         i
                         for i, r in enumerate(records)
@@ -1580,7 +1670,6 @@ class ClipEditViewModel(ViewModel):
                         and r.render_status != "cancelled"
                     ]
                     if failed_indexes:
-                        nonlocal had_retries
                         had_retries = True
                         self.messageReceived.emit(
                             f"一键执行首轮已结束，检测到 {len(failed_indexes)} 部剧目未完全成功，正在自动重新执行失败项…"
@@ -1590,16 +1679,32 @@ class ClipEditViewModel(ViewModel):
                 _finish_batch()
                 return
 
+            def _on_item_done():
+                nonlocal pass1_completed_count
+                pass1_completed_count = max(pass1_completed_count, index + 1)
+                _run_pass1(index + 1)
+
             _execute_project(
                 queue[index],
                 records[index],
                 queue_idx=index,
-                on_done=lambda: _run_pass1(index + 1),
+                on_done=_on_item_done,
                 is_retry=False,
             )
 
         def _run_retry_pass(retry_idx: int, failed_indexes: list[int]) -> None:
-            if self._batch_cancel_requested or retry_idx >= len(failed_indexes):
+            if (
+                self._batch_cancel_requested
+                or self._clip_quota_abort
+            ):
+                _finish_batch()
+                return
+
+            if retry_idx >= len(failed_indexes):
+                # 检查在重试期间是否有新追加的任务
+                if pass1_completed_count < len(queue):
+                    _run_pass1(pass1_completed_count)
+                    return
                 _finish_batch()
                 return
 
@@ -1638,6 +1743,8 @@ class ClipEditViewModel(ViewModel):
         run_render: bool = True,
     ) -> int:
         """从下载页导入已识别剧目，并按需执行策划与渲染。"""
+        self._clip_quota_abort = False
+        self._clip_quota_notified = False
         imported_ids: list[str] = []
         for folder in folder_paths:
             project = self.import_drama_folder(

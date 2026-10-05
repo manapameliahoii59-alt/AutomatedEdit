@@ -2,6 +2,8 @@ import sys
 import time
 from pathlib import Path
 
+import pytest
+
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
@@ -97,6 +99,127 @@ def test_plan_job_completes_with_mocked_run_plan(monkeypatch):
         assert captured.get("provider") == "deepseek"
         assert captured.get("api_keys_raw") == "sk-test"
         assert captured.get("llm_session_id") == job.id
+    finally:
+        db.close()
+
+
+def test_create_plan_job_allows_missing_keys_with_group(monkeypatch):
+    from sqlalchemy.pool import StaticPool
+
+    from app.database import Base
+    from app.services import plan_jobs, plan_secrets
+
+    engine = create_engine(
+        "sqlite://",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    Base.metadata.create_all(engine)
+    TestSession = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+    monkeypatch.setattr(plan_jobs, "SessionLocal", TestSession)
+    monkeypatch.setattr(
+        plan_jobs, "ensure_user_secret", lambda _db, _uid: _FakeSecret()
+    )
+    monkeypatch.setattr(
+        plan_jobs,
+        "resolve_plan_llm_config",
+        lambda _db, _uid: {
+            "provider": "deepseek",
+            "api_url": "https://api.deepseek.com/chat/completions",
+            "model": "deepseek-v4-flash",
+            "keys": "",
+        },
+    )
+    monkeypatch.setattr(
+        plan_secrets,
+        "resolve_plan_llm_group",
+        lambda _db, _uid: {
+            "group_id": 1,
+            "group_name": "默认调度组",
+            "dispatch_mode": "serial",
+            "max_loops_per_channel": 2,
+            "channels": [
+                {
+                    "id": 1,
+                    "name": "渠道1",
+                    "provider": "deepseek",
+                    "model_name": "deepseek-v4-flash",
+                    "api_url": "https://api.deepseek.com/chat/completions",
+                    "keys": "sk-channel",
+                    "thinking_enabled": False,
+                }
+            ],
+        },
+    )
+    monkeypatch.setattr(plan_jobs, "_run_job", lambda *a, **k: None)
+
+    db = TestSession()
+    try:
+        job = plan_jobs.create_plan_job(
+            db,
+            user_id=7,
+            payload={
+                "project_name": "demo",
+                "steps": [],
+                "ordered_files": ["1.mp4"],
+                "plan_mode": "mixed",
+            },
+        )
+        assert job is not None
+        from app.models import PlanJob
+
+        stored = db.get(PlanJob, job.id)
+        assert stored is not None
+        assert stored.plan_mode == "mixed"
+    finally:
+        db.close()
+
+
+def test_create_plan_job_rejects_missing_keys_without_group(monkeypatch):
+    from sqlalchemy.pool import StaticPool
+
+    from app.database import Base
+    from app.services import plan_jobs, plan_secrets
+
+    engine = create_engine(
+        "sqlite://",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    Base.metadata.create_all(engine)
+    TestSession = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+    monkeypatch.setattr(plan_jobs, "SessionLocal", TestSession)
+    monkeypatch.setattr(
+        plan_jobs, "ensure_user_secret", lambda _db, _uid: _FakeSecret()
+    )
+    monkeypatch.setattr(
+        plan_jobs,
+        "resolve_plan_llm_config",
+        lambda _db, _uid: {
+            "provider": "deepseek",
+            "api_url": "https://api.deepseek.com/chat/completions",
+            "model": "deepseek-v4-flash",
+            "keys": "",
+        },
+    )
+    monkeypatch.setattr(
+        plan_secrets, "resolve_plan_llm_group", lambda _db, _uid: None
+    )
+    monkeypatch.setattr(plan_jobs, "_run_job", lambda *a, **k: None)
+
+    db = TestSession()
+    try:
+        with pytest.raises(ValueError, match="未配置策划服务密钥"):
+            plan_jobs.create_plan_job(
+                db,
+                user_id=7,
+                payload={
+                    "project_name": "demo",
+                    "steps": [],
+                    "ordered_files": ["1.mp4"],
+                    "plan_mode": "mixed",
+                },
+            )
     finally:
         db.close()
 

@@ -374,6 +374,7 @@ def bundle_config() -> None:
             "ffprobe_path": "",
             "video_download_dir": "",
             "video_download_auto_unzip": True,
+            "video_download_auto_batch_all": False,
             "video_download_auto_transcribe": True,
             "video_download_auto_plan": True,
             "video_download_auto_import_clip": True,

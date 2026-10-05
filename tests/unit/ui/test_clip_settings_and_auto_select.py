@@ -429,6 +429,87 @@ class TestBatchAllAutoRetry:
         assert not any("正在自动重新执行失败项" in m for m in messages)
 
 
+class TestClipQuotaAbort:
+    def _make_vm(self, monkeypatch):
+        from app.ui.views.clip_edit.view_model import ClipEditViewModel
+
+        monkeypatch.setattr(
+            "app.ui.views.clip_edit.view_model.ClipEditViewModel._load_settings_from_server",
+            lambda self: None,
+        )
+        return ClipEditViewModel()
+
+    def test_ensure_can_clip_notifies_once(self, qapp, monkeypatch):
+        from app.data.services.quota_service import DailyQuota, QuotaService
+
+        vm = self._make_vm(monkeypatch)
+        quota = QuotaService.instance()
+        monkeypatch.setattr(quota, "_quota", DailyQuota(clip_count=3, clip_limit=3))
+        monkeypatch.setattr(
+            quota,
+            "check_remote",
+            lambda action, name: (False, "今日剪辑剧目数已达上限（3 部）"),
+        )
+
+        events = []
+        vm.quotaExceeded.connect(lambda *args: events.append(args))
+
+        # 同一批任务内连续超限，只弹一次
+        assert vm._ensure_can_clip("剧1") is False
+        assert vm._ensure_can_clip("剧2") is False
+        assert len(events) == 1
+
+        # 配额恢复后再次超限，应能重新提醒
+        monkeypatch.setattr(quota, "check_remote", lambda action, name: (True, ""))
+        assert vm._ensure_can_clip("剧3") is True
+        monkeypatch.setattr(
+            quota,
+            "check_remote",
+            lambda action, name: (False, "今日剪辑剧目数已达上限（3 部）"),
+        )
+        assert vm._ensure_can_clip("剧4") is False
+        assert len(events) == 2
+
+    def test_batch_render_stops_on_clip_quota_abort(self, qapp, monkeypatch):
+        from app.data.models.drama_project import DramaProject, DramaStatus
+        from app.data.services.quota_service import DailyQuota, QuotaService
+
+        vm = self._make_vm(monkeypatch)
+        p1 = DramaProject(id="p1", name="剧1", folder_path="d1", episode_count=1)
+        p2 = DramaProject(id="p2", name="剧2", folder_path="d2", episode_count=1)
+        vm._projects = [p1, p2]
+        vm._status = {
+            "p1": {"plan": DramaStatus.DONE},
+            "p2": {"plan": DramaStatus.DONE},
+        }
+
+        quota = QuotaService.instance()
+        monkeypatch.setattr(quota, "_quota", DailyQuota(clip_count=3, clip_limit=3))
+        monkeypatch.setattr(
+            quota,
+            "check_remote",
+            lambda action, name: (False, "今日剪辑剧目数已达上限（3 部）"),
+        )
+
+        render_calls = []
+        monkeypatch.setattr(vm, "_submit_render", lambda *a, **k: render_calls.append(a))
+
+        events = []
+        vm.quotaExceeded.connect(lambda *args: events.append(args))
+
+        vm.batch_render(["p1", "p2"])
+
+        # 只弹一次，且配额耗尽后不再执行任何渲染
+        assert len(events) == 1
+        assert render_calls == []
+        assert vm._current_batch_summary is not None
+        statuses = {
+            r.project_id: r.render_status
+            for r in vm._current_batch_summary.records
+        }
+        assert statuses == {"p1": "skipped", "p2": "skipped"}
+
+
 def test_transcription_service_max_episodes_truncation(tmp_path, monkeypatch):
     import os
     from unittest.mock import MagicMock
@@ -470,4 +551,59 @@ def test_transcription_service_max_episodes_truncation(tmp_path, monkeypatch):
 
     # 还原
     qconfig.set(cfg.clip_max_transcribe_episodes, 15)
+
+
+def test_start_auto_batch_all_from_download_appends_when_batch_running(
+    tmp_path, monkeypatch, qapp
+):
+    from unittest.mock import MagicMock
+    from app.data.models.batch_execution_record import (
+        BatchExecutionSummary,
+        DramaTimingRecord,
+    )
+    from app.data.services.quota_service import QuotaService
+    import app.ui.views.clip_edit.view as clip_view_module
+
+    # Mock QuotaService to allow clipping
+    monkeypatch.setattr(
+        QuotaService.instance(),
+        "can_clip_batch",
+        lambda names, refresh=True: (True, "", 99),
+    )
+    monkeypatch.setattr(
+        QuotaService.instance(), "check_remote", lambda action, name: (True, "")
+    )
+
+    folder1 = _make_drama_folder(tmp_path, "drama1")
+    folder2 = _make_drama_folder(tmp_path, "drama2")
+
+    page = ClipEditPage()
+    # 模拟剧目1已在运行批量执行
+    p1 = page.vm.import_drama_folder(str(folder1), emit_message=False)
+    rec1 = DramaTimingRecord(project_id=p1.id, project_name=p1.name)
+    summary = BatchExecutionSummary(task_type="all", records=[rec1])
+    page.vm._is_batch_running = True
+    page.vm._active_batch_queue = [p1]
+    page.vm._active_batch_records = [rec1]
+    page.vm._current_batch_summary = summary
+
+    # 模拟现有的 batch_dialog
+    page._batch_dialog = MagicMock()
+    page._batch_dialog.isVisible.return_value = True
+
+    toast_messages = []
+    monkeypatch.setattr(
+        clip_view_module,
+        "show_toast",
+        lambda parent, msg, **kwargs: toast_messages.append(msg),
+    )
+
+    # 调用从下载完成触发的自动执行剧目2
+    page.start_auto_batch_all_from_download([str(folder2)])
+
+    # 验证：剧目2成功加入已有队列，提示加入排队队列
+    assert len(page.vm._active_batch_queue) == 2
+    assert page.vm._active_batch_queue[1].name == "drama2"
+    assert any("已自动加入排队队列" in m for m in toast_messages)
+    page.deleteLater()
 

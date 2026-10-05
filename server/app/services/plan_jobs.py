@@ -225,8 +225,23 @@ def _run_job(
 def create_plan_job(db: Session, user_id: int, payload: dict[str, Any]) -> PlanJobRecord:
     _cleanup_old_jobs()
     row_secret = ensure_user_secret(db, user_id)
+
+    plan_mode = str(payload.get("plan_mode") or "").strip().lower()
+    if plan_mode not in {"short", "long", "mixed"}:
+        # 兼容旧客户端：无 mode 时由 split_ab 推断
+        split_ab = payload.get("split_ab")
+        use_ab = True if split_ab is None else bool(split_ab)
+        plan_mode = "short" if not use_ab else "long"
+
+    # 混合模式优先走调度策略组：只要组内有可用渠道，就不再强制要求用户/全局 API Keys
+    llm_group: dict | None = None
+    if plan_mode == "mixed":
+        from app.services.plan_secrets import resolve_plan_llm_group
+
+        llm_group = resolve_plan_llm_group(db, user_id)
+
     llm = resolve_plan_llm_config(db, user_id)
-    if not llm["keys"]:
+    if not llm["keys"] and llm_group is None:
         raise ValueError("未配置策划服务密钥，请联系管理员")
 
     plan_key = row_secret.plan_decrypt_key
@@ -235,18 +250,6 @@ def create_plan_job(db: Session, user_id: int, payload: dict[str, Any]) -> PlanJ
 
     target_total = clamp_clip_count(payload.get("target_clips_count") or 15)
     project_name = str(payload.get("project_name") or "").strip()
-    plan_mode = str(payload.get("plan_mode") or "").strip().lower()
-    if plan_mode not in {"short", "long", "mixed"}:
-        # 兼容旧客户端：无 mode 时由 split_ab 推断
-        split_ab = payload.get("split_ab")
-        use_ab = True if split_ab is None else bool(split_ab)
-        plan_mode = "short" if not use_ab else "long"
-
-    llm_group: dict | None = None
-    if plan_mode == "mixed":
-        from app.services.plan_secrets import resolve_plan_llm_group
-
-        llm_group = resolve_plan_llm_group(db, user_id)
 
     from app.services.user_settings import get_user_settings
 

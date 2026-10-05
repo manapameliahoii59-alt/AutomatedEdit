@@ -5,6 +5,7 @@ import pytest
 from app.data.services.batch_download_service import (
     DEFAULT_TRANSCODE_TIMEOUT_MIN,
     PHASE1_CREATE_RETRY_PASSES,
+    PHASE2_DOWNLOAD_RETRY_PASSES,
     TRANSCODE_POLL_INTERVALS_SEC,
     BatchDownloadOptions,
     BatchLogger,
@@ -250,3 +251,145 @@ class TestTranscribePipelinePoll:
         assert completed == ["/tmp/drama"]
         assert done == ["/tmp/drama"]
         assert not pipeline.has_pending()
+
+
+class TestPhase2DownloadRescueRetry:
+    def test_rescue_retry_recovers_failed_download(self, monkeypatch, tmp_path):
+        from app.data.services.batch_download_service import phase2_download_files
+
+        assert PHASE2_DOWNLOAD_RETRY_PASSES == 1
+
+        zip_file = tmp_path / "test.zip"
+        zip_file.write_bytes(b"PK00fakecontent")
+
+        attempt_count = {"n": 0}
+
+        def fake_download_prepared(client, prepared, opts, dl_opts, logger=None):
+            attempt_count["n"] += 1
+            if attempt_count["n"] == 1:
+                raise RuntimeError("下载速度过慢（最近 30s 平均 100 KB/s）")
+            return {
+                "downloadId": prepared["downloadId"],
+                "bookName": prepared["bookName"],
+                "taskName": prepared["taskName"],
+                "filePath": str(zip_file),
+                "downloadUrl": prepared["downloadUrl"],
+                "avgSpeedKbps": 500,
+                "elapsedSec": 2,
+            }
+
+        monkeypatch.setattr(
+            "app.data.services.batch_download_service._prepare_download_job",
+            lambda client, job, opts: {
+                "downloadId": job["downloadId"],
+                "bookName": job["bookName"],
+                "taskName": job["name"],
+                "downloadUrl": "http://example.com/file.zip",
+                "destPath": str(zip_file),
+                "job": job,
+            },
+        )
+        monkeypatch.setattr(
+            "app.data.services.batch_download_service._download_prepared_with_retry",
+            fake_download_prepared,
+        )
+        monkeypatch.setattr(
+            "app.data.services.batch_download_service._mark_done",
+            lambda key: None,
+        )
+        monkeypatch.setattr(
+            "app.data.services.batch_download_service._append_log",
+            lambda entry: None,
+        )
+        monkeypatch.setattr(
+            "app.data.services.batch_download_service._post_process_downloaded_file",
+            lambda file_path, opts, logger, transcribe_pipeline=None, label=None: None,
+        )
+
+        ui_logs: list[str] = []
+        logger = BatchLogger(ui_logs.append, lambda _m: None)
+
+        client = type(
+            "Client",
+            (),
+            {
+                "fetch_download_task_overview": staticmethod(
+                    lambda: {"code": 0, "data": {"today_completed_count": 1, "processing_count": 0}}
+                ),
+                "fetch_download_tasks_by_ids": staticmethod(
+                    lambda ids, **kwargs: {
+                        "d1": {"download_id": "d1", "task_status": 2, "book_name": "憨憨美人复国记"}
+                    }
+                ),
+            },
+        )()
+
+        jobs = [{"downloadId": "d1", "key": "k1", "bookName": "憨憨美人复国记", "name": "憨憨美人复国记"}]
+        opts = BatchDownloadOptions(timeout_min=1, download_timeout_min=1)
+        done_set = set()
+
+        summary = phase2_download_files(client, jobs, opts, done_set, logger)
+
+        assert attempt_count["n"] == 2
+        assert summary["success"] == 1
+        assert summary["fail"] == 0
+        assert "k1" in done_set
+        assert any("重试下载失败剧目（末尾补救第 1 轮" in line for line in ui_logs)
+        assert any("[重试成功] 憨憨美人复国记 下载完成" in line for line in ui_logs)
+
+    def test_rescue_retry_still_failed(self, monkeypatch, tmp_path):
+        from app.data.services.batch_download_service import phase2_download_files
+
+        monkeypatch.setattr(
+            "app.data.services.batch_download_service._prepare_download_job",
+            lambda client, job, opts: {
+                "downloadId": job["downloadId"],
+                "bookName": job["bookName"],
+                "taskName": job["name"],
+                "downloadUrl": "http://example.com/file.zip",
+                "destPath": str(tmp_path / "test.zip"),
+                "job": job,
+            },
+        )
+        monkeypatch.setattr(
+            "app.data.services.batch_download_service._download_prepared_with_retry",
+            lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("网络彻底断开")),
+        )
+        monkeypatch.setattr(
+            "app.data.services.batch_download_service._mark_done",
+            lambda key: None,
+        )
+        monkeypatch.setattr(
+            "app.data.services.batch_download_service._append_log",
+            lambda entry: None,
+        )
+
+        ui_logs: list[str] = []
+        logger = BatchLogger(ui_logs.append, lambda _m: None)
+
+        client = type(
+            "Client",
+            (),
+            {
+                "fetch_download_task_overview": staticmethod(
+                    lambda: {"code": 0, "data": {"today_completed_count": 1, "processing_count": 0}}
+                ),
+                "fetch_download_tasks_by_ids": staticmethod(
+                    lambda ids, **kwargs: {
+                        "d1": {"download_id": "d1", "task_status": 2, "book_name": "憨憨美人复国记"}
+                    }
+                ),
+            },
+        )()
+
+        jobs = [{"downloadId": "d1", "key": "k1", "bookName": "憨憨美人复国记", "name": "憨憨美人复国记"}]
+        opts = BatchDownloadOptions(timeout_min=1, download_timeout_min=1)
+        done_set = set()
+
+        summary = phase2_download_files(client, jobs, opts, done_set, logger)
+
+        assert summary["success"] == 0
+        assert summary["fail"] == 1
+        assert "k1" not in done_set
+        assert any("重试下载失败剧目（末尾补救第 1 轮" in line for line in ui_logs)
+        assert any("[重试仍失败] 憨憨美人复国记" in line for line in ui_logs)

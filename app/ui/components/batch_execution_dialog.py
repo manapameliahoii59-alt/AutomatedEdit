@@ -270,6 +270,24 @@ class BatchExecutionDialog(QDialog):
             self._id_to_row[rec.project_id] = row
             self._render_row(row, rec)
 
+    def append_records(self, new_records: list[DramaTimingRecord], total_count: int):
+        """动态向正在运行的任务看板追加新剧目。"""
+        if not new_records or self._is_finished:
+            return
+        start_row = self.table.rowCount()
+        self.table.setRowCount(start_row + len(new_records))
+        for i, rec in enumerate(new_records):
+            row = start_row + i
+            self._id_to_row[rec.project_id] = row
+            self._render_row(row, rec)
+        if total_count > 0:
+            self.progress_bar.setRange(0, total_count)
+            task_title = self._summary.task_name if self._summary else "任务"
+            self.title_label.setText(f"正在{task_title}（共 {total_count} 部剧）")
+            current_val = self.progress_bar.value()
+            percent = int((current_val / total_count) * 100)
+            self.progress_detail_label.setText(f"进度: {current_val}/{total_count} ({percent}%)")
+
     def update_progress(
         self,
         record: DramaTimingRecord,

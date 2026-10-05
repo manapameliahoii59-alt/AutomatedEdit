@@ -1328,6 +1328,8 @@ def _call_deepseek(
 ) -> tuple[str | None, float, str | None]:
     api_key = key_pool.get()
     t0 = time.perf_counter()
+    provider_key = str(provider or "deepseek").strip().lower() or "deepseek"
+    model_label = f"{provider_key}/{model_name}"
     try:
         system_prompt = _system_prompt_for_group(
             group_type=group_type,
@@ -1341,7 +1343,6 @@ def _call_deepseek(
             "Authorization": f"Bearer {api_key}",
             "Content-Type": "application/json",
         }
-        provider_key = str(provider or "").strip().lower()
         # OpenCode Go 部分模型需要会话亲和头
         if provider_key == "opencode_go" and llm_session_id:
             headers["x-opencode-session"] = str(llm_session_id)
@@ -1370,19 +1371,26 @@ def _call_deepseek(
         elapsed = time.perf_counter() - t0
 
         if resp.status_code != 200:
-            return None, elapsed, f"HTTP {resp.status_code}: {resp.text[:300]}"
+            return None, elapsed, f"[{model_label}] HTTP {resp.status_code}: {resp.text[:300]}"
 
         data = resp.json()
         choice = (data.get("choices") or [{}])[0]
         message = choice.get("message") or {}
         content = message.get("content")
+        finish_reason = str(choice.get("finish_reason", "unknown")).strip().lower()
         if content and str(content).strip():
-            return str(content).strip(), elapsed, None
+            text = str(content).strip()
+            if finish_reason == "length":
+                # 输出被 max_tokens/上游上限截断：JSON 必然不完整，视为渠道失败以便接力切换
+                return None, elapsed, (
+                    f"[{model_label}] 模型输出被截断 "
+                    f"(finish_reason=length, 已丢弃 {len(text)} 字符)"
+                )
+            return text, elapsed, None
 
-        finish_reason = choice.get("finish_reason", "unknown")
-        return None, elapsed, f"响应内容为空 (finish_reason={finish_reason})"
+        return None, elapsed, f"[{model_label}] 响应内容为空 (finish_reason={finish_reason})"
     except Exception as exc:
-        return None, time.perf_counter() - t0, str(exc)
+        return None, time.perf_counter() - t0, f"[{model_label}] {type(exc).__name__}: {exc}"
     finally:
         key_pool.put(api_key)
 
@@ -1502,7 +1510,7 @@ def run_plan(
     plan_strategy: str | None = None,
     llm_group: dict | None = None,
 ) -> list[dict]:
-    if not api_keys_raw.strip():
+    if not api_keys_raw.strip() and not (llm_group and llm_group.get("channels")):
         raise ValueError("服务端未配置策划 API 密钥")
     llm_provider = str(provider or "deepseek").strip().lower() or "deepseek"
     session_id = str(llm_session_id or "").strip()
@@ -1659,6 +1667,11 @@ def run_plan(
                             for idx, ch in enumerate(multi_channels)
                         }
                         for fut in concurrent.futures.as_completed(future_to_ch):
+                            ch_info = future_to_ch.get(fut) or {}
+                            ch_label = (
+                                f"{ch_info.get('name') or ch_info.get('provider', '渠道')}"
+                                f"/{ch_info.get('model_name') or model_name or llm_provider}"
+                            )
                             try:
                                 raw_res, _, api_err = fut.result()
                                 if raw_res and not api_err:
@@ -1670,9 +1683,9 @@ def run_plan(
                                     if e_raw:
                                         all_ends_raw.extend(e_raw)
                                 elif api_err:
-                                    last_api_error = api_err
+                                    last_api_error = f"[{ch_label}] {api_err}"
                             except Exception as exc:
-                                last_api_error = str(exc)
+                                last_api_error = f"[{ch_label}] {type(exc).__name__}: {exc}"
 
                     if not all_ends_raw:
                         last_parse_error = "并发模型响应中均无有效 ends 切点"
@@ -1723,6 +1736,7 @@ def run_plan(
                     ch_loops = 0
                     ch_consecutive_empty = 0
                     ch_name = ch.get("name") or ch.get("provider", f"渠道{ch_idx + 1}")
+                    ch_label = f"{ch_name}/{ch.get('model_name') or model_name or llm_provider}"
 
                     while completed_in_group < total_count and ch_loops < max_loops_per_channel:
                         ch_loops += 1
@@ -1750,44 +1764,57 @@ def run_plan(
                             plan_strategy=strategy,
                         )
                         if api_error or not raw_res:
-                            last_api_error = api_error or "模型响应为空"
+                            last_api_error = (
+                                f"[{ch_label}] {api_error}"
+                                if api_error
+                                else f"[{ch_label}] 模型响应为空"
+                            )
                             ch_consecutive_empty += 1
                             # 发生错误，停滞切换下一个渠道接力
                             break
 
-                        starts_raw, ends_raw = _extract_starts_ends_from_res(
-                            raw_res, mode, strategy, g_type, ordered_files
-                        )
-                        if not ends_raw:
-                            last_parse_error = f"[{ch_name}] 响应中无 ends 切点候选"
+                        try:
+                            starts_raw, ends_raw = _extract_starts_ends_from_res(
+                                raw_res, mode, strategy, g_type, ordered_files
+                            )
+                            if not ends_raw:
+                                last_parse_error = f"[{ch_label}] 响应中无 ends 切点候选"
+                                ch_consecutive_empty += 1
+                                # 切点为空，切换下一个渠道接力
+                                break
+
+                            need = total_count - completed_in_group
+                            if g_type == "B":
+                                need = max(need, target_total - len(final_plans))
+
+                            paired = _compose_mixed_plans(
+                                starts_raw=starts_raw,
+                                ends_raw=ends_raw,
+                                mode=mode,
+                                strategy=strategy,
+                                g_type=g_type,
+                                need=need,
+                                steps=steps,
+                                step_texts=step_texts,
+                                ordered_files=ordered_files,
+                                episode_end_times=episode_end_times,
+                                min_dur=min_dur,
+                                max_dur=max_dur,
+                                used_fingerprints=used_fingerprints,
+                                used_short_starts=used_short_starts,
+                                project_name=project_name,
+                                date_str=date_str,
+                                speed=speed,
+                                target_total=target_total,
+                            )
+                        except Exception as exc:
+                            # 单渠道返回内容解析/组合失败，记录原因并切换下一个渠道接力，避免拖垮整个任务
+                            last_parse_error = (
+                                f"[{ch_label}] {type(exc).__name__}: {exc}"
+                            )
                             ch_consecutive_empty += 1
-                            # 切点为空，切换下一个渠道接力
                             break
 
-                        need = total_count - completed_in_group
-                        if g_type == "B":
-                            need = max(need, target_total - len(final_plans))
-
-                        paired = _compose_mixed_plans(
-                            starts_raw=starts_raw,
-                            ends_raw=ends_raw,
-                            mode=mode,
-                            strategy=strategy,
-                            g_type=g_type,
-                            need=need,
-                            steps=steps,
-                            step_texts=step_texts,
-                            ordered_files=ordered_files,
-                            episode_end_times=episode_end_times,
-                            min_dur=min_dur,
-                            max_dur=max_dur,
-                            used_fingerprints=used_fingerprints,
-                            used_short_starts=used_short_starts,
-                            project_name=project_name,
-                            date_str=date_str,
-                            speed=speed,
-                            target_total=target_total,
-                        )
                         for plan in paired:
                             final_plans.append(plan)
                             plan["title"] = f"{project_name}-{date_str}-{len(final_plans):02d}"
@@ -1873,7 +1900,9 @@ def run_plan(
                             starts_raw, ends_raw = _parse_short_starts_ends(raw_res)
 
                         if not ends_raw:
-                            last_parse_error = "模型响应中无 ends 切点候选"
+                            last_parse_error = (
+                                f"[{llm_provider}/{model_name}] 模型响应中无 ends 切点候选"
+                            )
                             consecutive_empty += 1
                             continue
 
@@ -1905,7 +1934,9 @@ def run_plan(
                         starts_raw, ends_raw = _parse_short_starts_ends(raw_res)
                         # 切点必须来自模型；开场不足时可由 ASR 句缝补
                         if not ends_raw:
-                            last_parse_error = "模型响应中无 ends 切点候选"
+                            last_parse_error = (
+                                f"[{llm_provider}/{model_name}] 模型响应中无 ends 切点候选"
+                            )
                             consecutive_empty += 1
                             continue
                         need = total_count - completed_in_group
@@ -1952,7 +1983,9 @@ def run_plan(
 
                 clips = _parse_clips_response(raw_res)
                 if not clips:
-                    last_parse_error = "模型响应中无 clips 或解析为空"
+                    last_parse_error = (
+                        f"[{llm_provider}/{model_name}] 模型响应中无 clips 或解析为空"
+                    )
                     consecutive_empty += 1
                     continue
 
@@ -2027,7 +2060,9 @@ def run_plan(
                 if len(final_plans) >= target_total:
                     break
             except Exception as exc:
-                last_parse_error = f"{type(exc).__name__}: {exc}"
+                last_parse_error = (
+                    f"[{llm_provider}/{model_name}] {type(exc).__name__}: {exc}"
+                )
                 consecutive_empty += 1
                 continue
         if len(final_plans) >= target_total:

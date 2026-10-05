@@ -1,8 +1,8 @@
 # coding:utf-8
 from PySide6.QtCore import Qt, QUrl, Signal
 from PySide6.QtGui import QDesktopServices
-from PySide6.QtWidgets import QWidget, QLabel
-from qfluentwidgets import FluentIcon as FIcon, CustomColorSettingCard, setThemeColor, qconfig
+from PySide6.QtWidgets import QWidget, QLabel, QHBoxLayout
+from qfluentwidgets import FluentIcon as FIcon, CustomColorSettingCard, setThemeColor, themeColor, qconfig
 from qfluentwidgets import (SettingCardGroup, SettingCard, SwitchSettingCard, OptionsSettingCard, PrimaryPushSettingCard, PushSettingCard, ScrollArea,
                             ExpandLayout, setTheme, Dialog)
 
@@ -70,29 +70,43 @@ class SettingInterface(ScrollArea):
             '正在获取每日剪辑配额…',
             self.quotaGroup,
         )
-        self.plan_quota_card = SettingCard(
-            FIcon.DOCUMENT,
-            '每日策划上限',
-            '正在获取每日策划配额…',
-            self.quotaGroup,
-        )
-        self.download_quota_card = SettingCard(
-            FIcon.DOWNLOAD,
-            '每日下载上限',
-            '正在获取每日下载配额…',
-            self.quotaGroup,
-        )
-        self.download_quota_card.hide()
 
         # 邀请
         self.inviteGroup = SettingCardGroup("邀请好友", self.scrollWidget)
         self.my_invite_card = PrimaryPushSettingCard(
             '复制邀请码',
             FIcon.SHARE,
-            '我的专属邀请码',
-            '正在获取专属邀请码…',
+            '邀请码',
+            '正在获取邀请码…',
             self.inviteGroup,
         )
+        # 让邀请码与“邀请码”标题并排展示，放大加粗
+        self.invite_title_layout = QHBoxLayout()
+        self.invite_title_layout.setContentsMargins(0, 0, 0, 0)
+        self.invite_title_layout.setSpacing(12)
+        self.invite_title_layout.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+
+        self.my_invite_card.vBoxLayout.removeWidget(self.my_invite_card.titleLabel)
+        self.my_invite_card.vBoxLayout.insertLayout(0, self.invite_title_layout)
+        self.invite_title_layout.addWidget(
+            self.my_invite_card.titleLabel, 0, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter
+        )
+
+        self.invite_code_label = QLabel("", self.my_invite_card)
+        self.invite_code_label.setObjectName("inviteCodeLabel")
+        self.invite_code_label.hide()
+        self.invite_title_layout.addWidget(
+            self.invite_code_label, 0, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter
+        )
+        self._update_invite_code_style()
+
+        # 让邀请码文本可被鼠标选中复制
+        for _label in (self.my_invite_card.titleLabel, self.invite_code_label, self.my_invite_card.contentLabel):
+            _label.setTextInteractionFlags(
+                Qt.TextInteractionFlag.TextSelectableByMouse
+                | Qt.TextInteractionFlag.TextSelectableByKeyboard
+            )
+            _label.setCursor(Qt.CursorShape.IBeamCursor)
         self.bind_invite_card = PushSettingCard(
             '立即兑换',
             FIcon.ADD,
@@ -168,8 +182,6 @@ class SettingInterface(ScrollArea):
         self.personalGroup.addSettingCard(self.auto_login)
         self.personalGroup.addSettingCard(self.logoutCard)
         self.quotaGroup.addSettingCard(self.clip_quota_card)
-        self.quotaGroup.addSettingCard(self.plan_quota_card)
-        self.quotaGroup.addSettingCard(self.download_quota_card)
         self.inviteGroup.addSettingCard(self.my_invite_card)
         self.inviteGroup.addSettingCard(self.bind_invite_card)
         self.changduGroup.addSettingCard(self.changdu_account_card)
@@ -188,6 +200,7 @@ class SettingInterface(ScrollArea):
     def __connect_signal_to_slot(self):
         self.themeCard.optionChanged.connect(lambda ci: setTheme(cfg.themeMode.value))
         self.themeColorCard.colorChanged.connect(setThemeColor)
+        self.themeColorCard.colorChanged.connect(lambda: self._update_invite_code_style())
         self.aboutCard.clicked.connect(lambda: QDesktopServices.openUrl(QUrl(FEEDBACK_URL)))
         self.checkUpdateCard.clicked.connect(self.__on_check_update)
         self.logoutCard.clicked.connect(self.__on_logout_clicked)
@@ -199,6 +212,19 @@ class SettingInterface(ScrollArea):
         self.vm.quotaInfoLoaded.connect(self.__on_quota_info_loaded)
         self.vm.inviteInfoLoaded.connect(self.__on_invite_info_loaded)
         self.vm.inviteBindFinished.connect(self.__on_bind_finished)
+
+    def _update_invite_code_style(self):
+        if not hasattr(self, "invite_code_label"):
+            return
+        color = themeColor().name()
+        self.invite_code_label.setStyleSheet(f"""
+            QLabel#inviteCodeLabel {{
+                font-size: 18px;
+                font-weight: bold;
+                font-family: 'Consolas', 'Segoe UI', 'Microsoft YaHei', monospace;
+                color: {color};
+            }}
+        """)
 
     def __on_save_password_changed(self, is_checked: bool):
         if not is_checked:
@@ -258,11 +284,6 @@ class SettingInterface(ScrollArea):
             return
         clip_count = data.get("clip_count", 0)
         clip_limit = data.get("clip_limit", 0)
-        plan_count = data.get("plan_count", 0)
-        plan_limit = data.get("plan_limit", 0)
-        download_count = data.get("download_count", 0)
-        download_limit = data.get("download_limit", 0)
-        download_enabled = data.get("download_enabled", True)
         invite_bonus = data.get("invite_bonus", 0)
         bonus_valid_days = data.get("bonus_valid_days", 0)
         base_clip_limit = data.get("base_clip_limit", clip_limit)
@@ -274,27 +295,8 @@ class SettingInterface(ScrollArea):
             rem = max(0, clip_limit - clip_count)
             clip_content = f"今日已剪辑 {clip_count} 部 / 每日上限 {clip_limit} 部（今日剩余 {rem} 部）"
             if invite_bonus > 0:
-                days_str = f"剩余有效期 {bonus_valid_days} 天" if bonus_valid_days > 0 else "永久有效"
-                clip_content += f"\n包含基础永久额度 {base_clip_limit} 部 + 邀请奖励临时额度 {invite_bonus} 部（{days_str}）"
+                clip_content += f"\n包含基础额度 {base_clip_limit} 部 + 邀请奖励额度 {invite_bonus} 部"
         self.clip_quota_card.setContent(clip_content)
-
-        # 每日策划上限
-        if plan_limit <= 0:
-            plan_content = f"今日已策划 {plan_count} 部 / 不限上限"
-        else:
-            rem = max(0, plan_limit - plan_count)
-            plan_content = f"今日已策划 {plan_count} 部 / 每日上限 {plan_limit} 部（今日剩余 {rem} 部）"
-        self.plan_quota_card.setContent(plan_content)
-
-        # 每日下载上限
-        if download_enabled and download_limit > 0:
-            self.download_quota_card.show()
-            rem = max(0, download_limit - download_count)
-            self.download_quota_card.setContent(
-                f"今日已下载 {download_count} 部 / 每日上限 {download_limit} 部（今日剩余 {rem} 部）"
-            )
-        else:
-            self.download_quota_card.hide()
 
     def __on_invite_info_loaded(self, data: dict):
         if not data:
@@ -309,29 +311,43 @@ class SettingInterface(ScrollArea):
         invited_by = data.get("invited_by", "")
         invitee_count = data.get("invitee_count", 0)
         reward = data.get("current_reward_per_invite", 5)
-        valid_days = data.get("reward_valid_days", 30)
-        valid_desc = f"（有效期 {valid_days} 天）" if valid_days and valid_days > 0 else "（永久有效）"
+        require = int(data.get("require_invitee_clips", 0) or 0)
+        qualified = data.get("invitee_qualified", True)
+        progress = int(data.get("invitee_clip_progress", 0) or 0)
+        remaining = int(data.get("invitee_remaining_clips", 0) or 0)
+        rule_desc = f"，被邀请方成功剪辑满 {require} 部剧后生效" if require > 0 else ""
 
         if self._current_invite_code:
-            self.my_invite_card.setTitle(f"我的专属邀请码：{self._current_invite_code}")
+            self.my_invite_card.setTitle("邀请码")
+            self.invite_code_label.setText(self._current_invite_code)
+            self.invite_code_label.show()
             self.my_invite_card.setContent(
-                f"邀请好友注册使用，双方每日剪辑上限各 +{reward} 首{valid_desc} | 已成功邀请 {invitee_count} 人"
+                f"邀请好友注册使用，双方每日剪辑上限各 +{reward} 首{rule_desc} | 已成功邀请 {invitee_count} 人"
             )
             btn = getattr(self.my_invite_card, "button", None)
             if btn is not None:
                 btn.setEnabled(True)
+        else:
+            self.invite_code_label.setText("")
+            self.invite_code_label.hide()
 
         btn_bind = getattr(self.bind_invite_card, "button", None)
         if has_used:
-            self.bind_invite_card.setContent(
-                f"已绑定邀请人：{invited_by or '好友'}（每日剪辑上限已成功提升）"
-            )
+            if require > 0 and not qualified:
+                self.bind_invite_card.setContent(
+                    f"已绑定邀请人：{invited_by or '好友'}｜您已剪辑 {progress}/{require} 部，"
+                    f"还需 {remaining} 部双方每日剪辑上限 +{reward} 首才会生效"
+                )
+            else:
+                self.bind_invite_card.setContent(
+                    f"已绑定邀请人：{invited_by or '好友'}（每日剪辑上限已成功提升）"
+                )
             if btn_bind is not None:
                 btn_bind.setText("已兑换")
                 btn_bind.setEnabled(False)
         else:
             self.bind_invite_card.setContent(
-                f"输入好友的邀请码，双方均可立即增加每日剪辑上限 +{reward} 首{valid_desc}（每人仅限一次）"
+                f"输入好友的邀请码，双方每日剪辑上限各 +{reward} 首{rule_desc}"
             )
             if btn_bind is not None:
                 btn_bind.setText("立即兑换")
@@ -340,7 +356,7 @@ class SettingInterface(ScrollArea):
     def __on_copy_invite_code(self):
         code = getattr(self, "_current_invite_code", "")
         if not code:
-            show_toast(self, "正在获取专属邀请码，请稍候…", level="warning")
+            show_toast(self, "正在获取邀请码，请稍候…", level="warning")
             return
         from PySide6.QtGui import QGuiApplication
 

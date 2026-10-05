@@ -260,6 +260,193 @@ def test_mixed_serial_cascade_stagnation_cutoff():
     assert "zhipu" in called_providers
 
 
+def test_mixed_serial_malformed_response_fails_over():
+    """串行接力：首个渠道返回被截断的非法 JSON，不应拖垮任务，应切换到下一渠道完成。"""
+    called = []
+
+    def fake_call_deepseek(**kwargs):
+        provider = kwargs.get("provider")
+        called.append(provider)
+        if provider == "deepseek":
+            # 模拟输出被截断的半截 JSON
+            return '{"ends": [{"le": "1.mp4", "ct": "第一段台词卡点"', 0.1, ""
+        return (
+            json.dumps(
+                {
+                    "starts": [{"se": "1.mp4", "st": 0.0, "score": 90}],
+                    "ends": [
+                        {"le": "1.mp4", "ct": "第一段台词卡点", "hook": "标题1"},
+                        {"le": "1.mp4", "ct": "第二段台词卡点", "hook": "标题2"},
+                    ],
+                }
+            ),
+            0.1,
+            "",
+        )
+
+    steps = [
+        {"source_file": "1.mp4", "start": 0.0, "end": 10.0, "text": "开头台词"},
+        {"source_file": "1.mp4", "start": 160.0, "end": 170.0, "text": "第一段台词卡点"},
+        {"source_file": "1.mp4", "start": 180.0, "end": 190.0, "text": "第二段开头台词"},
+        {"source_file": "1.mp4", "start": 350.0, "end": 360.0, "text": "第二段台词卡点"},
+    ]
+    llm_group = {
+        "group_id": 1,
+        "dispatch_mode": "serial",
+        "max_loops_per_channel": 2,
+        "channels": [
+            {
+                "id": 1,
+                "name": "DS Channel",
+                "provider": "deepseek",
+                "api_url": "https://api.deepseek.com",
+                "model_name": "deepseek-v4-flash",
+                "api_keys": ["sk-1"],
+            },
+            {
+                "id": 2,
+                "name": "GLM Channel",
+                "provider": "zhipu",
+                "api_url": "https://open.bigmodel.cn",
+                "model_name": "glm-5.3",
+                "api_keys": ["sk-2"],
+            },
+        ],
+    }
+
+    with patch("app.services.plan_director._call_deepseek", side_effect=fake_call_deepseek):
+        plans = run_plan(
+            project_name="测试项目",
+            steps=steps,
+            ordered_files=["1.mp4"],
+            api_keys_raw="sk-fallback",
+            api_url="https://api.deepseek.com",
+            model_name="deepseek-chat",
+            provider="deepseek",
+            plan_mode="mixed",
+            target_clips_count=2,
+            min_duration_seconds=120,
+            max_duration_seconds=300,
+            plan_strategy="v1",
+            llm_group=llm_group,
+        )
+
+    assert called[0] == "deepseek"
+    assert "zhipu" in called
+    assert len(plans) >= 1
+
+
+def test_mixed_serial_all_bad_reports_channel_context():
+    """所有渠道都返回非法 JSON 时，最终错误应带渠道/模型上下文，便于后台定位。"""
+    def fake_call_deepseek(**kwargs):
+        return '{"ends": [{"le": "1.mp4", "ct": "半截台词"', 0.1, ""
+
+    llm_group = {
+        "group_id": 1,
+        "dispatch_mode": "serial",
+        "max_loops_per_channel": 2,
+        "channels": [
+            {
+                "id": 1,
+                "name": "DS Channel",
+                "provider": "deepseek",
+                "api_url": "https://api.deepseek.com",
+                "model_name": "deepseek-v4-flash",
+                "api_keys": ["sk-1"],
+            },
+            {
+                "id": 2,
+                "name": "GLM Channel",
+                "provider": "zhipu",
+                "api_url": "https://open.bigmodel.cn",
+                "model_name": "glm-5.3",
+                "api_keys": ["sk-2"],
+            },
+        ],
+    }
+
+    steps = [
+        {"source_file": "1.mp4", "start": 0.0, "end": 10.0, "text": "开头台词"},
+        {"source_file": "1.mp4", "start": 160.0, "end": 170.0, "text": "卡点台词"},
+    ]
+
+    with patch("app.services.plan_director._call_deepseek", side_effect=fake_call_deepseek):
+        with pytest.raises(RuntimeError) as exc_info:
+            run_plan(
+                project_name="测试项目",
+                steps=steps,
+                ordered_files=["1.mp4"],
+                api_keys_raw="sk-fallback",
+                api_url="https://api.deepseek.com",
+                model_name="deepseek-chat",
+                provider="deepseek",
+                plan_mode="mixed",
+                target_clips_count=2,
+                min_duration_seconds=120,
+                max_duration_seconds=300,
+                plan_strategy="v1",
+                llm_group=llm_group,
+            )
+
+    msg = str(exc_info.value)
+    assert "未产出有效方案" in msg
+    assert "GLM Channel" in msg
+    assert "JSONDecodeError" in msg
+
+
+def test_call_deepseek_flags_truncated_output(monkeypatch):
+    """finish_reason=length 时应判定为输出截断，返回错误而非半截内容。"""
+    import queue
+
+    from app.services import plan_director
+
+    class _Resp:
+        status_code = 200
+
+        def json(self):
+            return {
+                "choices": [
+                    {
+                        "message": {"content": '{"ends": [{"le": "1.mp4"'},
+                        "finish_reason": "length",
+                    }
+                ]
+            }
+
+    class _Client:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def post(self, url, headers=None, json=None):
+            return _Resp()
+
+    monkeypatch.setattr(plan_director.httpx, "Client", _Client)
+    pool = queue.Queue()
+    pool.put("sk-x")
+
+    content, _elapsed, err = plan_director._call_deepseek(
+        api_url="https://api.deepseek.com/chat/completions",
+        model_name="deepseek-v4-flash",
+        compressed_script="x",
+        count=1,
+        group_type="U",
+        key_pool=pool,
+        min_duration_seconds=150,
+        max_duration_seconds=300,
+        plan_mode="long",
+        provider="deepseek",
+    )
+
+    assert content is None
+    assert err is not None and "截断" in err
+
+
 def test_mixed_parallel_merge():
     # 模拟并发融合调度：两家模型并发执行
     def fake_call_deepseek(**kwargs):

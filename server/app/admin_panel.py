@@ -39,6 +39,8 @@ from app.services import client_version as client_version_service
 from app.services.invite_service import (
     ensure_user_invite_code,
     get_invite_config,
+    get_user_active_invite_bonus,
+    get_user_effective_clip_limit,
     set_invite_config,
 )
 from app.services.user_access import sync_expired_users
@@ -507,12 +509,39 @@ def users_list(
         "long": "长片模式",
         "short": "短片模式",
     }
+    strategy_labels = {
+        "v1": "v1（经典稳定）",
+        "v2": "v2（实验增强）",
+    }
+    group_names = {
+        g.id: g.name
+        for g in db.query(LlmGroup).order_by(LlmGroup.id.asc()).all()
+    }
+    default_group_name = db.scalar(
+        select(LlmGroup.name).where(LlmGroup.is_default == True)
+    )
     for user in rows:
         preset, label, keys, _dash, _thinking = _user_plan_fields(user)
         user_settings = getattr(user, "settings", None)
         raw_settings_data = _load_data(user_settings.data if user_settings else "")
-        plan_mode_raw = raw_settings_data.get("plan", {}).get("mode", "mixed")
+        plan_section = raw_settings_data.get("plan", {})
+        plan_mode_raw = plan_section.get("mode", "mixed")
         plan_mode_label = mode_labels.get(str(plan_mode_raw).strip().lower(), "混合模式")
+
+        secret = getattr(user, "secrets", None)
+        group_id = getattr(secret, "plan_group_id", None)
+        if group_id == 0:
+            plan_group_label = "独立单模型"
+        elif group_id:
+            plan_group_label = group_names.get(group_id) or f"#{group_id}（已删除）"
+        elif default_group_name:
+            plan_group_label = f"{default_group_name}（系统默认）"
+        else:
+            plan_group_label = "系统默认（未配置）"
+
+        strategy_raw = str(plan_section.get("mixed_strategy", "v2") or "v2").strip().lower()
+        mixed_strategy_label = strategy_labels.get(strategy_raw, strategy_labels["v2"])
+
         users.append(
             {
                 "id": user.id,
@@ -527,7 +556,10 @@ def users_list(
                 "download_limit": getattr(user, "daily_download_limit", 30),
                 "plan_mode": plan_mode_label,
                 "plan_label": label,
+                "plan_group": plan_group_label,
+                "mixed_strategy": mixed_strategy_label,
                 "keys_preview": _keys_preview(keys),
+                "keys_full": (keys or "").strip() or "未配置",
                 "created_at": _fmt_dt(user.created_at),
                 "preset": preset,
             }
@@ -573,14 +605,14 @@ async def create_trial_user(request: Request, db: Db):
     custom_password = str(body.get("password", "") or "").strip()
 
     try:
-        daily_plan_limit = max(0, int(body.get("daily_plan_limit", 30) or 30))
+        daily_plan_limit = max(0, int(body.get("daily_plan_limit", 10) or 10))
     except (TypeError, ValueError):
-        daily_plan_limit = 30
+        daily_plan_limit = 10
 
     try:
-        daily_clip_limit = max(0, int(body.get("daily_clip_limit", 30) or 30))
+        daily_clip_limit = max(0, int(body.get("daily_clip_limit", 10) or 10))
     except (TypeError, ValueError):
-        daily_clip_limit = 30
+        daily_clip_limit = 10
 
     try:
         daily_download_limit = max(0, int(body.get("daily_download_limit", 30) or 30))
@@ -701,6 +733,9 @@ def user_edit_page(
         if inviter_user:
             inviter_username = inviter_user.username
 
+    invite_bonus = get_user_active_invite_bonus(db, user.id)
+    effective_clip_limit = get_user_effective_clip_limit(db, user)
+
     return templates.TemplateResponse(
         request,
         "admin/user_edit.html",
@@ -718,6 +753,8 @@ def user_edit_page(
             llm_groups=llm_groups,
             current_plan_group_id=current_plan_group_id,
             inviter_username=inviter_username,
+            invite_bonus=invite_bonus,
+            effective_clip_limit=effective_clip_limit,
             saved=bool(saved),
             msg=msg,
             machine=_machine_to_dict(get_machine(db, user.id)),
@@ -1917,7 +1954,9 @@ def invites_page(
     total_rewarded_clips = (
         int(
             db.scalar(
-                select(func.coalesce(func.sum(UserInviteRecord.reward_clip_limit), 0))
+                select(func.coalesce(func.sum(UserInviteRecord.reward_clip_limit), 0)).where(
+                    UserInviteRecord.invitee_qualified.is_(True)
+                )
             )
             or 0
         )
@@ -2002,6 +2041,13 @@ def invites_page(
             status_tag = "tag-off" if is_expired else "tag-ok"
             expires_at_str = latest_exp.strftime("%Y-%m-%d %H:%M:%S") if latest_exp else "永久有效"
 
+        # 被邀请人未达标前，奖励尚未发放，展示为“待生效”
+        if not bool(getattr(r, "invitee_qualified", True)):
+            status_label = "待生效"
+            status_tag = "tag-info"
+            is_expired = False
+            expires_at_str = "被邀请人剪辑未达标"
+
         def _fmt_reward_desc(perm: int, temp: int, exp: datetime | None) -> str:
             parts = []
             if perm > 0:
@@ -2040,6 +2086,7 @@ def invites_page(
                 "status_label": status_label,
                 "status_tag": status_tag,
                 "is_expired": is_expired,
+                "invitee_qualified": bool(getattr(r, "invitee_qualified", True)),
                 "created_at": r.created_at.strftime("%Y-%m-%d %H:%M:%S")
                 if r.created_at
                 else "-",
@@ -2074,12 +2121,14 @@ def save_invite_settings(
     max_rewards_per_user: Annotated[str | None, Form()] = None,
     reward_valid_days: Annotated[str | None, Form()] = None,
     max_permanent_clip_limit: Annotated[str | None, Form()] = None,
+    require_invitee_clips: Annotated[str | None, Form()] = None,
     is_enabled: Annotated[str | None, Form()] = None,
 ):
     reward = _parse_int(reward_clip_limit, 5)
     max_rewards = _parse_int(max_rewards_per_user, 0)
     valid_days = _parse_int(reward_valid_days, 30)
     max_permanent = _parse_int(max_permanent_clip_limit, 15)
+    require_clips = _parse_int(require_invitee_clips, 10)
     enabled = is_enabled == "1" or is_enabled == "true" or is_enabled == "on"
     set_invite_config(
         db,
@@ -2087,6 +2136,7 @@ def save_invite_settings(
         max_rewards_per_user=max_rewards,
         reward_valid_days=valid_days,
         max_permanent_clip_limit=max_permanent,
+        require_invitee_clips=require_clips,
         is_enabled=enabled,
     )
     return RedirectResponse("/admin/invites?msg=settings_saved", status_code=302)

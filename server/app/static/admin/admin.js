@@ -970,7 +970,9 @@
 
               if (col.showOverflow) {
                 td.classList.add("ellipsis");
-                const fullText = (td.textContent || "").trim();
+                const fullText = (typeof col.tooltip === "function"
+                  ? col.tooltip({ row, cellValue, column: col })
+                  : (col.tooltip || td.textContent || "")).toString().trim();
                 if (fullText) {
                   td.setAttribute("data-overflow-tooltip", fullText);
                 }

@@ -287,6 +287,16 @@
         </div>
 
         <div class="form-item">
+          <label for="require_invitee_clips">被邀请人需剪辑剧集数 (部):</label>
+          <div class="el-input">
+            <div class="el-input__wrapper">
+              <input class="el-input__inner" id="require_invitee_clips" name="require_invitee_clips" type="number" min="0" max="1000" value="{{ config.require_invitee_clips }}" required />
+            </div>
+          </div>
+          <div class="hint">被邀请人成功剪辑满此数量后，双方奖励才生效。填 0 表示兑换后立即生效</div>
+        </div>
+
+        <div class="form-item">
           <label>功能启用状态:</label>
           <div style="padding-top: 6px;">
             <label style="display: inline-flex; align-items: center; gap: 8px; cursor: pointer; font-size: 13px;">

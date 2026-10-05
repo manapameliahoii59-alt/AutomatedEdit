@@ -111,6 +111,10 @@ class Config(MyQConfig):
     video_download_auto_unzip = ConfigItem(
         "Tools", "video_download_auto_unzip", True, BoolValidator()
     )
+    # 下载完成后自动导入自动化剪辑并启动一键执行全流程
+    video_download_auto_batch_all = ConfigItem(
+        "Tools", "video_download_auto_batch_all", False, BoolValidator()
+    )
     video_download_auto_transcribe = ConfigItem(
         "Tools", "video_download_auto_transcribe", True, BoolValidator()
     )
@@ -158,4 +162,7 @@ if getattr(cfg.encode_nvenc_preset, "value", None) == "p5":
 # 旧默认引擎 current/v2 自动平滑升级为推荐的 v3
 if getattr(cfg.clip_render_engine, "value", None) in ("current", "v2"):
     qconfig.set(cfg.clip_render_engine, "v3")
+# 若历史版本开启了 auto_import_clip，平滑迁移至 video_download_auto_batch_all
+if getattr(cfg.video_download_auto_import_clip, "value", False) and not getattr(cfg.video_download_auto_batch_all, "value", False):
+    qconfig.set(cfg.video_download_auto_batch_all, True)
 

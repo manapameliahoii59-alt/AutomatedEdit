@@ -98,14 +98,10 @@ class MainWindow(FluentWindow):
         self,
         folder_paths: list[str],
         *,
-        run_plan: bool = True,
-        run_render: bool = True,
         switch_tab: bool = True,
+        **kwargs,
     ) -> None:
-        """下载识别完成后，按设置导入剪辑页并执行策划/渲染。
-
-        folder_paths 为空时仍可仅切换到剪辑页（用于批量下载全部结束后跳转）。
-        """
+        """下载解压完成后，切换到自动化剪辑页并开启一键执行全流程。"""
         raw = str(cfg.enabled_tabs.value or "").strip()
         enabled = [t.strip() for t in raw.split(",") if t.strip()] if raw else ["video_download", "clip_edit"]
         if "clip_edit" not in enabled:
@@ -115,11 +111,10 @@ class MainWindow(FluentWindow):
             self.switchTo(self.clipEditPage)
         if not folder_paths:
             return
-        page.vm.import_and_run_clip_pipeline(
-            folder_paths,
-            run_plan=run_plan,
-            run_render=run_render,
-        )
+        if hasattr(page, "start_auto_batch_all_from_download"):
+            page.start_auto_batch_all_from_download(folder_paths)
+        else:
+            page.vm.import_and_run_clip_pipeline(folder_paths)
 
     def import_to_clip_edit(self, folder_paths: list[str]) -> None:
         """将下载目录中的剧目导入自动化剪辑页（不执行后续流程）。"""

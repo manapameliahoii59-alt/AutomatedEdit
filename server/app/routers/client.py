@@ -205,6 +205,14 @@ def report_usage(
     db.add(event)
     record_daily_activity(db, user.id, body.event, activity_meta)
     db.commit()
+    if body.event == "clip_drama":
+        # 被邀请人剪辑达标后，邀请奖励（永久/临时额度）此时才真正生效；失败不影响用量上报
+        from app.services.invite_service import maybe_qualify_invite_reward
+
+        try:
+            maybe_qualify_invite_reward(db, user.id)
+        except Exception:
+            db.rollback()
     return {"ok": True}
 
 

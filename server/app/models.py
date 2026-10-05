@@ -19,8 +19,8 @@ class User(Base):
     enabled_tabs: Mapped[str] = mapped_column(
         String(255), default="video_download,clip_edit"
     )
-    daily_plan_limit: Mapped[int] = mapped_column(Integer, default=30)
-    daily_clip_limit: Mapped[int] = mapped_column(Integer, default=30)
+    daily_plan_limit: Mapped[int] = mapped_column(Integer, default=10)
+    daily_clip_limit: Mapped[int] = mapped_column(Integer, default=10)
     daily_download_limit: Mapped[int] = mapped_column(Integer, default=30)
     invite_code: Mapped[str | None] = mapped_column(String(16), unique=True, index=True, nullable=True, default=None)
     invited_by_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True, default=None)
@@ -254,6 +254,8 @@ class UserInviteRecord(Base):
     valid_days: Mapped[int] = mapped_column(Integer, default=30)
     expires_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, default=None, index=True)
     inviter_rewarded: Mapped[bool] = mapped_column(Boolean, default=True)
+    # 被邀请人是否已满足“成功剪辑 N 部剧”的生效条件（满足后双方奖励才真正发放）
+    invitee_qualified: Mapped[bool] = mapped_column(Boolean, default=False)
     inviter_temp_reward: Mapped[int] = mapped_column(Integer, default=0)
     inviter_expires_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, default=None, index=True)
     invitee_temp_reward: Mapped[int] = mapped_column(Integer, default=0)

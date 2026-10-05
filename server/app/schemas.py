@@ -782,6 +782,10 @@ class InviteInfoOut(BaseModel):
     max_rewards_per_user: int
     is_enabled: bool
     daily_clip_limit: int
+    require_invitee_clips: int = 10
+    invitee_clip_progress: int = 0
+    invitee_remaining_clips: int = 0
+    invitee_qualified: bool = True
 
 
 class InviteBindRequest(BaseModel):

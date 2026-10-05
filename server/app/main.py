@@ -48,7 +48,7 @@ def _ensure_daily_quota_columns() -> None:
                 conn.execute(
                     text(
                         "ALTER TABLE users ADD COLUMN daily_plan_limit INT "
-                        "NOT NULL DEFAULT 30"
+                        "NOT NULL DEFAULT 10"
                     )
                 )
                 added_plan_limit = True
@@ -56,7 +56,7 @@ def _ensure_daily_quota_columns() -> None:
                 conn.execute(
                     text(
                         "ALTER TABLE users ADD COLUMN daily_clip_limit INT "
-                        "NOT NULL DEFAULT 30"
+                        "NOT NULL DEFAULT 10"
                     )
                 )
                 added_clip_limit = True
@@ -85,14 +85,14 @@ def _ensure_daily_quota_columns() -> None:
             if added_plan_limit:
                 conn.execute(
                     text(
-                        "UPDATE users SET daily_plan_limit = 30 "
+                        "UPDATE users SET daily_plan_limit = 10 "
                         "WHERE daily_plan_limit = 0"
                     )
                 )
             if added_clip_limit:
                 conn.execute(
                     text(
-                        "UPDATE users SET daily_clip_limit = 30 "
+                        "UPDATE users SET daily_clip_limit = 10 "
                         "WHERE daily_clip_limit = 0"
                     )
                 )
@@ -403,6 +403,14 @@ def _ensure_invite_columns_and_codes() -> None:
             if "inviter_rewarded" not in invite_cols:
                 conn.execute(
                     text("ALTER TABLE user_invite_records ADD COLUMN inviter_rewarded TINYINT(1) NOT NULL DEFAULT 1")
+                )
+            if "invitee_qualified" not in invite_cols:
+                conn.execute(
+                    text("ALTER TABLE user_invite_records ADD COLUMN invitee_qualified TINYINT(1) NOT NULL DEFAULT 0")
+                )
+                # 历史记录在旧逻辑下已即时发放奖励，直接标记为已生效，避免迁移后重复发放
+                conn.execute(
+                    text("UPDATE user_invite_records SET invitee_qualified = 1")
                 )
             if "inviter_temp_reward" not in invite_cols:
                 conn.execute(

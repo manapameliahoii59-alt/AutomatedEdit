@@ -188,6 +188,7 @@ class VideoDownloadPage(ScrollArea):
         self.vm.messageReceived.connect(lambda msg: show_toast(self, msg))
         self.vm.errorOccurred.connect(lambda msg: show_dialog(self, msg, "提示"))
         self.vm.clipHandoffRequested.connect(self._on_clip_handoff)
+        self.vm.handoffToClipEdit.connect(self._on_handoff_to_clip_edit)
         self.vm.settingsLoaded.connect(self._on_settings_loaded)
         self.vm.refresh_auth_status()
         qconfig.themeChanged.connect(lambda *_: self._refresh_table(self.vm.get_targets()))
@@ -199,6 +200,10 @@ class VideoDownloadPage(ScrollArea):
             self.to_input.setText(str(vd["episode_to"]))
         if vd.get("download_dir"):
             self.download_path_label.setText(vd["download_dir"])
+
+    def _on_handoff_to_clip_edit(self, folders: list) -> None:
+        if self._parent_window and hasattr(self._parent_window, "handoff_to_clip_edit"):
+            self._parent_window.handoff_to_clip_edit(folders)
 
     def _on_clip_handoff(
         self,
@@ -310,12 +315,19 @@ class VideoDownloadPage(ScrollArea):
             _style_status_item(status_item, target.status)
             self.table.setItem(row, 3, status_item)
 
-            remove_btn = PushButton("删除", self.table)
+            cell = QWidget(self.table)
+            cell_layout = QHBoxLayout(cell)
+            cell_layout.setContentsMargins(0, 0, 0, 0)
+            cell_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+            remove_btn = PushButton("删除", cell)
+            remove_btn.setFixedSize(54, 28)
             remove_btn.setEnabled(not self._busy)
             remove_btn.clicked.connect(
                 lambda _checked=False, tid=target.id: self.vm.remove_target(tid)
             )
-            self.table.setCellWidget(row, 4, remove_btn)
+            cell_layout.addWidget(remove_btn)
+            self.table.setCellWidget(row, 4, cell)
 
     def _parse_episode_input(self, text: str, label: str) -> int | None:
         raw = text.strip()
@@ -479,77 +491,43 @@ class VideoDownloadPage(ScrollArea):
 
         auto_unzip_cb = CheckBox("下载完成后自动解压并删除压缩包", dialog)
         auto_unzip_cb.setChecked(cfg.video_download_auto_unzip.value)
-        auto_transcribe_cb = CheckBox("解压后自动识别视频", dialog)
-        auto_transcribe_cb.setChecked(cfg.video_download_auto_transcribe.value)
-        auto_plan_cb = CheckBox("识别完成后自动策划", dialog)
-        auto_plan_cb.setChecked(cfg.video_download_auto_plan.value)
-        auto_clip_cb = CheckBox("策划完成后自动导入剪辑并渲染", dialog)
-        auto_clip_cb.setChecked(cfg.video_download_auto_import_clip.value)
+        auto_batch_all_cb = CheckBox("下载完成后自动导入剪辑并一键执行", dialog)
+        auto_batch_all_cb.setChecked(cfg.video_download_auto_batch_all.value)
         auto_start_cb = CheckBox("添加剧目确定后自动开始下载", dialog)
         auto_start_cb.setChecked(cfg.video_download_auto_start_after_add.value)
 
-        def _sync_enabled() -> None:
-            transcribe_on = auto_transcribe_cb.isChecked()
-            plan_on = auto_plan_cb.isChecked()
-            auto_plan_cb.setEnabled(transcribe_on)
-            auto_clip_cb.setEnabled(transcribe_on and plan_on)
-
-        def _on_transcribe_toggled(checked: bool) -> None:
+        def _on_batch_all_toggled(checked: bool) -> None:
             if checked:
                 auto_unzip_cb.setChecked(True)
-            else:
-                auto_plan_cb.setChecked(False)
-                auto_clip_cb.setChecked(False)
-            _sync_enabled()
 
-        def _on_plan_toggled(checked: bool) -> None:
-            if checked:
-                auto_unzip_cb.setChecked(True)
-                auto_transcribe_cb.setChecked(True)
-            else:
-                auto_clip_cb.setChecked(False)
-            _sync_enabled()
+        def _on_unzip_toggled(checked: bool) -> None:
+            if not checked:
+                auto_batch_all_cb.setChecked(False)
 
-        def _on_clip_toggled(checked: bool) -> None:
-            if checked:
-                auto_unzip_cb.setChecked(True)
-                auto_transcribe_cb.setChecked(True)
-                auto_plan_cb.setChecked(True)
-            _sync_enabled()
-
-        if auto_clip_cb.isChecked() and not auto_plan_cb.isChecked():
-            auto_plan_cb.setChecked(True)
-
-        _sync_enabled()
-        auto_transcribe_cb.toggled.connect(_on_transcribe_toggled)
-        auto_plan_cb.toggled.connect(_on_plan_toggled)
-        auto_clip_cb.toggled.connect(_on_clip_toggled)
+        auto_batch_all_cb.toggled.connect(_on_batch_all_toggled)
+        auto_unzip_cb.toggled.connect(_on_unzip_toggled)
 
         dialog.textLayout.setContentsMargins(24, 16, 24, 8)
         dialog.textLayout.addWidget(auto_unzip_cb)
-        dialog.textLayout.addWidget(auto_transcribe_cb)
-        dialog.textLayout.addWidget(auto_plan_cb)
-        dialog.textLayout.addWidget(auto_clip_cb)
+        dialog.textLayout.addWidget(auto_batch_all_cb)
         dialog.textLayout.addWidget(auto_start_cb)
 
-        dialog.setFixedSize(420, 340)
+        dialog.setFixedSize(420, 240)
         if dialog.exec():
-            clip = auto_clip_cb.isChecked()
-            plan = auto_plan_cb.isChecked() or clip
-            transcribe = auto_transcribe_cb.isChecked() or plan
-            unzip = auto_unzip_cb.isChecked() or transcribe
+            batch_all = auto_batch_all_cb.isChecked()
+            unzip = auto_unzip_cb.isChecked() or batch_all
             start = auto_start_cb.isChecked()
             qconfig.set(cfg.video_download_auto_unzip, unzip)
-            qconfig.set(cfg.video_download_auto_transcribe, transcribe)
-            qconfig.set(cfg.video_download_auto_plan, plan)
-            qconfig.set(cfg.video_download_auto_import_clip, clip)
+            qconfig.set(cfg.video_download_auto_batch_all, batch_all)
+            qconfig.set(cfg.video_download_auto_transcribe, False)
+            qconfig.set(cfg.video_download_auto_plan, False)
+            qconfig.set(cfg.video_download_auto_import_clip, batch_all)
             qconfig.set(cfg.video_download_auto_start_after_add, start)
             self.vm.save_to_server({
                 "video_download": {
                     "auto_unzip": unzip,
-                    "auto_transcribe": transcribe,
-                    "auto_plan": plan,
-                    "auto_import_clip": clip,
+                    "auto_batch_all": batch_all,
+                    "auto_import_clip": batch_all,
                     "auto_start_after_add": start,
                 }
             })

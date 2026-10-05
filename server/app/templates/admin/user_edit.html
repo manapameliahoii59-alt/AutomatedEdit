@@ -496,6 +496,9 @@
                     </div>
                   </div>
                   <p class="hint-compact">单位：条/日</p>
+                  {% if invite_bonus and invite_bonus > 0 and effective_clip_limit > user.daily_clip_limit %}
+                  <p class="hint-compact" style="color: #e6a23c;">含邀请奖励临时额度 +{{ invite_bonus }} 条/日，当前实际每日可用上限 <strong>{{ effective_clip_limit }}</strong> 条/日</p>
+                  {% endif %}
                 </div>
 
                 <div>

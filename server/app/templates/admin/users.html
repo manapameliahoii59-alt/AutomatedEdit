@@ -37,6 +37,8 @@
         <th>期限</th>
         <th>策划模式</th>
         <th>策划模型</th>
+        <th>混合模式调度策略组</th>
+        <th>混合模式策略版本</th>
         <th>策划 API Keys</th>
         <th>操作</th>
       </tr>
@@ -57,11 +59,13 @@
         <td>{{ user.valid_until }}</td>
         <td><span class="tag" style="background:#e8f4ff; color:#1e62c9; border-color:#d0e7ff;">{{ user.plan_mode }}</span></td>
         <td>{{ user.plan_label }}</td>
-        <td class="ellipsis" title="{{ user.keys_preview }}">{{ user.keys_preview }}</td>
+        <td>{{ user.plan_group }}</td>
+        <td>{{ user.mixed_strategy }}</td>
+        <td class="ellipsis" title="{{ user.keys_full }}">{{ user.keys_preview }}</td>
         <td><a href="/admin/user/edit/{{ user.id }}">编辑</a></td>
       </tr>
       {% else %}
-      <tr><td class="empty" colspan="9">暂无数据</td></tr>
+      <tr><td class="empty" colspan="11">暂无数据</td></tr>
       {% endfor %}
     </tbody>
   </table>
@@ -137,7 +141,7 @@
             <div style="font-size: 12px; color: #606266; margin-bottom: 4px;">剪辑上限</div>
             <div class="el-input">
               <div class="el-input__wrapper">
-                <input class="el-input__inner" type="number" id="trial-clip-limit" value="30" min="0">
+                <input class="el-input__inner" type="number" id="trial-clip-limit" value="10" min="0">
               </div>
             </div>
           </div>
@@ -145,7 +149,7 @@
             <div style="font-size: 12px; color: #606266; margin-bottom: 4px;">策划上限</div>
             <div class="el-input">
               <div class="el-input__wrapper">
-                <input class="el-input__inner" type="number" id="trial-plan-limit" value="30" min="0">
+                <input class="el-input__inner" type="number" id="trial-plan-limit" value="10" min="0">
               </div>
             </div>
           </div>
@@ -236,7 +240,9 @@
           },
         },
         { field: "plan_label", title: "策划模型", minWidth: 180 },
-        { field: "keys_preview", title: "策划 API Keys", minWidth: 180, showOverflow: true },
+        { field: "plan_group", title: "混合模式调度策略组", minWidth: 200 },
+        { field: "mixed_strategy", title: "混合模式策略版本", width: 160 },
+        { field: "keys_preview", title: "策划 API Keys", minWidth: 180, showOverflow: true, tooltip: ({ row }) => row.keys_full || row.keys_preview },
         {
           field: "action",
           title: "操作",
@@ -303,8 +309,8 @@
     refreshRandomUsername();
     refreshRandomPassword();
     document.getElementById("trial-days").value = "7";
-    document.getElementById("trial-clip-limit").value = "30";
-    document.getElementById("trial-plan-limit").value = "30";
+    document.getElementById("trial-clip-limit").value = "10";
+    document.getElementById("trial-plan-limit").value = "10";
     document.getElementById("trial-download-limit").value = "30";
     updateTrialExpiryPreview();
     const m = document.getElementById("create-trial-modal");
@@ -327,8 +333,8 @@
       username: (document.getElementById("trial-username").value || "").trim(),
       password: (document.getElementById("trial-password").value || "").trim(),
       trial_days: parseInt(document.getElementById("trial-days").value, 10) || 7,
-      daily_clip_limit: parseInt(document.getElementById("trial-clip-limit").value, 10) || 30,
-      daily_plan_limit: parseInt(document.getElementById("trial-plan-limit").value, 10) || 30,
+      daily_clip_limit: parseInt(document.getElementById("trial-clip-limit").value, 10) || 10,
+      daily_plan_limit: parseInt(document.getElementById("trial-plan-limit").value, 10) || 10,
       daily_download_limit: parseInt(document.getElementById("trial-download-limit").value, 10) || 30,
     };
 

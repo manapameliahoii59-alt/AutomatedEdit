@@ -46,6 +46,8 @@ BULK_TASK_LIST_MAX_PAGES = 3
 TASK_LIST_LOOKBACK_SEC = 600
 # 阶段 1 创建任务失败后，末尾再统一重试一轮
 PHASE1_CREATE_RETRY_PASSES = 1
+# 阶段 2 下载失败后，末尾再统一单线程重试一轮
+PHASE2_DOWNLOAD_RETRY_PASSES = 1
 
 LogFn = Callable[[str], None]
 DownloadProgressFn = Callable[[str, int, int | None, float], None]
@@ -294,7 +296,7 @@ class BatchDownloadOptions:
     headless: bool = True
     cancel_check: Callable[[], bool] | None = None
     auto_unzip_and_delete: bool = True
-    auto_transcribe: bool = True
+    auto_transcribe: bool = False
     on_transcribe_done: TranscribeDoneFn | None = None
     on_download_progress: DownloadProgressFn | None = None
     on_target_status: TargetStatusFn | None = None
@@ -450,7 +452,7 @@ def _post_process_downloaded_file(
     *,
     transcribe_pipeline: _TranscribePipeline | None = None,
     label: str | None = None,
-) -> None:
+) -> Path | None:
     extract_dir: Path | None = None
     if file_path.suffix.lower() == ".zip":
         need_unzip = opts.auto_unzip_and_delete or opts.auto_transcribe
@@ -471,6 +473,13 @@ def _post_process_downloaded_file(
                 _transcribe_drama_folder(extract_dir, logger)
         elif file_path.suffix.lower() == ".zip":
             logger.both("   ⚠ 识别跳过: 压缩包未能解压")
+
+    target_folder = extract_dir or (file_path if file_path.is_dir() else None)
+    if target_folder is not None:
+        resolved = _resolve_video_folder(target_folder)
+        if resolved is not None:
+            target_folder = resolved
+    return target_folder
 
 
 def normalize_targets(
@@ -760,8 +769,8 @@ def phase2_download_files(
     opts: BatchDownloadOptions,
     done_set: set[str],
     logger: BatchLogger,
-) -> dict[str, int]:
-    summary = {"success": 0, "skip": 0, "fail": 0}
+) -> dict[str, Any]:
+    summary: dict[str, Any] = {"success": 0, "skip": 0, "fail": 0, "downloaded_folders": []}
     dl_opts = {
         "concurrency": opts.concurrency,
         "download_timeout_ms": opts.download_timeout_min * 60 * 1000,
@@ -800,6 +809,7 @@ def phase2_download_files(
     }
     queued: set[str] = set()
     download_queue: list[dict[str, Any]] = []
+    failed_download_jobs: list[dict[str, Any]] = []
     transcode_poll_round = 0
     transcribe_pipeline = (
         _TranscribePipeline(logger, on_transcribe_done=opts.on_transcribe_done)
@@ -980,6 +990,7 @@ def phase2_download_files(
                         _notify_target_status(opts, label, "失败")
                         if opts.stop_on_error:
                             raise RuntimeError(msg)
+                        failed_download_jobs.append(job)
                         continue
                     logger.dev_only(
                         f"\n📥 开始下载: {label} (并行 {len(futures) + 1}/{opts.concurrency})"
@@ -1009,13 +1020,15 @@ def phase2_download_files(
                             f"   ✅ {label} → {result['filePath']}{dev_speed}",
                         )
                         _notify_target_status(opts, label, "已完成")
-                        _post_process_downloaded_file(
+                        downloaded_folder = _post_process_downloaded_file(
                             file_path,
                             opts,
                             logger,
                             transcribe_pipeline=transcribe_pipeline,
                             label=label,
                         )
+                        if downloaded_folder is not None:
+                            summary["downloaded_folders"].append(str(downloaded_folder))
                         _mark_done(job["key"])
                         done_set.add(job["key"])
                         _append_log(
@@ -1048,6 +1061,7 @@ def phase2_download_files(
                         summary["fail"] += 1
                         if opts.stop_on_error:
                             raise RuntimeError(msg)
+                        failed_download_jobs.append(job)
 
                 if transcribe_pipeline is not None:
                     transcribe_pipeline.poll_completed()
@@ -1087,6 +1101,97 @@ def phase2_download_files(
                     _interruptible_sleep(0.5, opts.cancel_check)
                 elif transcribe_pipeline is not None and transcribe_pipeline.has_pending():
                     _interruptible_sleep(0.5, opts.cancel_check)
+
+            if (
+                failed_download_jobs
+                and not cancelled
+                and not (opts.cancel_check and opts.cancel_check())
+            ):
+                for pass_no in range(1, PHASE2_DOWNLOAD_RETRY_PASSES + 1):
+                    if not failed_download_jobs:
+                        break
+                    _abort_if_cancelled(opts, logger, transcribe_pipeline=transcribe_pipeline)
+
+                    logger.both(
+                        f"\n--- 重试下载失败剧目（末尾补救第 {pass_no} 轮，共 {len(failed_download_jobs)} 个）---\n"
+                    )
+                    still_failed: list[dict[str, Any]] = []
+                    for job in failed_download_jobs:
+                        _abort_if_cancelled(opts, logger, transcribe_pipeline=transcribe_pipeline)
+                        label = job.get("bookName") or job.get("name")
+                        _notify_target_status(opts, label, "重试下载中")
+                        logger.both(f"📥 [末尾补救] 开始单线程下载: {label}")
+
+                        try:
+                            prepared = _prepare_download_job(client, job, opts)
+                            result = _download_prepared_with_retry(
+                                client, prepared, opts, dl_opts, logger
+                            )
+                            file_path = Path(result["filePath"])
+                            size_mb = file_path.stat().st_size / 1024 / 1024
+                            speed_info = ""
+                            if result.get("avgSpeedKbps") is not None:
+                                speed_info = (
+                                    f"，均速 {result['avgSpeedKbps']} KB/s，"
+                                    f"耗时 {result.get('elapsedSec')}s"
+                                )
+                            ui_speed = f" ({size_mb:.2f} MB)" if size_mb else ""
+                            dev_speed = f" ({size_mb:.2f} MB{speed_info})"
+                            logger.say(
+                                f"   ✅ [重试成功] {label} 下载完成{ui_speed}",
+                                f"   ✅ [重试成功] {label} → {result['filePath']}{dev_speed}",
+                            )
+                            _notify_target_status(opts, label, "已完成")
+
+                            downloaded_folder = _post_process_downloaded_file(
+                                file_path,
+                                opts,
+                                logger,
+                                transcribe_pipeline=transcribe_pipeline,
+                                label=label,
+                            )
+                            if downloaded_folder is not None:
+                                summary["downloaded_folders"].append(str(downloaded_folder))
+                            _mark_done(job["key"])
+                            done_set.add(job["key"])
+                            _append_log(
+                                {
+                                    "phase": 2,
+                                    "key": job["key"],
+                                    "status": "success",
+                                    "downloadId": job["downloadId"],
+                                    "bookName": result.get("bookName"),
+                                    "filePath": result["filePath"],
+                                    "from": job.get("from"),
+                                    "to": job.get("to"),
+                                    "retry_pass": pass_no,
+                                }
+                            )
+                            summary["success"] += 1
+                            summary["fail"] -= 1
+                            if transcribe_pipeline is not None:
+                                transcribe_pipeline.poll_completed()
+                        except Exception as exc:
+                            msg = str(exc)
+                            logger.both(f"   ❌ [重试仍失败] {label}: {msg}")
+                            _notify_target_status(opts, label, "失败")
+                            _append_log(
+                                {
+                                    "phase": 2,
+                                    "key": job["key"],
+                                    "status": "fail_retry",
+                                    "error": msg,
+                                    "downloadId": job["downloadId"],
+                                    "retry_pass": pass_no,
+                                }
+                            )
+                            still_failed.append(job)
+                            if opts.stop_on_error:
+                                raise RuntimeError(msg)
+
+                        _interruptible_sleep(1.0, opts.cancel_check)
+
+                    failed_download_jobs = still_failed
         except RuntimeError as exc:
             if str(exc) == "任务已取消":
                 cancelled = True
@@ -1140,7 +1245,7 @@ def run_batch_download(
             logger.both(f"共 {len(normalized)} 个下载目标")
             jobs = phase1_create_tasks(client, normalized, opts, ep_defaults, done_set, logger)
 
-        summary2 = {"success": 0, "skip": 0, "fail": 0}
+        summary2: dict[str, Any] = {"success": 0, "skip": 0, "fail": 0, "downloaded_folders": []}
         if not opts.create_only:
             summary2 = phase2_download_files(client, jobs, opts, done_set, logger)
 
@@ -1157,4 +1262,5 @@ def run_batch_download(
         "phase2": summary2,
         "jobs": jobs,
         "transcribed_folders": summary2.get("transcribed_folders", []),
+        "downloaded_folders": summary2.get("downloaded_folders", []),
     }

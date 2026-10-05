@@ -393,7 +393,7 @@ class ClipEditPage(ScrollArea):
         )
         w = Dialog(title, content, self.window())
         setup_confirm_dialog(w, window_title=title)
-        w.yesButton.setText("前往设置查看/提升额度")
+        w.yesButton.setText("查看")
         w.cancelButton.setText("知道了")
         w.setFixedWidth(460)
         if w.exec():
@@ -563,6 +563,22 @@ class ClipEditPage(ScrollArea):
         for row in range(self.table.rowCount()):
             item = self.table.item(row, 0)
             if item:
+                item.setCheckState(state)
+        self.table.blockSignals(False)
+        self._sync_select_all_checkbox()
+
+    def _set_checked_ids(self, ids: list[str]) -> None:
+        target_set = set(ids)
+        projects = self.vm.get_projects()
+        self.table.blockSignals(True)
+        for row in range(self.table.rowCount()):
+            item = self.table.item(row, 0)
+            if item and row < len(projects):
+                state = (
+                    Qt.CheckState.Checked
+                    if projects[row].id in target_set
+                    else Qt.CheckState.Unchecked
+                )
                 item.setCheckState(state)
         self.table.blockSignals(False)
         self._sync_select_all_checkbox()
@@ -1100,6 +1116,92 @@ class ClipEditPage(ScrollArea):
                         e, stage="clip", friendly="一键执行失败，请稍后重试"
                     ),
                 )
+
+    def start_auto_batch_all_from_download(self, folder_paths: list[str]) -> None:
+        """从视频下载页自动导入剧目并直接开启一键执行全流程（跳过确认弹框，呼出实时大看板）。"""
+        if not access_control.ensure_authorized_interactive(self):
+            return
+        if not folder_paths:
+            return
+
+        imported_projects: list[DramaProject] = []
+        for folder in folder_paths:
+            project = self.vm.import_drama_folder(
+                folder, transcribe_done=False, emit_message=False
+            )
+            if project:
+                imported_projects.append(project)
+
+        if not imported_projects:
+            show_dialog(self, "下载完成，但未在下载目录中解析到有效视频剧目文件夹", "提示")
+            return
+
+        self._refresh_table(self.vm.get_projects())
+        imported_ids = [p.id for p in imported_projects]
+
+        allowed, msg, remaining, needed = self.vm.check_batch_clip_quota(imported_ids)
+        if not allowed and remaining <= 0:
+            show_toast(
+                self,
+                f"今日剪辑配额已用尽（{msg}），已将 {len(imported_ids)} 部剧目导入列表，跳过自动一键执行。",
+                level="warning",
+                duration=6000,
+            )
+            return
+
+        target_ids = imported_ids
+        if not allowed and remaining > 0:
+            quota = QuotaService.instance().get_quota()
+            eligible_ids: list[str] = []
+            new_count = 0
+            for p in imported_projects:
+                is_already_clipped = QuotaService.instance()._drama_in_list(
+                    p.name, quota.clipped_dramas
+                )
+                if is_already_clipped:
+                    eligible_ids.append(p.id)
+                elif new_count < remaining:
+                    eligible_ids.append(p.id)
+                    new_count += 1
+            if not eligible_ids:
+                show_toast(
+                    self,
+                    "今日剪辑配额已用尽，剧目已导入列表，跳过自动一键执行。",
+                    level="warning",
+                    duration=6000,
+                )
+                return
+            target_ids = eligible_ids
+            skipped_count = len(imported_projects) - len(target_ids)
+            show_toast(
+                self,
+                f"今日剩余配额 {remaining} 部，已对前 {len(target_ids)} 部剧目自动开启一键执行，其余 {skipped_count} 部已导入暂不剪辑。",
+                level="info",
+                duration=6000,
+            )
+
+        self._set_checked_ids(target_ids)
+        target_projects = [p for p in imported_projects if p.id in set(target_ids)]
+        if self.vm._is_batch_running:
+            appended = self.vm.append_to_batch_all(target_projects)
+            if appended:
+                show_toast(
+                    self,
+                    f"已自动加入排队队列（共 {len(target_projects)} 部剧目待执行）",
+                    level="info",
+                    duration=4000,
+                )
+                return
+
+        try:
+            self.vm.batch_all(target_ids)
+        except Exception as e:
+            show_error_toast(
+                self,
+                sanitize_ui_error(
+                    e, stage="clip", friendly="自动一键执行启动失败，请稍后重试"
+                ),
+            )
 
     def _confirm_delete(self, project_id: str):
         self.vm.remove_project(project_id)

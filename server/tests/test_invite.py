@@ -28,8 +28,25 @@ from app.services.invite_service import (
     get_user_active_invite_bonus,
     get_user_effective_clip_limit,
     get_user_invite_info,
+    maybe_qualify_invite_reward,
     set_invite_config,
 )
+
+
+def _grant_clipped_dramas(db, user: User, count: int = 10) -> None:
+    """模拟用户成功剪辑 count 部不同剧目（用于触发邀请奖励生效）。"""
+    import json as _json
+
+    from app.services.daily_activity import _get_or_create_today
+
+    row = _get_or_create_today(db, user.id)
+    row.clipped_dramas = _json.dumps(
+        [f"剧{i}" for i in range(count)], ensure_ascii=False
+    )
+    row.clip_count = count
+    db.add(row)
+    db.commit()
+    maybe_qualify_invite_reward(db, user.id)
 
 
 @pytest.fixture()
@@ -77,6 +94,8 @@ def test_ensure_user_invite_code(in_memory_db):
 
 def test_bind_invite_code_success(in_memory_db):
     db = in_memory_db
+    # 关闭“被邀请人需剪辑 N 部”门槛，验证即时到账的额度分配逻辑
+    set_invite_config(db, reward_clip_limit=5, require_invitee_clips=0)
     inviter = _create_test_user(db, "inviter", clip_limit=30)
     invitee = _create_test_user(db, "invitee", clip_limit=30)
     inviter_code = ensure_user_invite_code(db, inviter)
@@ -164,7 +183,7 @@ def test_invalid_invite_code(in_memory_db):
 
 def test_dynamic_reward_config(in_memory_db):
     db = in_memory_db
-    set_invite_config(db, reward_clip_limit=10, max_rewards_per_user=0)
+    set_invite_config(db, reward_clip_limit=10, max_rewards_per_user=0, require_invitee_clips=0)
 
     cfg = get_invite_config(db)
     assert cfg["reward_clip_limit"] == 10
@@ -184,7 +203,7 @@ def test_dynamic_reward_config(in_memory_db):
 def test_max_rewards_per_user_limit(in_memory_db):
     db = in_memory_db
     # 设置最多只能拿 1 次奖励
-    set_invite_config(db, reward_clip_limit=5, max_rewards_per_user=1)
+    set_invite_config(db, reward_clip_limit=5, max_rewards_per_user=1, require_invitee_clips=0)
 
     inviter = _create_test_user(db, "inviter", clip_limit=30)
     b = _create_test_user(db, "userB", clip_limit=30)
@@ -221,6 +240,7 @@ def test_feature_disabled(in_memory_db):
 
 def test_get_user_invite_info(in_memory_db):
     db = in_memory_db
+    set_invite_config(db, reward_clip_limit=5, require_invitee_clips=0)
     a = _create_test_user(db, "userA", clip_limit=30)
     b = _create_test_user(db, "userB", clip_limit=30)
     code_a = ensure_user_invite_code(db, a)
@@ -244,6 +264,7 @@ def test_get_user_invite_info(in_memory_db):
 
 def test_api_client_endpoints(in_memory_db):
     db = in_memory_db
+    set_invite_config(db, reward_clip_limit=5, require_invitee_clips=0)
     alice = _create_test_user(db, "alice", clip_limit=30)
     bob = _create_test_user(db, "bob", clip_limit=30)
     alice_code = ensure_user_invite_code(db, alice)
@@ -317,6 +338,7 @@ def test_admin_invites_page_and_settings(monkeypatch, in_memory_db):
                 "max_rewards_per_user": "50",
                 "reward_valid_days": "15",
                 "max_permanent_clip_limit": "20",
+                "require_invitee_clips": "12",
                 "is_enabled": "1",
             },
             follow_redirects=False,
@@ -329,6 +351,7 @@ def test_admin_invites_page_and_settings(monkeypatch, in_memory_db):
         assert cfg["max_rewards_per_user"] == 50
         assert cfg["reward_valid_days"] == 15
         assert cfg["max_permanent_clip_limit"] == 20
+        assert cfg["require_invitee_clips"] == 12
         assert cfg["is_enabled"] is True
 
 
@@ -337,7 +360,7 @@ def test_invite_reward_expiry_after_30_days(in_memory_db):
     from app.services.daily_quota import build_daily_quota
 
     db = in_memory_db
-    set_invite_config(db, reward_clip_limit=5, reward_valid_days=30, max_rewards_per_user=10)
+    set_invite_config(db, reward_clip_limit=5, reward_valid_days=30, max_rewards_per_user=10, require_invitee_clips=0)
 
     user_a = _create_test_user(db, "userA", clip_limit=30)
     user_b = _create_test_user(db, "userB", clip_limit=30)
@@ -392,7 +415,7 @@ def test_invite_reward_expiry_after_30_days(in_memory_db):
 def test_invite_reward_permanent_when_zero(in_memory_db):
     """测试 reward_valid_days 为 0 时为永久奖励。"""
     db = in_memory_db
-    set_invite_config(db, reward_clip_limit=5, reward_valid_days=0)
+    set_invite_config(db, reward_clip_limit=5, reward_valid_days=0, require_invitee_clips=0)
 
     user_a = _create_test_user(db, "userA", clip_limit=30)
     user_b = _create_test_user(db, "userB", clip_limit=30)
@@ -427,6 +450,7 @@ def test_invite_permanent_cap_at_15_and_temp_beyond(in_memory_db):
         reward_valid_days=30,
         max_permanent_clip_limit=15,
         max_rewards_per_user=0,
+        require_invitee_clips=0,
     )
 
     user_a = _create_test_user(db, "userA", clip_limit=10)
@@ -508,6 +532,7 @@ def test_invite_partial_split_headroom(in_memory_db):
         reward_clip_limit=5,
         reward_valid_days=30,
         max_permanent_clip_limit=15,
+        require_invitee_clips=0,
     )
 
     user_a = _create_test_user(db, "userA", clip_limit=12)
@@ -528,6 +553,92 @@ def test_invite_partial_split_headroom(in_memory_db):
     day31 = datetime.now() + timedelta(days=31)
     assert get_user_active_invite_bonus(db, user_a.id, now=day31) == 0
     assert get_user_effective_clip_limit(db, user_a, now=day31) == 15
+
+
+def test_invite_reward_deferred_until_invitee_reaches_threshold(in_memory_db):
+    """被邀请人未剪辑满规定数量前，双方奖励不生效；达标后才发放。"""
+    db = in_memory_db
+    set_invite_config(
+        db,
+        reward_clip_limit=5,
+        reward_valid_days=30,
+        max_permanent_clip_limit=15,
+        max_rewards_per_user=0,
+        require_invitee_clips=10,
+    )
+    inviter = _create_test_user(db, "inviter", clip_limit=10)
+    invitee = _create_test_user(db, "invitee", clip_limit=10)
+    code = ensure_user_invite_code(db, inviter)
+
+    res = bind_invite_code(db, invitee, code)
+    assert res["ok"] is True
+    assert res["new_clip_limit"] == 10  # 未达标，额度不变
+    assert "10" in res["message"]  # 提示需要剪辑 10 部
+
+    db.refresh(inviter)
+    db.refresh(invitee)
+    assert inviter.daily_clip_limit == 10
+    assert invitee.daily_clip_limit == 10
+    rec = db.query(UserInviteRecord).filter_by(invitee_id=invitee.id).first()
+    assert rec.invitee_qualified is False
+
+    info = get_user_invite_info(db, invitee)
+    assert info["has_used_invite"] is True
+    assert info["invitee_qualified"] is False
+    assert info["require_invitee_clips"] == 10
+    assert info["invitee_remaining_clips"] == 10
+
+    # 剪辑 9 部仍不生效
+    _grant_clipped_dramas(db, invitee, count=9)
+    db.refresh(rec)
+    assert rec.invitee_qualified is False
+    assert inviter.daily_clip_limit == 10
+
+    # 达到 10 部后双方奖励生效
+    _grant_clipped_dramas(db, invitee, count=10)
+    db.refresh(inviter)
+    db.refresh(invitee)
+    db.refresh(rec)
+    assert rec.invitee_qualified is True
+    assert inviter.daily_clip_limit == 15
+    assert invitee.daily_clip_limit == 15
+    assert get_user_effective_clip_limit(db, inviter) == 15
+    assert get_user_effective_clip_limit(db, invitee) == 15
+
+
+def test_invite_reward_immediate_when_threshold_zero(in_memory_db):
+    """门槛设为 0 时，兑换后立即生效（兼容旧行为）。"""
+    db = in_memory_db
+    set_invite_config(db, reward_clip_limit=5, require_invitee_clips=0)
+    a = _create_test_user(db, "a", clip_limit=10)
+    b = _create_test_user(db, "b", clip_limit=10)
+    code = ensure_user_invite_code(db, a)
+
+    bind_invite_code(db, b, code)
+
+    db.refresh(a)
+    db.refresh(b)
+    assert a.daily_clip_limit == 15
+    assert b.daily_clip_limit == 15
+
+
+def test_invite_reward_applies_when_invitee_already_qualified(in_memory_db):
+    """被邀请人在绑定前已达剪辑门槛时，兑换即生效。"""
+    db = in_memory_db
+    set_invite_config(db, reward_clip_limit=5, require_invitee_clips=10)
+    a = _create_test_user(db, "a", clip_limit=10)
+    b = _create_test_user(db, "b", clip_limit=10)
+    _grant_clipped_dramas(db, b, count=10)  # 此时还没有邀请记录，不触发
+
+    code = ensure_user_invite_code(db, a)
+    bind_invite_code(db, b, code)
+
+    db.refresh(a)
+    db.refresh(b)
+    assert a.daily_clip_limit == 15
+    assert b.daily_clip_limit == 15
+    rec = db.query(UserInviteRecord).filter_by(invitee_id=b.id).first()
+    assert rec.invitee_qualified is True
 
 
 
