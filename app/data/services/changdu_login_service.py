@@ -76,10 +76,18 @@ def run_changdu_login(auth_file: Path | None = None) -> Path:
 
     try:
         with sync_playwright() as playwright:
-            browser = playwright.chromium.launch(
-                headless=False,
-                args=list(LAUNCH_ARGS),
-            )
+            launch_kwargs = {
+                "headless": False,
+                "args": list(LAUNCH_ARGS),
+            }
+            try:
+                # 优先调用系统真实 Chrome 渠道
+                browser = playwright.chromium.launch(
+                    channel="chrome",
+                    **launch_kwargs,
+                )
+            except Exception:
+                browser = playwright.chromium.launch(**launch_kwargs)
             context = browser.new_context(**browser_context_kwargs())
             page = context.new_page()
             page.add_init_script(STEALTH_INIT_SCRIPT)

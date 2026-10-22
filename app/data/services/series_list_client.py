@@ -95,10 +95,18 @@ class SeriesListClient:
         self._closed = False
         try:
             self._playwright = sync_playwright().start()
-            self.browser = self._playwright.chromium.launch(
-                headless=self.headless,
-                args=list(LAUNCH_ARGS),
-            )
+            launch_kwargs = {
+                "headless": self.headless,
+                "args": list(LAUNCH_ARGS),
+            }
+            try:
+                # 优先调用系统真实 Chrome 渠道，继承原生插件与显卡环境特征（应对 shelldriver 检测）
+                self.browser = self._playwright.chromium.launch(
+                    channel="chrome",
+                    **launch_kwargs,
+                )
+            except Exception:
+                self.browser = self._playwright.chromium.launch(**launch_kwargs)
             self.context = self.browser.new_context(
                 **browser_context_kwargs(storage_state=str(self.auth_file))
             )
