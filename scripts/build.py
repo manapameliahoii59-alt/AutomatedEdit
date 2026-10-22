@@ -367,7 +367,7 @@ def bundle_config() -> None:
             "plan_short_max_duration_sec": 300,
             "plan_mixed_clip_count": 15,
             "plan_mixed_max_duration_sec": 720,
-            "plan_mixed_strategy": "v2",
+            "plan_mixed_strategy": "v3",
             "plan_global_speed": 1.15,
             "deepseek_api_keys": "",
             "ffmpeg_path": "",

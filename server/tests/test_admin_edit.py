@@ -866,6 +866,73 @@ def test_user_edit_saves_plan_mode(admin_client):
     assert "混合模式" in list_resp2.text
 
 
+def test_user_edit_saves_plan_strategy_v3(admin_client):
+    """后台「混合模式策略版本」支持 v3：渲染、保存、回显、列表展示、非法值拦截。"""
+    # 1. 编辑页渲染出 v3 选项
+    resp = admin_client.get("/admin/user/edit/1")
+    assert resp.status_code == 200
+    assert 'id="plan_mixed_strategy"' in resp.text
+    assert '>广度铺开 (v3 / 新逻辑)</option>' in resp.text
+
+    # 2. 保存为 v3
+    save_resp = admin_client.post(
+        "/admin/user/edit/1",
+        data={
+            "username": "a@b.com",
+            "role": "user",
+            "plan_mixed_strategy": "v3",
+            "save": "Save",
+        },
+        follow_redirects=False,
+    )
+    assert save_resp.status_code == 302
+
+    # 3. 编辑页回显选中 v3
+    check_resp = admin_client.get("/admin/user/edit/1")
+    assert check_resp.status_code == 200
+    assert (
+        '<option value="v3" selected>广度铺开 (v3 / 新逻辑)</option>' in check_resp.text
+    )
+
+    # 4. 用户列表展示 v3 标签
+    list_resp = admin_client.get("/admin/users")
+    assert list_resp.status_code == 200
+    assert "v3（广度铺开）" in list_resp.text
+
+    # 5. 非法值不落库，仍保持 v3
+    bad_resp = admin_client.post(
+        "/admin/user/edit/1",
+        data={
+            "username": "a@b.com",
+            "role": "user",
+            "plan_mixed_strategy": "v9",
+            "save": "Save",
+        },
+        follow_redirects=False,
+    )
+    assert bad_resp.status_code == 302
+    check_resp2 = admin_client.get("/admin/user/edit/1")
+    assert (
+        '<option value="v3" selected>广度铺开 (v3 / 新逻辑)</option>' in check_resp2.text
+    )
+
+    # 6. 可切回 v1，说明三档互通
+    admin_client.post(
+        "/admin/user/edit/1",
+        data={
+            "username": "a@b.com",
+            "role": "user",
+            "plan_mixed_strategy": "v1",
+            "save": "Save",
+        },
+        follow_redirects=False,
+    )
+    check_resp3 = admin_client.get("/admin/user/edit/1")
+    assert (
+        '<option value="v1" selected>经典稳定 (v1 / 旧逻辑)</option>' in check_resp3.text
+    )
+
+
 
 
 

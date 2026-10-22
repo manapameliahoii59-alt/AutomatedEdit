@@ -306,8 +306,8 @@ class TestClipEditAutoSelectAfterImport:
         from app.data.services.render_service import RenderService, RENDER_ENGINE_CHOICES
 
         fresh_cfg = Config()
-        # 1. 混合模式策略版本 默认 "v2"
-        assert fresh_cfg.plan_mixed_strategy.defaultValue == "v2"
+        # 1. 混合模式策略版本 默认 "v3"（广度铺开：片头 2 条 + 每开头最多 2 条）
+        assert fresh_cfg.plan_mixed_strategy.defaultValue == "v3"
         # 2. 渲染引擎 默认 "v3"（极速模式/三段式分块流复用，推荐）
         assert fresh_cfg.clip_render_engine.defaultValue == "v3"
         assert dict(RENDER_ENGINE_CHOICES).get("v3") == "v3"

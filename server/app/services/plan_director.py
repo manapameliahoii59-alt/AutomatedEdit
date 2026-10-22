@@ -105,6 +105,24 @@ def split_ab_counts_v2(total: int) -> tuple[int, int]:
     return a, total - a
 
 
+def split_ab_counts_v3(total: int) -> tuple[int, int]:
+    """v3 混合模式：A 组固定片头 2 条，其余全部分配给 B 组。"""
+    total = clamp_clip_count(total)
+    if total <= 1:
+        return total, 0
+    a = min(2, total)
+    if a >= total:
+        a = total - 1
+    return a, total - a
+
+
+def _normalize_plan_strategy(value: Any) -> str:
+    """策划策略版本归一：v2 / v3 为增强版，其余一律回落 v1。"""
+    s = str(value or "").strip().lower()
+    if s in ("v2", "v3"):
+        return s
+    return "v1"
+
 
 def max_same_short_start(target_count: int) -> int:
     """同一开场最多占用目标条数的 2/5（至少 1）。"""
@@ -1039,6 +1057,286 @@ def _compose_short_plans_from_starts_ends_v2(
     return plans
 
 
+def _build_short_plan(
+    *,
+    item: dict,
+    ordered_files: list[str],
+    project_name: str,
+    date_str: str,
+    speed: float,
+    index: int,
+) -> dict:
+    """由 starts/ends 组合结果构造一条成片方案（v3 专用）。"""
+    return {
+        "title": f"{project_name}-{date_str}-{index:02d}",
+        "project_name": project_name,
+        "global_speed": speed,
+        "files_config": {
+            "first_episode_cut_start": round(item["st"], 1),
+            "full_episodes": ordered_files[item["s_idx"] : item["l_idx"]],
+            "last_episode": item["le"],
+            "last_episode_cut_point": round(item["cut_point"], 2),
+        },
+        "hook": item["hook"],
+    }
+
+
+def _compose_short_plans_from_starts_ends_v3(
+    *,
+    starts_raw: list[dict],
+    ends_raw: list[dict],
+    steps: list[dict],
+    step_texts: list[str],
+    ordered_files: list[str],
+    episode_end_times: dict,
+    min_dur: float,
+    max_dur: float,
+    target_count: int,
+    used_fingerprints: set[str],
+    used_short_starts: dict[str, int],
+    project_name: str,
+    date_str: str,
+    speed: float,
+    supplement_asr_starts: bool = True,
+    same_start_limit: int = 2,
+    group_type: str = "B",
+) -> list[dict]:
+    """v3 专用组合算法（在 v2 基础上收窄配额，让开头切点更分散）：
+
+    - A 组：开头固定为 1.mp4 第 0 秒，条数由 target_count 决定（v3 固定 2 条）；
+    - B 组：按吸睛评分从高到低，每个开头先吃满 2 条再换下一个开头；
+      只有凑不满目标条数时，才按 2 → 4 → 不限 逐级放开单个开头的上限。
+    仅开头数量不足时才复用开头，正常情况尽量覆盖更多不同开头。
+    """
+    if target_count <= 0:
+        return []
+
+    ends = _normalize_short_ends(
+        ends_raw,
+        steps=steps,
+        step_texts=step_texts,
+        ordered_files=ordered_files,
+    )
+    if not ends:
+        return []
+
+    mid_dur = (min_dur + max_dur) / 2.0
+    plans: list[dict] = []
+    base_cap = max(1, int(same_start_limit))
+
+    if group_type == "A":
+        # A 组：开头固定为 1.mp4 第 0 秒（规则与 v2 一致，配额由 target_count 收窄）
+        first_ep = (
+            "1.mp4"
+            if "1.mp4" in ordered_files
+            else (ordered_files[0] if ordered_files else None)
+        )
+        if not first_ep:
+            return []
+        s_idx = ordered_files.index(first_ep)
+        start_key = f"{first_ep}_0.0"
+
+        candidates: list[tuple[float, float, dict]] = []
+        for end in ends:
+            if s_idx > end["l_idx"]:
+                continue
+            total_dur = _compute_clip_duration(
+                s_idx,
+                end["l_idx"],
+                0.0,
+                end["cut_point"],
+                ordered_files,
+                episode_end_times,
+            )
+            if min_dur <= total_dur <= max_dur:
+                candidates.append(
+                    (
+                        abs(total_dur - mid_dur),
+                        total_dur,
+                        {
+                            "se": first_ep,
+                            "s_idx": s_idx,
+                            "st": 0.0,
+                            "le": end["le"],
+                            "l_idx": end["l_idx"],
+                            "phys_end": end["phys_end"],
+                            "cut_point": end["cut_point"],
+                            "hook": end["hook"],
+                        },
+                    )
+                )
+
+        candidates.sort(key=lambda x: x[0])
+        for _score, _dur, item in candidates:
+            fp = f"{item['se']}_{item['le']}_{round(item['phys_end'])}"
+            if fp in used_fingerprints:
+                continue
+            if used_short_starts.get(start_key, 0) >= base_cap:
+                continue
+            used_fingerprints.add(fp)
+            used_short_starts[start_key] = used_short_starts.get(start_key, 0) + 1
+            plans.append(
+                _build_short_plan(
+                    item=item,
+                    ordered_files=ordered_files,
+                    project_name=project_name,
+                    date_str=date_str,
+                    speed=speed,
+                    index=len(plans) + 1,
+                )
+            )
+            if len(plans) >= target_count:
+                break
+        return plans
+
+    # B 组：跨集且严禁 1.mp4 片头切点
+    starts = _normalize_short_starts(starts_raw, ordered_files=ordered_files)
+    starts = [
+        s for s in starts if not (s["se"] == "1.mp4" and float(s["st"]) <= 1.0)
+    ]
+
+    if supplement_asr_starts and len(starts) < max(8, target_count):
+        asr_hints = _asr_clean_start_hints(
+            steps, ordered_files, limit=max(16, target_count * 2)
+        )
+        filtered_hints = [
+            h for h in asr_hints if not (h["se"] == "1.mp4" and float(h["st"]) <= 1.0)
+        ]
+        starts = _normalize_short_starts(
+            [
+                {
+                    "se": s["se"],
+                    "st": s["st"],
+                    "score": s.get("score", 60.0),
+                }
+                for s in starts
+            ]
+            + [{"se": h["se"], "st": h["st"], "score": 50.0} for h in filtered_hints],
+            ordered_files=ordered_files,
+        )
+        starts = [
+            s for s in starts if not (s["se"] == "1.mp4" and float(s["st"]) <= 1.0)
+        ]
+
+    if not starts:
+        return []
+
+    # 按 start_key 汇聚候选对，组内按「时长贴近区间中值」排序
+    start_groups: dict[str, dict] = {}
+    for start in starts:
+        s_ep = start["se"]
+        s_idx = start["s_idx"]
+        st_raw = start["st"]
+        score_val = float(start.get("score", 60.0))
+
+        for end in ends:
+            if s_idx >= end["l_idx"]:  # 跨集硬约束
+                continue
+            snapped = _pick_short_start_for_duration(
+                steps,
+                s_ep,
+                st_raw,
+                s_idx=s_idx,
+                l_idx=end["l_idx"],
+                cut_point=end["cut_point"],
+                ordered_files=ordered_files,
+                episode_end_times=episode_end_times,
+                min_dur=min_dur,
+                max_dur=max_dur,
+            )
+            if snapped is None:
+                continue
+            if s_ep == "1.mp4" and snapped <= 1.0:
+                continue
+            total_dur = _compute_clip_duration(
+                s_idx,
+                end["l_idx"],
+                snapped,
+                end["cut_point"],
+                ordered_files,
+                episode_end_times,
+            )
+            if total_dur < min_dur or total_dur > max_dur:
+                continue
+            fp = f"{s_ep}_{end['le']}_{round(end['phys_end'])}"
+            if fp in used_fingerprints:
+                continue
+
+            start_key = f"{s_ep}_{round(float(snapped), 1)}"
+            if start_key not in start_groups:
+                start_groups[start_key] = {
+                    "start_key": start_key,
+                    "score": score_val,
+                    "pairs": [],
+                }
+            if any(p["fp"] == fp for p in start_groups[start_key]["pairs"]):
+                continue
+
+            start_groups[start_key]["pairs"].append(
+                {
+                    "fp": fp,
+                    "dur_diff": abs(total_dur - mid_dur),
+                    "total_dur": total_dur,
+                    "item": {
+                        "se": s_ep,
+                        "s_idx": s_idx,
+                        "st": snapped,
+                        "le": end["le"],
+                        "l_idx": end["l_idx"],
+                        "phys_end": end["phys_end"],
+                        "cut_point": end["cut_point"],
+                        "hook": end["hook"],
+                    },
+                }
+            )
+
+    for g in start_groups.values():
+        g["pairs"].sort(key=lambda p: p["dur_diff"])
+
+    sorted_groups = sorted(
+        start_groups.values(),
+        key=lambda g: (g["score"], len(g["pairs"])),
+        reverse=True,
+    )
+
+    # 逐级放开单个开头的上限：先每开头 2 条，凑不满再 4 条，最后不限
+    for level_cap in (base_cap, max(base_cap, 4), None):
+        if len(plans) >= target_count:
+            break
+        for g in sorted_groups:
+            if len(plans) >= target_count:
+                break
+            sk = g["start_key"]
+            cur_used = used_short_starts.get(sk, 0)
+            if level_cap is not None:
+                slots_left = level_cap - cur_used
+                if slots_left <= 0:
+                    continue
+            else:
+                slots_left = target_count - len(plans)
+            avail = [p for p in g["pairs"] if p["fp"] not in used_fingerprints]
+            take_n = min(slots_left, len(avail), target_count - len(plans))
+            if take_n <= 0:
+                continue
+            for p in avail[:take_n]:
+                used_fingerprints.add(p["fp"])
+                used_short_starts[sk] = used_short_starts.get(sk, 0) + 1
+                plans.append(
+                    _build_short_plan(
+                        item=p["item"],
+                        ordered_files=ordered_files,
+                        project_name=project_name,
+                        date_str=date_str,
+                        speed=speed,
+                        index=len(plans) + 1,
+                    )
+                )
+                if len(plans) >= target_count:
+                    break
+
+    return plans
+
+
 def _compress_script(steps: list[dict], target_episodes: list[str]) -> str:
     """压缩剧本：带每句起止秒，便于模型选句首 st。"""
     parts: list[str] = []
@@ -1206,6 +1504,51 @@ def _build_mixed_plan_prompt_v2(
         )
 
 
+def _build_mixed_plan_prompt_v3(
+    *,
+    count: int,
+    min_duration_seconds: int,
+    max_duration_seconds: int,
+    group_type: str,
+) -> str:
+    """混合模式 v3 专用提示词。
+
+    与 v2 同构（A 组固定首集片头、只输出 ends；B 组跨集、禁首集片头、starts 带 score），
+    区别在于额外强调「开头切点必须高度分散」，以支撑 v3「每个开头先吃满 2 条」的铺开策略。
+    """
+    if group_type == "A":
+        end_n = max(10, count * 3)
+        return (
+            f"你是一个短剧广告投放导演。任务：为混合模式【A组】提供约 {end_n} 个高转化卡点结尾候选（ends）。\n"
+            f"A组规则：所有成片开头固定为第1集片头（1.mp4 第0秒起），最终由服务端按时长 {min_duration_seconds}~{max_duration_seconds} 秒自动匹配卡点结尾并截取成片（目标约 {count} 条）。\n"
+            "你不需要输出 starts 开头，只需输出优质 ends 结尾候选！\n"
+            f"请给出约 {end_n} 个卡点结尾候选（ends）；结尾必须分散在全剧不同集、不同高潮反转处，禁止扎堆在同一集，彼此有明显差异。\n"
+            "剧本条目格式为 [集名](起始秒-结束秒)台词。\n"
+            "ends 规则：le 为结束集；ct 必须逐字摘自 le 对应集剧本原文（8~15字），禁止改写/概括；hook 为悬念引流标题；切点彼此尽量不同。\n"
+            '输出纯 JSON: {"ends":[{"le":"6.mp4","ct":"台词原文","hook":"引流标题"}]}\n'
+            "字段: le=结束集, ct=le集中台词(8~15字), hook=悬念引流标题"
+        )
+    # B 组
+    start_n = max(12, count * 2)
+    end_n = max(15, count * 3)
+    return (
+        f"你是一个短剧广告投放导演。任务：为混合模式【B组】提供开场（starts）与卡点结尾（ends）候选，"
+        f"最终由服务端按时长 {min_duration_seconds}~{max_duration_seconds} 秒自动聚拢组合（目标约 {count} 条）。\n"
+        "B组规则：必须跨集（le 须晚于 se）。允许从第1集或后续任意集切入，但【严禁使用第1集开头作为切点】（禁止片头 0 秒起切，避免与A组冲突）。\n"
+        "不要直接输出完整 clips；分别给出 starts 与 ends。\n"
+        f"请给出约 {start_n} 个开场候选、约 {end_n} 个结尾候选。\n"
+        "【开头分散是硬要求】starts 必须尽量分散到不同集、不同时间点，不要多个候选挤在同一集的相邻位置；"
+        "服务端会把每个开头最多用 2 条，开头越分散，成片能覆盖的开头就越多。\n"
+        "剧本条目格式为 [集名](起始秒-结束秒)台词。\n"
+        "starts 规则：st 必须落在两句之间的干净空镜，须晚于上一句结束约 0.3 秒以上（避开上句字幕残留），且早于下一句起始秒，禁止从对白中间起切；se 为起始集；"
+        "score 为该开头的剧情吸引力/黄金3秒吸睛评分（1~100分，数字越高代表冲突越激烈、越吸睛），按 score 由高到低排序给出。\n"
+        "ends 规则：ct 必须逐字摘自 le 对应集剧本原文（8~15字），禁止改写/概括；hook 为悬念引流标题；切点彼此尽量不同。\n"
+        '输出纯 JSON: {"starts":[{"se":"2.mp4","st":12.5,"score":95}],'
+        '"ends":[{"le":"6.mp4","ct":"台词原文","hook":"引流标题"}]}\n'
+        "字段: se=起始集, st=起始秒(句前缓冲), score=吸睛评分(1-100), le=结束集, ct=le集中台词(8~15字), hook=悬念引流标题"
+    )
+
+
 def _system_prompt_for_group(
     *,
     group_type: str,
@@ -1217,7 +1560,7 @@ def _system_prompt_for_group(
 ) -> str:
     """按策划模式、组类型与策略版本选择提示词。"""
     mode = str(plan_mode or "").strip().lower()
-    strategy = "v2" if str(plan_strategy or "").strip().lower() == "v2" else "v1"
+    strategy = _normalize_plan_strategy(plan_strategy)
     if mode == "short" or group_type == "U":
         return _build_short_plan_prompt(
             count=count,
@@ -1225,6 +1568,13 @@ def _system_prompt_for_group(
             max_duration_seconds=max_duration_seconds,
         )
     if mode == "mixed":
+        if strategy == "v3":
+            return _build_mixed_plan_prompt_v3(
+                count=count,
+                min_duration_seconds=min_duration_seconds,
+                max_duration_seconds=max_duration_seconds,
+                group_type=group_type,
+            )
         if strategy == "v2":
             return _build_mixed_plan_prompt_v2(
                 count=count,
@@ -1403,7 +1753,7 @@ def _extract_starts_ends_from_res(
     ordered_files: list[str],
 ) -> tuple[list[dict], list[dict]]:
     """统一从大模型响应中提取 starts 与 ends 候选。"""
-    if mode == "mixed" and strategy == "v2" and g_type == "A":
+    if mode == "mixed" and strategy in ("v2", "v3") and g_type == "A":
         first_ep = (
             "1.mp4"
             if "1.mp4" in ordered_files
@@ -1448,6 +1798,26 @@ def _compose_mixed_plans(
     target_total: int,
 ) -> list[dict]:
     """统一包装装箱算法组合成片。"""
+    if mode == "mixed" and strategy == "v3":
+        return _compose_short_plans_from_starts_ends_v3(
+            starts_raw=starts_raw,
+            ends_raw=ends_raw,
+            steps=steps,
+            step_texts=step_texts,
+            ordered_files=ordered_files,
+            episode_end_times=episode_end_times,
+            min_dur=min_dur,
+            max_dur=max_dur,
+            target_count=need,
+            used_fingerprints=used_fingerprints,
+            used_short_starts=used_short_starts,
+            project_name=project_name,
+            date_str=date_str,
+            speed=speed,
+            supplement_asr_starts=True,
+            same_start_limit=2,
+            group_type=g_type,
+        )
     if mode == "mixed" and strategy == "v2":
         return _compose_short_plans_from_starts_ends_v2(
             starts_raw=starts_raw,
@@ -1521,7 +1891,7 @@ def run_plan(
         # 兼容旧客户端：无 plan_mode 时由 split_ab 推断
         mode = "short" if not use_ab else "long"
     use_pair = mode in {"short", "mixed"}
-    strategy = "v2" if str(plan_strategy or "").strip().lower() == "v2" else "v1"
+    strategy = _normalize_plan_strategy(plan_strategy)
 
     speed = (
         clamp_global_speed(global_speed)
@@ -1554,6 +1924,9 @@ def run_plan(
 
     if mode == "short":
         task_groups = [("U", target_total)]
+    elif mode == "mixed" and strategy == "v3":
+        group_a_count, group_b_count = split_ab_counts_v3(target_total)
+        task_groups = [("A", group_a_count), ("B", group_b_count)]
     elif mode == "mixed" and strategy == "v2":
         group_a_count, group_b_count = split_ab_counts_v2(target_total)
         task_groups = [("A", group_a_count), ("B", group_b_count)]
@@ -1879,7 +2252,7 @@ def run_plan(
 
             try:
                 if use_pair:
-                    if mode == "mixed" and strategy == "v2":
+                    if mode == "mixed" and strategy in ("v2", "v3"):
                         if g_type == "A":
                             # A 组固定首集片头（1.mp4 0.0s），只解析 ends
                             first_ep = "1.mp4" if "1.mp4" in ordered_files else (ordered_files[0] if ordered_files else "1.mp4")
@@ -1911,7 +2284,13 @@ def run_plan(
                             # 若 A 组未满额，B 组动态多接，确保凑满目标总条数
                             need = max(need, target_total - len(final_plans))
 
-                        paired = _compose_short_plans_from_starts_ends_v2(
+                        # v3 收窄为「每个开头先吃满 2 条」，v2 保持 4 条
+                        _composer = (
+                            _compose_short_plans_from_starts_ends_v3
+                            if strategy == "v3"
+                            else _compose_short_plans_from_starts_ends_v2
+                        )
+                        paired = _composer(
                             starts_raw=starts_raw,
                             ends_raw=ends_raw,
                             steps=steps,
@@ -1927,7 +2306,7 @@ def run_plan(
                             date_str=date_str,
                             speed=speed,
                             supplement_asr_starts=True,
-                            same_start_limit=4,
+                            same_start_limit=2 if strategy == "v3" else 4,
                             group_type=g_type,
                         )
                     else:

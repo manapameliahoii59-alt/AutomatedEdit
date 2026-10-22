@@ -512,6 +512,7 @@ def users_list(
     strategy_labels = {
         "v1": "v1（经典稳定）",
         "v2": "v2（实验增强）",
+        "v3": "v3（广度铺开）",
     }
     group_names = {
         g.id: g.name
@@ -539,8 +540,8 @@ def users_list(
         else:
             plan_group_label = "系统默认（未配置）"
 
-        strategy_raw = str(plan_section.get("mixed_strategy", "v2") or "v2").strip().lower()
-        mixed_strategy_label = strategy_labels.get(strategy_raw, strategy_labels["v2"])
+        strategy_raw = str(plan_section.get("mixed_strategy", "v3") or "v3").strip().lower()
+        mixed_strategy_label = strategy_labels.get(strategy_raw, strategy_labels["v3"])
 
         users.append(
             {
@@ -919,7 +920,7 @@ def user_edit_save(
     if p_mode in ("mixed", "long", "short"):
         plan_patch["mode"] = p_mode
     strat = (plan_mixed_strategy or "").strip().lower()
-    if strat in ("v1", "v2"):
+    if strat in ("v1", "v2", "v3"):
         plan_patch["mixed_strategy"] = strat
     if plan_patch:
         patch_user_settings(db, user.id, {"plan": plan_patch})

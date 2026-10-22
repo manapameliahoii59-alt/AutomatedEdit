@@ -56,6 +56,7 @@ from app.common.plan_settings import (
     PLAN_MODE_SHORT,
     PLAN_STRATEGY_V1,
     PLAN_STRATEGY_V2,
+    PLAN_STRATEGY_V3,
     clamp_clip_count,
     clamp_global_speed,
     clamp_max_duration_seconds,
@@ -771,6 +772,7 @@ class ClipEditPage(ScrollArea):
         strategy_combo.setMinimumWidth(200)
         strategy_combo.addItem("经典稳定 (旧逻辑 / v1)", PLAN_STRATEGY_V1)
         strategy_combo.addItem("实验增强 (新逻辑 / v2)", PLAN_STRATEGY_V2)
+        strategy_combo.addItem("广度铺开 (新逻辑 / v3)", PLAN_STRATEGY_V3)
 
         form.addRow("总条数", count_combo)
         form.addRow("最长时长", max_combo)
@@ -946,7 +948,7 @@ class ClipEditPage(ScrollArea):
             _set_combo_value(count_combo, values[mode]["count"])
             _set_combo_value(max_combo, values[mode]["max_min"])
             _set_combo_value(speed_combo, DEFAULT_GLOBAL_SPEED)
-            _set_combo_value(strategy_combo, PLAN_STRATEGY_V1)
+            _set_combo_value(strategy_combo, PLAN_STRATEGY_V3)
 
         reset_btn.clicked.connect(_reset)
         buttons.accepted.connect(dlg.accept)

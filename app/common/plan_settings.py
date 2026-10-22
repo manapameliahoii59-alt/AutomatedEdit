@@ -17,8 +17,10 @@ PlanMode = Literal["short", "long", "mixed"]
 
 PLAN_STRATEGY_V1 = "v1"
 PLAN_STRATEGY_V2 = "v2"
-DEFAULT_PLAN_STRATEGY = PLAN_STRATEGY_V1
-PlanStrategy = Literal["v1", "v2"]
+# v3：在 v2 基础上收窄配额（片头 2 条、每开头最多 2 条），让开头切点更分散
+PLAN_STRATEGY_V3 = "v3"
+DEFAULT_PLAN_STRATEGY = PLAN_STRATEGY_V3
+PlanStrategy = Literal["v1", "v2", "v3"]
 
 # 长片：最短固定 2.5 分钟；最长 5~15 分钟
 MIN_DURATION_SECONDS = 150  # 2.5 分钟，固定最短
@@ -69,6 +71,8 @@ class ActivePlanParams(TypedDict):
 
 def clamp_plan_strategy(value: Any) -> PlanStrategy:
     s = str(value or "").strip().lower()
+    if s == PLAN_STRATEGY_V3:
+        return PLAN_STRATEGY_V3
     if s == PLAN_STRATEGY_V2:
         return PLAN_STRATEGY_V2
     return PLAN_STRATEGY_V1

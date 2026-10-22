@@ -187,6 +187,7 @@ def test_clamp_plan_strategy():
     from app.common.plan_settings import (
         PLAN_STRATEGY_V1,
         PLAN_STRATEGY_V2,
+        PLAN_STRATEGY_V3,
         clamp_plan_strategy,
     )
 
@@ -194,5 +195,36 @@ def test_clamp_plan_strategy():
     assert clamp_plan_strategy("V1") == PLAN_STRATEGY_V1
     assert clamp_plan_strategy("v2") == PLAN_STRATEGY_V2
     assert clamp_plan_strategy("V2") == PLAN_STRATEGY_V2
+    assert clamp_plan_strategy("v3") == PLAN_STRATEGY_V3
+    assert clamp_plan_strategy("V3") == PLAN_STRATEGY_V3
+    assert clamp_plan_strategy(" v3 ") == PLAN_STRATEGY_V3
     assert clamp_plan_strategy("other") == PLAN_STRATEGY_V1
     assert clamp_plan_strategy(None) == PLAN_STRATEGY_V1
+
+
+def test_resolve_active_plan_params_mixed_strategy_v3(monkeypatch):
+    """混合模式下 v3 应原样透传，且不被回落成 v1/v2。"""
+    from app.common import config as config_mod
+
+    class _Item:
+        def __init__(self, value):
+            self.value = value
+
+    monkeypatch.setattr(config_mod.cfg, "plan_mode", _Item("mixed"))
+    monkeypatch.setattr(config_mod.cfg, "plan_mixed_clip_count", _Item(15))
+    monkeypatch.setattr(config_mod.cfg, "plan_mixed_max_duration_sec", _Item(720))
+    monkeypatch.setattr(config_mod.cfg, "plan_global_speed", _Item(1.15))
+    monkeypatch.setattr(config_mod.cfg, "plan_mixed_strategy", _Item("v3"))
+
+    params = resolve_active_plan_params()
+    assert params["mode"] == PLAN_MODE_MIXED
+    assert params["plan_strategy"] == "v3"
+
+
+def test_default_plan_strategy_is_v3():
+    """出厂默认策略版本为 v3（广度铺开）。"""
+    from app.common.config import Config
+    from app.common.plan_settings import DEFAULT_PLAN_STRATEGY, PLAN_STRATEGY_V3
+
+    assert DEFAULT_PLAN_STRATEGY == PLAN_STRATEGY_V3
+    assert Config().plan_mixed_strategy.defaultValue == PLAN_STRATEGY_V3
