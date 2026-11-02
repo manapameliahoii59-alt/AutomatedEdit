@@ -17,6 +17,8 @@ import argparse
 import json
 import os
 import sys
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from urllib.parse import quote, unquote, urlparse
 
@@ -68,6 +70,69 @@ def cos_url(bucket: str, region: str, filename: str) -> str:
 
 def human(n: int) -> str:
     return f"{n / 1024 / 1024:.1f} MB"
+
+
+def multipart_upload(
+    client,
+    bucket: str,
+    key: str,
+    path: Path,
+    *,
+    part_size_mb: int = 20,
+    threads: int = 4,
+    progress=None,
+):
+    """手动分片上传。
+
+    不用 SDK 的 upload_file：它在上传前会调用 list_multipart_uploads 做断点续传探测，
+    需要额外的 cos:ListMultipartUploads 权限。这里只用 create/upload_part/complete
+    三个接口，与发版子账号的最小权限策略匹配。
+    """
+    total = path.stat().st_size
+    part_size = part_size_mb * 1024 * 1024
+    count = max(1, (total + part_size - 1) // part_size)
+    upload_id = client.create_multipart_upload(Bucket=bucket, Key=key)["UploadId"]
+    print(f"         分片上传：{count} 片 × {part_size_mb}MB，并发 {threads}")
+
+    done = 0
+    lock = threading.Lock()
+
+    def _put(index: int):
+        with open(path, "rb") as fh:
+            fh.seek(index * part_size)
+            data = fh.read(part_size)
+        resp = client.upload_part(
+            Bucket=bucket,
+            Key=key,
+            PartNumber=index + 1,
+            UploadId=upload_id,
+            Body=data,
+        )
+        return index + 1, resp["ETag"], len(data)
+
+    try:
+        parts: list[dict] = []
+        with ThreadPoolExecutor(max_workers=threads) as pool:
+            for part_no, etag, size in pool.map(_put, range(count)):
+                parts.append({"PartNumber": part_no, "ETag": etag})
+                with lock:
+                    done += size
+                    if progress:
+                        progress(done, total)
+        parts.sort(key=lambda p: p["PartNumber"])
+        return client.complete_multipart_upload(
+            Bucket=bucket,
+            Key=key,
+            UploadId=upload_id,
+            MultipartUpload={"Part": parts},
+        )
+    except Exception:
+        try:
+            client.abort_multipart_upload(Bucket=bucket, Key=key, UploadId=upload_id)
+            print("         已中止未完成的分片上传")
+        except Exception:  # noqa: BLE001
+            pass
+        raise
 
 
 def main() -> int:
@@ -159,13 +224,14 @@ def main() -> int:
                 print(f"         上传中 {pct}%  ({human(done)} / {human(total)})", flush=True)
 
         try:
-            client.upload_file(
-                Bucket=bucket,
-                Key=filename,
-                LocalFilePath=str(local_file),
-                PartSize=20,
-                MAXThread=5,
-                progress_callback=_progress,
+            multipart_upload(
+                client,
+                bucket,
+                filename,
+                local_file,
+                part_size_mb=20,
+                threads=4,
+                progress=_progress,
             )
         except Exception as exc:  # noqa: BLE001
             print(f"  [FAIL] 上传失败：{type(exc).__name__}: {exc}")
