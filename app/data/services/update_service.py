@@ -238,6 +238,8 @@ class ForcedUpdateDialog(QDialog):
         super().__init__(parent)
         self.info = info
         self._is_installing = False
+        # 预签名直链有有效期，重试前会刷新；手动下载始终使用最新一条
+        self._download_url = info.download_url
         self._init_ui()
 
     def _init_ui(self):
@@ -319,6 +321,19 @@ class ForcedUpdateDialog(QDialog):
         self.exit_btn.clicked.connect(self._do_exit)
         btn_layout.addWidget(self.exit_btn)
 
+        # 浏览器下载兜底：内置下载不支持断点续传，遇到网络受限或大文件中断时，
+        # 交给浏览器（可续传、可换网络环境）比反复重试更可靠。
+        self.manual_btn: QPushButton | None = None
+        if self.info.download_url:
+            self.manual_btn = QPushButton("用浏览器下载")
+            self.manual_btn.setToolTip("下载失败或网络不稳定时可用，浏览器支持断点续传")
+            self.manual_btn.setStyleSheet(
+                "padding: 7px 16px; font-size: 13px; border-radius: 4px;"
+                " border: 1px solid #1890ff; background: #fff; color: #1890ff;"
+            )
+            self.manual_btn.clicked.connect(self._open_manual_download)
+            btn_layout.addWidget(self.manual_btn)
+
         if self.info.download_url:
             self.update_btn = QPushButton("立即下载并更新")
             self.update_btn.setStyleSheet(
@@ -347,12 +362,43 @@ class ForcedUpdateDialog(QDialog):
     def _do_exit(self):
         sys.exit(0)
 
+    def _open_manual_download(self):
+        """把下载链接交给系统浏览器，作为内置下载失败时的兜底通道。"""
+        if not self._download_url:
+            self.status_label.show()
+            self.status_label.setStyleSheet("font-size: 12px; color: #ff4d4f;")
+            self.status_label.setText("暂无可用下载链接，请联系管理员获取安装包")
+            return
+
+        opened = QDesktopServices.openUrl(QUrl(self._download_url))
+        self.status_label.show()
+        if opened:
+            self.status_label.setStyleSheet("font-size: 12px; color: #8c8c8c;")
+            self.status_label.setText(
+                "已调用浏览器下载，完成后请手动运行安装程序；也可点「立即下载并更新」继续内置下载"
+            )
+        else:
+            self.status_label.setStyleSheet("font-size: 12px; color: #ff4d4f;")
+            self.status_label.setText(f"无法调用浏览器，请手动复制链接下载：{self._download_url}")
+
+    def _refresh_download_url(self) -> str:
+        """重新拉取版本信息，换取未过期的预签名直链（有效期默认 30 分钟）。"""
+        try:
+            fresh = fetch_update_info()
+        except Exception:
+            return self._download_url
+        if fresh is not None and fresh.download_url:
+            self._download_url = fresh.download_url
+        return self._download_url
+
     def _do_update(self):
-        if not self.info.download_url:
+        if not self._download_url:
             return
         self.update_btn.setEnabled(False)
         self.update_btn.setText("正在下载…")
         self.exit_btn.setEnabled(False)
+        if self.manual_btn is not None:
+            self.manual_btn.setEnabled(False)
         self.progress_bar.show()
         self.status_label.show()
         self.status_label.setText("正在准备连接服务器下载安装包…")
@@ -374,8 +420,9 @@ class ForcedUpdateDialog(QDialog):
         bridge.progress.connect(_on_progress)
 
         def _worker():
+            url = self._refresh_download_url()
             return download_update_installer(
-                self.info.download_url,
+                url,
                 version=self.info.latest,
                 progress_callback=lambda d, t: bridge.progress.emit(d, t),
             )
@@ -390,6 +437,8 @@ class ForcedUpdateDialog(QDialog):
                 self.update_btn.setEnabled(True)
                 self.update_btn.setText("重试更新")
                 self.exit_btn.setEnabled(True)
+                if self.manual_btn is not None:
+                    self.manual_btn.setEnabled(True)
                 return
             QTimer.singleShot(1000, lambda: sys.exit(0))
 
@@ -399,6 +448,9 @@ class ForcedUpdateDialog(QDialog):
             self.update_btn.setEnabled(True)
             self.update_btn.setText("重试下载")
             self.exit_btn.setEnabled(True)
+            if self.manual_btn is not None:
+                self.manual_btn.setEnabled(True)
+                self.manual_btn.setText("改用浏览器下载")
 
         task_manager.submit_task(
             _worker,
