@@ -25,7 +25,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
-from qfluentwidgets import Dialog, qconfig
+from qfluentwidgets import qconfig
 
 from app.common.config import APP_NAME, VERSION, cfg
 from app.common.version_utils import is_version_older
@@ -125,25 +125,6 @@ def _launch_installer(path: Path) -> None:
         os.startfile(local)  # type: ignore[attr-defined]
     except Exception:
         QDesktopServices.openUrl(QUrl.fromLocalFile(local))
-
-
-def _build_message(info: UpdateInfo) -> str:
-    lines = [
-        f"发现新版本 {info.latest}（当前 {VERSION}）。",
-    ]
-    if info.force:
-        lines.append("当前版本已不受支持，请升级后继续使用。")
-    if info.changelog:
-        lines.append("")
-        lines.append(info.changelog)
-    if info.download_url:
-        lines.append("")
-        lines.append("是否立即下载并安装新版本？")
-        lines.append("下载完成后会自动打开安装程序；安装前请先关闭本程序。")
-    else:
-        lines.append("")
-        lines.append("请联系管理员获取安装包。")
-    return "\n".join(lines)
 
 
 def _start_installer_download(parent: QWidget | None, info: UpdateInfo) -> None:
@@ -460,6 +441,94 @@ class ForcedUpdateDialog(QDialog):
         )
 
 
+class UpdateAvailableDialog(QDialog):
+    """普通更新提示框。
+
+    更新说明放进固定高度的可滚动区域：条目多时只增高到上限（6 行），
+    超出部分滚动查看，避免整个弹框被撑得很长。
+    """
+
+    MAX_VISIBLE_LINES = 6
+
+    def __init__(self, info: UpdateInfo, parent: QWidget | None = None):
+        super().__init__(parent)
+        self.info = info
+        self._init_ui()
+
+    def _init_ui(self):
+        self.setWindowTitle("发现新版本")
+        self.setFixedWidth(480)
+        self.setWindowFlags(
+            Qt.WindowType.Dialog
+            | Qt.WindowType.CustomizeWindowHint
+            | Qt.WindowType.WindowTitleHint
+            | Qt.WindowType.WindowCloseButtonHint
+        )
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(28, 22, 28, 20)
+        layout.setSpacing(10)
+
+        title = QLabel(f"发现新版本 v{self.info.latest}")
+        title.setStyleSheet("font-size: 16px; font-weight: bold; color: #262626;")
+        layout.addWidget(title)
+
+        sub = QLabel(f"当前版本 v{VERSION}")
+        sub.setStyleSheet("font-size: 12px; color: #8c8c8c;")
+        layout.addWidget(sub)
+
+        if self.info.changelog:
+            cl_title = QLabel("更新说明")
+            cl_title.setStyleSheet("font-size: 12px; font-weight: bold; color: #595959;")
+            layout.addWidget(cl_title)
+
+            box = QTextEdit()
+            box.setReadOnly(True)
+            box.setPlainText(self.info.changelog)
+            lines = max(1, len(self.info.changelog.splitlines()))
+            visible = min(lines, self.MAX_VISIBLE_LINES)
+            box.setFixedHeight(visible * 19 + 18)
+            box.setStyleSheet(
+                "background: #f5f5f5; border: 1px solid #d9d9d9; border-radius: 4px;"
+                " padding: 6px; font-size: 12px; color: #595959;"
+            )
+            layout.addWidget(box)
+
+        if self.info.download_url:
+            prompt = QLabel("下载完成后会自动打开安装程序；安装前请先关闭本程序。")
+            prompt.setStyleSheet("font-size: 13px; color: #262626;")
+        else:
+            prompt = QLabel("未配置下载链接，请联系管理员获取安装包。")
+            prompt.setStyleSheet("font-size: 13px; color: #ff4d4f;")
+        prompt.setWordWrap(True)
+        layout.addWidget(prompt)
+
+        btn_layout = QHBoxLayout()
+        btn_layout.setSpacing(12)
+        btn_layout.addStretch()
+
+        self.cancel_btn = QPushButton("稍后")
+        self.cancel_btn.setStyleSheet(
+            "padding: 7px 18px; font-size: 13px; border-radius: 4px;"
+            " border: 1px solid #d9d9d9; background: #fff;"
+        )
+        self.cancel_btn.clicked.connect(self.reject)
+        btn_layout.addWidget(self.cancel_btn)
+
+        self.update_btn = QPushButton("立即更新" if self.info.download_url else "确定")
+        self.update_btn.setStyleSheet(
+            "padding: 7px 22px; font-size: 13px; font-weight: bold; border-radius: 4px;"
+            " border: none; background: #1890ff; color: #fff;"
+        )
+        self.update_btn.clicked.connect(self.accept)
+        if not self.info.download_url:
+            self.cancel_btn.hide()
+            self.update_btn.setEnabled(False)
+        btn_layout.addWidget(self.update_btn)
+
+        layout.addLayout(btn_layout)
+
+
 def show_update_dialog(parent: QWidget | None, info: UpdateInfo) -> None:
     if info.force:
         dialog = ForcedUpdateDialog(info, parent)
@@ -467,17 +536,8 @@ def show_update_dialog(parent: QWidget | None, info: UpdateInfo) -> None:
         sys.exit(0)
         return
 
-    dialog = Dialog("发现新版本", _build_message(info), parent)
-    dialog.contentLabel.setWordWrap(True)
-    dialog.yesButton.setText("立即更新")
-    if not info.download_url:
-        dialog.cancelButton.hide()
-        dialog.yesButton.setEnabled(False)
-        dialog.yesButton.setText("确定")
-    else:
-        dialog.cancelButton.setText("稍后")
-
-    if dialog.exec():
+    dialog = UpdateAvailableDialog(info, parent)
+    if dialog.exec() == QDialog.DialogCode.Accepted:
         if info.download_url:
             _start_installer_download(parent, info)
     elif not info.force:
