@@ -2,7 +2,7 @@
 ; SEE THE DOCUMENTATION FOR DETAILS ON CREATING INNO SETUP SCRIPT FILES!
 
 #define MyAppName "剪辑助手"
-#define MyAppVersion "0.0.21"
+#define MyAppVersion "0.0.23"
 #define MyAppPublisher "dragon"
 #define MyAppURL "mailto:857134647@qq.com"
 #define MyAppExeName "entry.exe"
@@ -22,7 +22,10 @@ AppPublisher={#MyAppPublisher}
 AppPublisherURL={#MyAppURL}
 AppSupportURL={#MyAppURL}
 AppUpdatesURL={#MyAppURL}
-DefaultDirName={autopf}\{#MyAppName}
+; 默认安装目录由 [Code] 段的 GetDefaultDir 决定：
+; 沿用用户自定义过的位置，但历史版本若装在临时目录（会被系统清理）则改回标准位置。
+; 因此这里必须关掉 UsePreviousAppDir，否则 Inno 会强行覆盖成上次的路径。
+DefaultDirName={code:GetDefaultDir}
 DefaultGroupName={#MyAppName}
 ; Uncomment the following line to run in non administrative install mode (install for current user only.)
 PrivilegesRequired=lowest
@@ -37,9 +40,11 @@ SolidCompression=yes
 LZMAUseSeparateProcess=yes
 LZMANumBlockThreads=6
 WizardStyle=modern
-; 升级时自动沿用上次安装路径，并跳过目录选择页
+; 升级时跳过目录选择页（默认路径由 GetDefaultDir 计算）
 DisableDirPage=auto
-UsePreviousAppDir=yes
+; 必须为 no：历史版本若装在临时目录，需要改回标准位置，
+; 开着的话 Inno 会无视 GetDefaultDir 强行沿用上次路径。
+UsePreviousAppDir=no
 ; 安装/升级前尽量关闭占用文件的进程（配合下方 [Code] 强制结束）
 CloseApplications=force
 CloseApplicationsFilter=entry.exe,ffmpeg.exe,ffprobe.exe
@@ -76,6 +81,49 @@ Type: files; Name: "{app}\startup.log"
 Type: filesandordirs; Name: "{app}"
 
 [Code]
+{ 旧版本的安装位置：读卸载注册表项里的 InstallLocation。
+  这里的 GUID 必须与 [Setup] 段 AppId 展开后的实际值保持一致
+  （AppId 写的是双花括号开头，展开后就是下面这个带花括号的 GUID）。 }
+function GetPreviousInstallDir(): String;
+var
+  PrevDir: String;
+begin
+  Result := '';
+  PrevDir := '';
+  if RegQueryStringValue(HKCU,
+       'Software\Microsoft\Windows\CurrentVersion\Uninstall\{8A7DBC8E-5877-472D-86C5-F3D1F2DF3785}_is1',
+       'InstallLocation', PrevDir) then
+    Result := PrevDir
+  else if RegQueryStringValue(HKLM,
+       'Software\Microsoft\Windows\CurrentVersion\Uninstall\{8A7DBC8E-5877-472D-86C5-F3D1F2DF3785}_is1',
+       'InstallLocation', PrevDir) then
+    Result := PrevDir;
+
+  { 去掉末尾反斜杠，便于拼接与比较 }
+  if (Length(Result) > 3) and (Result[Length(Result)] = '\') then
+    Delete(Result, Length(Result), 1);
+end;
+
+{ 路径是否落在临时目录下。临时目录会被磁盘清理/存储感知清空，
+  装在这里的软件随时可能消失，不能沿用。 }
+function IsUnderTempDir(const Dir: String): Boolean;
+begin
+  Result := (Dir <> '') and (Pos('\temp\', Lowercase(Dir)) > 0);
+end;
+
+{ DefaultDirName 的脚本常量实现：优先沿用用户自己选过的安装位置，
+  但临时目录一律改回标准位置。 }
+function GetDefaultDir(Param: String): String;
+var
+  PrevDir: String;
+begin
+  PrevDir := GetPreviousInstallDir();
+  if (PrevDir <> '') and (not IsUnderTempDir(PrevDir)) and DirExists(PrevDir) then
+    Result := PrevDir
+  else
+    Result := ExpandConstant('{autopf}\{#MyAppName}');
+end;
+
 function EscapeForPowerShellSingleQuoted(const S: String): String;
 var
   I: Integer;
@@ -96,8 +144,11 @@ procedure KillKnownExeNames;
 var
   ResultCode: Integer;
 begin
-  { /T 结束整个进程树；忽略返回码（进程可能本就不存在） }
-  Exec('taskkill.exe', '/F /IM entry.exe /T', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  { 注意：这里不能用 /T 结束进程树。
+    安装程序通常由客户端通过 os.startfile 拉起，此时它是 entry.exe 的子进程，
+    /T 会连同整棵进程树一起结束，把安装程序自己也杀掉，表现为「下载完没反应」。
+    子进程（ffmpeg/ffprobe）由下面的按名结束和应用目录扫描负责清理。 }
+  Exec('taskkill.exe', '/F /IM entry.exe', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
   Exec('taskkill.exe', '/F /IM ffmpeg.exe /T', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
   Exec('taskkill.exe', '/F /IM ffprobe.exe /T', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
 end;
@@ -141,9 +192,33 @@ begin
 end;
 
 function InitializeSetup(): Boolean;
+var
+  PrevDir, NewDir, Msg: String;
+  ResultCode: Integer;
 begin
   { 安装目录尚未就绪，只能按进程名关闭 }
   KillKnownExeNames;
+
+  { 历史版本若装在临时目录，先提示卸载，避免留下无法清理的残留 }
+  PrevDir := GetPreviousInstallDir();
+  if IsUnderTempDir(PrevDir) then
+  begin
+    NewDir := ExpandConstant('{autopf}\{#MyAppName}');
+    Msg := '检测到旧版本安装在临时目录：' + #13#10 + PrevDir + #13#10#13#10 +
+      '临时目录可能被系统清理，导致程序突然无法打开。建议先卸载旧版本，' +
+      '本次将安装到正常位置：' + #13#10 + NewDir + #13#10#13#10 +
+      '是否现在卸载旧版本？';
+    if MsgBox(Msg, mbConfirmation, MB_YESNO) = IDYES then
+    begin
+      if FileExists(PrevDir + '\unins000.exe') then
+        Exec(PrevDir + '\unins000.exe', '/SILENT /SUPPRESSMSGBOXES /NORESTART',
+          '', SW_SHOW, ewWaitUntilTerminated, ResultCode)
+      else
+        MsgBox('未找到卸载程序，请手动删除该目录后重新安装：' + #13#10 + PrevDir,
+          mbInformation, MB_OK);
+    end;
+  end;
+
   Result := True;
 end;
 
