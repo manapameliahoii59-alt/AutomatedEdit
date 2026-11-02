@@ -67,3 +67,16 @@ def test_record_download_and_clip(monkeypatch):
     assert "剧A" in row.downloaded_dramas
     assert "剧B" in row.downloaded_dramas
     assert row.clip_count == 2
+
+
+def test_daily_activity_cst_timezone():
+    from datetime import datetime, timezone, timedelta
+    from app.services.daily_activity import _cst_now, _today, BEIJING_TZ
+
+    now_expected = datetime.now(timezone(timedelta(hours=8))).replace(tzinfo=None)
+    now_actual = _cst_now()
+    assert abs((now_actual - now_expected).total_seconds()) < 5
+    assert now_actual.tzinfo is None
+
+    today_expected = datetime.now(timezone(timedelta(hours=8))).date()
+    assert _today() == today_expected

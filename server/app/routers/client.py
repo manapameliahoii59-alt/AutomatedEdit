@@ -280,9 +280,9 @@ def get_today_activity(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    from datetime import datetime, timezone
+    from app.services.daily_activity import _today
 
-    today = datetime.now(timezone.utc).date()
+    today = _today()
     row = (
         db.query(UserDailyActivity)
         .filter(UserDailyActivity.user_id == user.id, UserDailyActivity.activity_date == today)

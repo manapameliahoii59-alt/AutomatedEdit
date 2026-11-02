@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
@@ -15,9 +15,17 @@ _ACTIVITY_EVENTS = frozenset(
     {"app_login", "app_close", "download_drama", "plan_drama", "clip_drama"}
 )
 
+BEIJING_TZ = timezone(timedelta(hours=8))
+
+
+def _cst_now() -> datetime:
+    """返回东八区（北京时间）当前时间，移除 tzinfo 作为 naive datetime 存储。"""
+    return datetime.now(BEIJING_TZ).replace(tzinfo=None)
+
 
 def _today() -> date:
-    return datetime.now(timezone.utc).date()
+    """返回东八区（北京时间）当前日期。"""
+    return datetime.now(BEIJING_TZ).date()
 
 
 def _load_names(raw: str) -> list[str]:
@@ -87,7 +95,7 @@ def record_daily_activity(db: Session, user_id: int, event: str, meta: str = "")
         return
 
     row = _get_or_create_today(db, user_id)
-    now = datetime.now(timezone.utc)
+    now = _cst_now()
 
     if event == "app_login":
         if row.login_at is None:
