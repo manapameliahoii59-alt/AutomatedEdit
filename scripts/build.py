@@ -25,6 +25,21 @@ SITE_PACKAGES = PROJECT_ROOT / ".venv" / "Lib" / "site-packages"
 
 # Nuitka 无法稳定编译的模块（--nofollow-import-to 会跳过编译，需手动拷贝源码包）
 #
+# app 包不参与 Nuitka 编译（由 sync_app_layer 以源码形式放进 dist，运行时从磁盘加载）。
+# 这样一来 Nuitka 无法通过 app 里的 import 语句发现第三方依赖，
+# 以下包必须显式 include，否则不会被打进 dist。
+APP_ONLY_DEPENDENCIES = (
+    "qfluentwidgets",     # UI 库，仅被 app 引用；其 QtXml/QtSvg 等子模块由插件自动带入
+    "qframelesswindow",   # qfluentwidgets 依赖的无边框窗口库
+    "cv2",                # 图像处理，仅被 app 引用
+    "scenedetect",        # 镜头切分
+    "Crypto",             # pycryptodome
+    "loguru",             # 日志
+    "playwright",         # 浏览器自动化；不含它时只会带入 driver，缺 sync_api
+    "pyee",               # playwright 依赖
+    "greenlet",           # playwright 依赖
+)
+
 # 注意：torch 子包被 nofollow 后，Nuitka 的编译版 torch 不会回退到文件系统加载它们。
 # 因此 entry.py 中需要添加自定义 import hook 来兜底加载这些 nofollow 子包的源码。
 NUITKA_NOFOLLOW_MODULES = (
@@ -875,14 +890,23 @@ def main():
         build_command += f"--output-dir=out "
         build_command += f"--windows-company-name={AUTHOR} --windows-product-name={APP_NAME} "
         build_command += f"--windows-product-version={VERSION} "
+        # app 包参与 Nuitka 编译。
+        # 曾尝试 --nofollow-import-to=app 让业务代码从磁盘加载以支持极速打包，
+        # 但 Nuitka 无法通过 app 的 import 发现依赖，导致 dist 缺包；
+        # 且 --include-module 冻结的标准库包会遮蔽磁盘上的同名包
+        # （如 http 被冻结后 http.cookies 找不到）。故维持编译方式。
         build_command += "--follow-import-to=app "
         build_command += "--module-parameter=torch-disable-jit=yes "
         build_command += "--noinclude-numba-mode=nofollow "
         # 提速配置：
         # 1. 禁用 MinGW LTO 链接优化，避免全程序跨模块重分析导致链接卡顿 5~10 分钟
         build_command += "--lto=no "
-        # 2. 跑满系统所有 CPU 核心
-        cpu_jobs = os.cpu_count() or 8
+        # 禁用 ccache：部分机器上安全软件会拦截 ccache 写临时文件
+        # （ccache: Failed to write to ... Permission denied），导致 C 编译阶段失败
+        build_command += "--disable-ccache "
+        # 2. 并发数留出余量：多路 gcc 同时编译时偶发 cc1 死锁
+        # （进程启动后 CPU 停在 0.2 秒不再推进），可用 AE_BUILD_JOBS 覆盖
+        cpu_jobs = int(os.environ.get("AE_BUILD_JOBS", min(8, os.cpu_count() or 8)))
         build_command += f"--jobs={cpu_jobs} "
         # 3. 跳过第三方依赖内部大量无用测试模块的代码生成与编译
         build_command += "--nofollow-import-to=*.tests "
@@ -891,6 +915,8 @@ def main():
         build_command += "--no-pyi-file "
         for module in NUITKA_NOFOLLOW_MODULES:
             build_command += f"--nofollow-import-to={module} "
+        # 注意：APP_ONLY_DEPENDENCIES 仅在 app 不参与编译时才需要显式 include，
+        # 当前 app 参与编译，Nuitka 会自动跟随其 import 收集依赖，故不使用。
         for module in STDLIB_INCLUDE_MODULES:
             build_command += f"--include-module={module} "
         build_command += "entry.py"
