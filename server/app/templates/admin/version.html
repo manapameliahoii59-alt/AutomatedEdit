@@ -279,9 +279,24 @@
             <label class="form-label" for="download_url">
               安装包下载直链 (download_url)
             </label>
-            <input type="text" id="download_url" name="download_url" class="form-control" placeholder="例如: http://your-domain.com/release/AutomatedEdit-Setup.exe" value="{{ version_out.download_url }}">
-            <div class="form-tip">客户端更新弹窗中点击「立即更新」时所下载的 EXE 文件直链。</div>
+            <input type="text" id="download_url" name="download_url" class="form-control" placeholder="例如: https://bucket.cos.ap-guangzhou.myqcloud.com/xxx.exe" value="{{ raw_download_url }}">
+            <div class="form-tip">保存在 version.json 中的稳定地址。使用 COS 私有桶时填裸链即可，服务端会在此基础上现场签发临时链接，不要填写带签名的地址。</div>
           </div>
+
+          {% if signed_download_url %}
+          <div class="form-group">
+            <label class="form-label">当前下发给客户端的链接（临时签名）</label>
+            <div style="display: flex; gap: 8px; align-items: center;">
+              <input type="text" id="signedUrlBox" class="form-control" value="{{ signed_download_url }}" readonly onclick="this.select()" style="background: #f5f7fa; cursor: text;">
+              <button type="button" onclick="copySignedUrl(this)" style="flex: none; padding: 7px 14px; font-size: 13px; border: 1px solid #dcdfe6; background: #fff; border-radius: 4px; cursor: pointer; white-space: nowrap;">复制</button>
+              <a href="{{ signed_download_url }}" target="_blank" rel="noopener" style="flex: none; padding: 7px 14px; font-size: 13px; border: 1px solid #dcdfe6; background: #fff; border-radius: 4px; color: #606266; text-decoration: none; white-space: nowrap;">打开</a>
+            </div>
+            <div class="form-tip">
+              {% if signed_url_expire %}有效期至 <strong>{{ signed_url_expire }}</strong>，过期后刷新本页会重新签发。{% else %}每次刷新本页都会重新签发。{% endif %}
+              此链接含签名，请勿长期保存或对外分享。
+            </div>
+          </div>
+          {% endif %}
 
           <div class="form-group">
             <label class="form-label" for="installer">
@@ -366,6 +381,23 @@
     if (window.showAdminToast) {
       window.showAdminToast("已将最低支持版本同步设为 v" + latest + "，保存后将全员强制更新！", "warning");
     }
+  }
+
+  async function copySignedUrl(btn) {
+    const box = document.getElementById("signedUrlBox");
+    if (!box) return;
+    const text = box.value;
+    let ok = false;
+    try {
+      await navigator.clipboard.writeText(text);
+      ok = true;
+    } catch (e) {
+      box.select();
+      ok = document.execCommand("copy");
+    }
+    const old = btn.innerText;
+    btn.innerText = ok ? "已复制" : "复制失败";
+    setTimeout(() => { btn.innerText = old; }, 1200);
   }
 
   async function handleSaveVersion(event) {

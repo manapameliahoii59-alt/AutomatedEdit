@@ -14,6 +14,22 @@ if str(SERVER_ROOT) not in sys.path:
 from app.config import settings
 from app.routers import client as client_router
 from app.services import client_version as client_version_service
+from app.services import cos_presign
+
+
+@pytest.fixture(autouse=True)
+def _disable_cos(monkeypatch):
+    """隔离本机 .env 里的 COS 配置。
+
+    这些用例断言的是未启用 COS 时的静态直链行为；本机配了 COS 密钥后
+    build_client_version_out 会返回签名链接，导致断言失败。
+    """
+    monkeypatch.setattr(settings, "cos_secret_id", "")
+    monkeypatch.setattr(settings, "cos_secret_key", "")
+    monkeypatch.setattr(settings, "cos_bucket", "")
+    cos_presign.reset_cache()
+    yield
+    cos_presign.reset_cache()
 
 
 @pytest.fixture()

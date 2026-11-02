@@ -1620,6 +1620,20 @@ def profile_theme_reset_upload(request: Request):
     return RedirectResponse("/admin/profile?msg=upload_deleted", status_code=302)
 
 
+def _parse_signed_url_expire(url: str) -> str:
+    """从 COS 预签名链接的 q-sign-time 里解析过期时间，供后台展示。"""
+    if not url or "q-sign-time=" not in url:
+        return ""
+    try:
+        from urllib.parse import parse_qs, urlparse
+
+        query = parse_qs(urlparse(url).query)
+        _, end = query.get("q-sign-time", [""])[0].split(";")
+        return datetime.fromtimestamp(int(end)).strftime("%Y-%m-%d %H:%M")
+    except Exception:
+        return ""
+
+
 @router.get("/version", response_class=HTMLResponse)
 def admin_version_page(request: Request, db: Db):
     if not _is_logged_in(request):
@@ -1628,6 +1642,11 @@ def admin_version_page(request: Request, db: Db):
     v_out = client_version_service.build_client_version_out(request)
     raw_file = client_version_service._load_version_file() or {}
     installer_name = str(raw_file.get("installer") or raw_file.get("filename") or "").strip()
+    # 表单里编辑的应是 version.json 中保存的稳定值（裸链），
+    # 而 v_out.download_url 是每次请求现场签发的临时链接，不能回写配置。
+    raw_download_url = str(raw_file.get("download_url") or "").strip()
+    signed_download_url = v_out.download_url or ""
+    signed_url_expire = _parse_signed_url_expire(signed_download_url)
 
     version_stats: list[dict[str, Any]] = []
     try:
@@ -1667,6 +1686,9 @@ def admin_version_page(request: Request, db: Db):
         db=db,
         version_out=v_out,
         installer_name=installer_name,
+        raw_download_url=raw_download_url,
+        signed_download_url=signed_download_url,
+        signed_url_expire=signed_url_expire,
         version_stats=version_stats,
     )
     return templates.TemplateResponse(
@@ -1687,6 +1709,15 @@ async def admin_api_version_save(request: Request, db: Db):
     latest = (data.get("latest") or "").strip()
     min_supported = (data.get("min_supported") or "").strip()
     download_url = (data.get("download_url") or "").strip()
+    if download_url:
+        # 防御：若粘贴了带签名的临时链接，只保留路径部分，
+        # 避免把有时效的 q-signature 写进配置（服务端签名时会忽略 query，
+        # 但配置里存一条过期链接会误导排查）。
+        from urllib.parse import urlparse, urlunparse
+
+        _parsed = urlparse(download_url)
+        if _parsed.query or _parsed.fragment:
+            download_url = urlunparse(_parsed._replace(query="", fragment=""))
     changelog = (data.get("changelog") or "").strip()
     installer = (data.get("installer") or "").strip()
 
