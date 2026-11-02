@@ -8,6 +8,7 @@ from fastapi import Request
 
 from app.config import settings
 from app.schemas import ClientVersionOut
+from app.services import cos_presign
 
 SERVER_ROOT = Path(__file__).resolve().parents[2]
 REPO_ROOT = SERVER_ROOT.parent
@@ -65,10 +66,20 @@ def _build_download_url(
     explicit_url: str = "",
 ) -> str:
     explicit = (explicit_url or "").strip()
+    name = (installer or "").strip()
+
+    # COS 私有桶模式：把裸链（或文件名）换成短时效预签名直链。
+    # 裸链本身不再可下载，链接被转发出去也会在有效期内自动失效。
+    # 未配置 COS 或签名失败时自动回退到下面的静态地址，线上行为不变。
+    if cos_presign.is_enabled():
+        key = cos_presign.object_key_from_url(explicit or name)
+        signed = cos_presign.presign_get_url(key) if key else ""
+        if signed:
+            return signed
+
     if explicit:
         return explicit
 
-    name = (installer or "").strip()
     if not name:
         return ""
 

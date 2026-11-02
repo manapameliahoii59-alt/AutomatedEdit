@@ -48,5 +48,16 @@ class Settings(BaseSettings):
     client_download_url: str = ""
     client_changelog: str = ""
 
+    # 腾讯云 COS：安装包放私有桶，由服务端签发短时效预签名直链，
+    # 避免裸链被公开转发后无限刷流量。三项都为空时自动回退为静态直链。
+    cos_secret_id: str = ""
+    cos_secret_key: str = ""
+    cos_bucket: str = ""          # 例：dragoncos-1394428777
+    cos_region: str = "ap-guangzhou"
+    # 预签名有效期（秒），COS 上限 7200
+    cos_signed_url_ttl_seconds: int = 1800
+    # 对象键前缀，version.json 里只写文件名时自动补齐，例：release
+    cos_object_prefix: str = ""
+
 
 settings = Settings()
