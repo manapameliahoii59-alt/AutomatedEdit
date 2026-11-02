@@ -444,11 +444,8 @@ class ForcedUpdateDialog(QDialog):
 class UpdateAvailableDialog(QDialog):
     """普通更新提示框。
 
-    更新说明放进固定高度的可滚动区域：条目多时只增高到上限（6 行），
-    超出部分滚动查看，避免整个弹框被撑得很长。
+    只展示当前版本与最新版本，不展开更新说明，避免弹窗过长。
     """
-
-    MAX_VISIBLE_LINES = 6
 
     def __init__(self, info: UpdateInfo, parent: QWidget | None = None):
         super().__init__(parent)
@@ -476,23 +473,6 @@ class UpdateAvailableDialog(QDialog):
         sub = QLabel(f"当前版本 v{VERSION}")
         sub.setStyleSheet("font-size: 12px; color: #8c8c8c;")
         layout.addWidget(sub)
-
-        if self.info.changelog:
-            cl_title = QLabel("更新说明")
-            cl_title.setStyleSheet("font-size: 12px; font-weight: bold; color: #595959;")
-            layout.addWidget(cl_title)
-
-            box = QTextEdit()
-            box.setReadOnly(True)
-            box.setPlainText(self.info.changelog)
-            lines = max(1, len(self.info.changelog.splitlines()))
-            visible = min(lines, self.MAX_VISIBLE_LINES)
-            box.setFixedHeight(visible * 19 + 18)
-            box.setStyleSheet(
-                "background: #f5f5f5; border: 1px solid #d9d9d9; border-radius: 4px;"
-                " padding: 6px; font-size: 12px; color: #595959;"
-            )
-            layout.addWidget(box)
 
         if self.info.download_url:
             prompt = QLabel("下载完成后会自动打开安装程序；安装前请先关闭本程序。")
