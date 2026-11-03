@@ -22,14 +22,15 @@ from app.data.services.changdu_browser import (
 )
 from app.data.services.changdu_paths import AUTH_FILE, DEFAULT_DOWNLOAD_DIR
 
-# 接口路径以站点当前前端包（platform-cn/static/js/main.*.js）为准：
-# GetBookList   -> /novelsale/distributor/content/book/list/v1
-# GetChapterList-> /novelsale/distributor/content/chapter/info/v1
-# GetChapterDetail -> /novelsale/distributor/content/chapter/detail/v1
-# 旧的 series/list、episode/info、player/info 在现行前端包里已不存在。
-SERIES_LIST_PATH = "/novelsale/distributor/content/book/list/v1"
-EPISODE_INFO_PATH = "/novelsale/distributor/content/chapter/info/v1"
-PLAYER_INFO_PATH = "/novelsale/distributor/content/chapter/detail/v1"
+# 实测确认（2026-11-03，带真实登录态）：
+#   series/list/v1  仍可用，返回 {code, data:{data:[...], total}}，条目含 book_id/episode_amount
+#   book/list/v1    返回 code=0 但 total=0，属于另一套（书库）列表，不适用
+#   episode/info/v1 仍可用，返回 data.data 剧集数组（item_id/chapter_name/order/need_pay）
+#   chapter/info/v1 返回 0 条
+# 结论：沿用旧路径，勿按 main.js 的接口映射改动。
+SERIES_LIST_PATH = "/novelsale/distributor/content/series/list/v1/"
+EPISODE_INFO_PATH = "/novelsale/distributor/content/episode/info/v1"
+PLAYER_INFO_PATH = "/novelsale/distributor/content/player/info/v2/"
 BATCH_DOWNLOAD_PATH = "/node/api/platform/distributor/playlet/batch_create_download_task/v6/"
 DOWNLOAD_TASK_LIST_PATH = "/node/api/platform/distributor/download_center/task_list/"
 DOWNLOAD_GET_URL_PATH = "/node/api/platform/distributor/download_center/get_url/"
@@ -816,11 +817,19 @@ class SeriesListClient:
 
     def check_auth(self) -> dict[str, Any]:
         json_data = self.fetch_list({"page_index": "0", "page_size": "1"})
+        data = json_data.get("data")
+        total = None
+        if isinstance(data, dict):
+            total = data.get("total")
+            if total is None:
+                total = len(data.get("data") or [])
+        elif isinstance(data, list):
+            total = len(data)
         return {
             "ok": json_data.get("code") == 0,
             "code": json_data.get("code"),
             "message": json_data.get("message"),
-            "total": (json_data.get("data") or {}).get("total"),
+            "total": total,
         }
 
     def search_by_name(self, keyword: str, options: dict[str, Any] | None = None) -> dict[str, Any]:
