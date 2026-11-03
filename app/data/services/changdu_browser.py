@@ -3,7 +3,11 @@
 from __future__ import annotations
 
 import json
+import shutil
+import tempfile
+import time
 import urllib.parse
+from pathlib import Path
 
 from app.data.services.changdu_paths import DEVICE_COOKIES_FILE
 
@@ -188,6 +192,10 @@ LAUNCH_ARGS = [
 def browser_context_kwargs(*, storage_state: str | None = None) -> dict:
     """Playwright new_context 公共参数。"""
     kwargs: dict = {
+        # 视频下载走 requests 直连 CDN，不依赖浏览器下载。
+        # Playwright 默认 accept_downloads=True，一旦页面触发下载，文件会被静默存进
+        # %TEMP%\playwright-artifacts-*\ 且永不清理（曾累积到 32GB）。此处显式关闭。
+        "accept_downloads": False,
         "user_agent": CHROME_USER_AGENT,
         "locale": BROWSER_LOCALE,
         "timezone_id": BROWSER_TIMEZONE,
@@ -311,3 +319,31 @@ def apply_device_cookies(context) -> None:
         context.add_cookies(cookies)
     except Exception:
         pass
+
+
+def cleanup_stale_artifacts(max_age_days: int = 7) -> int:
+    """清理 Playwright 遗留在系统临时目录的下载/录像文件。
+
+    历史版本未关闭 accept_downloads，浏览器下载的文件会静默落到
+    %TEMP%\\playwright-artifacts-*\\ 且永不清理（实测累积过 32GB）。
+    现已在 browser_context_kwargs 中关闭下载捕获，此函数负责回收旧残留。
+
+    只处理修改时间超过 max_age_days 的目录，正在运行的上下文不受影响。
+    返回清理的目录数。
+    """
+    root = Path(tempfile.gettempdir())
+    cutoff = time.time() - max_age_days * 86400
+    removed = 0
+    try:
+        candidates = list(root.glob("playwright-artifacts-*"))
+    except Exception:
+        return 0
+    for path in candidates:
+        try:
+            if path.stat().st_mtime > cutoff:
+                continue
+            shutil.rmtree(path, ignore_errors=True)
+            removed += 1
+        except Exception:
+            continue
+    return removed

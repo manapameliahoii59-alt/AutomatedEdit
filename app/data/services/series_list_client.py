@@ -18,6 +18,7 @@ from app.data.services.changdu_browser import (
     STEALTH_INIT_SCRIPT,
     apply_device_cookies,
     browser_context_kwargs,
+    cleanup_stale_artifacts,
     format_cookie_header,
     save_device_cookies,
     zip_download_headers,
@@ -108,6 +109,8 @@ class SeriesListClient:
                 "args": list(LAUNCH_ARGS),
             }
             try:
+                # 回收历史版本遗留在 %TEMP% 的 Playwright 下载残留（只清 7 天前的）
+                cleanup_stale_artifacts()
                 # 优先调用系统真实 Chrome 渠道，继承原生插件与显卡环境特征（应对 shelldriver 检测）
                 self.browser = self._playwright.chromium.launch(
                     channel="chrome",
