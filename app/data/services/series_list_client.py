@@ -503,9 +503,14 @@ class SeriesListClient:
         self, book_id: str, book_name: str, from_ep: int, to_ep: int
     ) -> dict[str, Any]:
         ep_json = self.fetch_episodes_in_range(book_id, from_ep, to_ep)
-        episodes = (ep_json.get("data") or {}).get("data") or []
+        data = ep_json.get("data")
+        episodes = (data or {}).get("data") if isinstance(data, dict) else None
         if not episodes:
-            raise RuntimeError("未获取到集数信息")
+            # 接口会返回 code=0 但无 data：多为该剧未授权下载 / 非短剧类型 / 剧集未开放
+            raise RuntimeError(
+                f"《{book_name}》暂无可下载剧集（book_id={book_id}）："
+                "可能未授权下载、不是短剧类型，或剧集尚未开放"
+            )
         sliced = episodes[from_ep - 1 : to_ep]
         need = to_ep - from_ep + 1
         if len(sliced) != need:
