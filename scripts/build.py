@@ -901,12 +901,19 @@ def main():
         # 提速配置：
         # 1. 禁用 MinGW LTO 链接优化，避免全程序跨模块重分析导致链接卡顿 5~10 分钟
         build_command += "--lto=no "
-        # 禁用 ccache：部分机器上安全软件会拦截 ccache 写临时文件
-        # （ccache: Failed to write to ... Permission denied），导致 C 编译阶段失败
-        build_command += "--disable-ccache "
-        # 2. 并发数留出余量：多路 gcc 同时编译时偶发 cc1 死锁
-        # （进程启动后 CPU 停在 0.2 秒不再推进），可用 AE_BUILD_JOBS 覆盖
-        cpu_jobs = int(os.environ.get("AE_BUILD_JOBS", min(8, os.cpu_count() or 8)))
+        # 使用 ccache 加速 C 编译：Nuitka 每次构建都会重建 entry.build，
+        # 未改动的第三方模块若命中 ccache 可近乎瞬间完成。
+        # 必须显式指定缓存目录：Nuitka 会把 TMP 指向构建目录，
+        # ccache 往那里写临时文件会被拒（Failed to write ... Permission denied）。
+        _ccache_dir = Path(os.environ.get("LOCALAPPDATA", str(Path.home()))) / "ccache"
+        (_ccache_dir / "tmp").mkdir(parents=True, exist_ok=True)
+        os.environ["CCACHE_DIR"] = str(_ccache_dir)
+        os.environ["CCACHE_TEMPDIR"] = str(_ccache_dir / "tmp")
+        os.environ.setdefault("CCACHE_MAXSIZE", "20G")
+        # 2. 并发数：默认 4 路。多路 gcc 并发时曾出现 cc1 死锁
+        # （进程启动后 CPU 停在 0.2 秒不再推进），4 路在速度与稳定性间折中，
+        # 可用环境变量 AE_BUILD_JOBS 覆盖。
+        cpu_jobs = int(os.environ.get("AE_BUILD_JOBS", min(4, os.cpu_count() or 4)))
         build_command += f"--jobs={cpu_jobs} "
         # 3. 跳过第三方依赖内部大量无用测试模块的代码生成与编译
         build_command += "--nofollow-import-to=*.tests "
