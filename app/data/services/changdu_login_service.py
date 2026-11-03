@@ -10,7 +10,9 @@ from app.common.config import cfg
 from app.data.services.changdu_browser import (
     LAUNCH_ARGS,
     STEALTH_INIT_SCRIPT,
+    apply_device_cookies,
     browser_context_kwargs,
+    save_device_cookies,
 )
 from app.data.services.changdu_paths import AUTH_FILE, ensure_changdu_dirs
 
@@ -302,6 +304,8 @@ def run_changdu_login(auth_file: Path | None = None) -> Path:
             except Exception:
                 browser = playwright.chromium.launch(**launch_kwargs)
             context = browser.new_context(**browser_context_kwargs())
+            # 登录与下载共用同一份设备标识，避免被当成新设备
+            apply_device_cookies(context)
             page = context.new_page()
             page.add_init_script(STEALTH_INIT_SCRIPT)
             page.goto(HOME_URL, timeout=60_000)
@@ -320,6 +324,8 @@ def run_changdu_login(auth_file: Path | None = None) -> Path:
                 missing_account = _ensure_account_ids(context, page)
 
             context.storage_state(path=str(target))
+            # 登录过程中可能刷新了设备标识，一并保存供后续下载复用
+            save_device_cookies(context.cookies())
             missing_after_save = _verify_saved_auth(target)
             browser.close()
             leftover = sorted(set(missing_account) | set(missing_after_save))

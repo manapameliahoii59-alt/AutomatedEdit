@@ -16,8 +16,10 @@ from playwright.sync_api import Browser, BrowserContext, Page, sync_playwright
 from app.data.services.changdu_browser import (
     LAUNCH_ARGS,
     STEALTH_INIT_SCRIPT,
+    apply_device_cookies,
     browser_context_kwargs,
     format_cookie_header,
+    save_device_cookies,
     zip_download_headers,
 )
 from app.data.services.changdu_paths import AUTH_FILE, DEFAULT_DOWNLOAD_DIR
@@ -116,6 +118,8 @@ class SeriesListClient:
             self.context = self.browser.new_context(
                 **browser_context_kwargs(storage_state=str(self.auth_file))
             )
+            # 复用上次的设备标识，避免每次运行都被识别成新设备
+            apply_device_cookies(self.context)
             self.page = self.context.new_page()
             self.page.add_init_script(STEALTH_INIT_SCRIPT)
 
@@ -217,6 +221,12 @@ class SeriesListClient:
         if self._closed:
             return
         self._closed = True
+        # 关闭前把设备标识 Cookie 落盘，供下次启动复用
+        if self.context is not None:
+            try:
+                save_device_cookies(self.context.cookies())
+            except Exception:
+                pass
         self.page = None
         self.context = None
         browser = self.browser

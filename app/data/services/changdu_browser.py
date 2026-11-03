@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import json
 import urllib.parse
+
+from app.data.services.changdu_paths import DEVICE_COOKIES_FILE
 
 # 与当前主流 Chromium 对齐的桌面 Chrome UA 及 Client Hints（登录与下载共用）
 CHROME_USER_AGENT = (
@@ -251,3 +254,60 @@ def format_cookie_header(cookies: list[dict]) -> str:
             safe_value = _safe_header_str(value)
             parts.append(f"{safe_name}={safe_value}")
     return "; ".join(parts)
+
+
+# 站点用于识别"同一台设备"的 Cookie。每次都用全新上下文会重新生成这些值，
+# 同一 IP 下频繁出现新设备反而更容易被风控。保存并在新上下文中复用。
+DEVICE_COOKIE_NAMES = ("s_v_web_id", "fg_uid", "n_mh", "gfkadpd")
+
+
+def load_device_cookies() -> list[dict]:
+    """读取本地保存的设备标识 Cookie。"""
+    path = DEVICE_COOKIES_FILE
+    if not path.is_file():
+        return []
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return []
+    cookies: list[dict] = []
+    for item in data.get("cookies", []):
+        name = item.get("name")
+        value = item.get("value")
+        if name in DEVICE_COOKIE_NAMES and value:
+            entry = {"name": name, "value": value}
+            for key in ("domain", "path"):
+                if item.get(key):
+                    entry[key] = item[key]
+            cookies.append(entry)
+    return cookies
+
+
+def save_device_cookies(cookies: list[dict]) -> None:
+    """把上下文里的设备标识 Cookie 落盘，供下次复用。"""
+    picked = [
+        {k: c[k] for k in ("name", "value", "domain", "path") if k in c}
+        for c in cookies
+        if c.get("name") in DEVICE_COOKIE_NAMES and c.get("value")
+    ]
+    if not picked:
+        return
+    try:
+        DEVICE_COOKIES_FILE.parent.mkdir(parents=True, exist_ok=True)
+        DEVICE_COOKIES_FILE.write_text(
+            json.dumps({"cookies": picked}, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+    except Exception:
+        pass
+
+
+def apply_device_cookies(context) -> None:
+    """把已保存的设备标识注入新建的浏览器上下文（失败不影响主流程）。"""
+    cookies = load_device_cookies()
+    if not cookies:
+        return
+    try:
+        context.add_cookies(cookies)
+    except Exception:
+        pass
