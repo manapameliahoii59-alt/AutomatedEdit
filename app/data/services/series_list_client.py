@@ -22,9 +22,14 @@ from app.data.services.changdu_browser import (
 )
 from app.data.services.changdu_paths import AUTH_FILE, DEFAULT_DOWNLOAD_DIR
 
-SERIES_LIST_PATH = "/novelsale/distributor/content/series/list/v1/"
-EPISODE_INFO_PATH = "/novelsale/distributor/content/episode/info/v1"
-PLAYER_INFO_PATH = "/novelsale/distributor/content/player/info/v2/"
+# 接口路径以站点当前前端包（platform-cn/static/js/main.*.js）为准：
+# GetBookList   -> /novelsale/distributor/content/book/list/v1
+# GetChapterList-> /novelsale/distributor/content/chapter/info/v1
+# GetChapterDetail -> /novelsale/distributor/content/chapter/detail/v1
+# 旧的 series/list、episode/info、player/info 在现行前端包里已不存在。
+SERIES_LIST_PATH = "/novelsale/distributor/content/book/list/v1"
+EPISODE_INFO_PATH = "/novelsale/distributor/content/chapter/info/v1"
+PLAYER_INFO_PATH = "/novelsale/distributor/content/chapter/detail/v1"
 BATCH_DOWNLOAD_PATH = "/node/api/platform/distributor/playlet/batch_create_download_task/v6/"
 DOWNLOAD_TASK_LIST_PATH = "/node/api/platform/distributor/download_center/task_list/"
 DOWNLOAD_GET_URL_PATH = "/node/api/platform/distributor/download_center/get_url/"
@@ -115,14 +120,20 @@ class SeriesListClient:
 
             cookies = self.context.cookies()
             self._cookie_header = format_cookie_header(cookies)
+            cookie_names = {c["name"] for c in cookies}
             self.ad_user_id = next((c["value"] for c in cookies if c["name"] == "adUserId"), None)
             self.root_ad_user_id = next(
                 (c["value"] for c in cookies if c["name"] == "rootAdUserId"), None
             )
+            # 真正决定接口能否返回数据的是 .changdupingtai.com 上的 HttpOnly 会话 Cookie，
+            # 浏览器会自动携带，不需要写进请求头。adUserId / rootAdUserId 只是账号标识，
+            # 站点改版后可能不再下发，缺失时不再阻断（请求头会相应省略）。
+            if "sessionid" not in cookie_names and "sid_guard" not in cookie_names:
+                raise RuntimeError("登录已过期：缺少会话 Cookie，请重新登录")
             if not self.ad_user_id:
-                raise RuntimeError("auth.json 中缺少 adUserId Cookie，请重新登录")
+                self.ad_user_id = None
             if not self.root_ad_user_id:
-                raise RuntimeError("auth.json 中缺少 rootAdUserId Cookie，请重新登录")
+                self.root_ad_user_id = self.ad_user_id
 
             self._goto_home_page()
             self._wait_for_secsdk_ready()
@@ -298,7 +309,6 @@ class SeriesListClient:
                     appid: String(app.app_id),
                     apptype: String(app.app_type),
                     distributorid: String(app.distributor_id),
-                    aduserid: adUserId,
                     'agw-js-conv': 'str',
                     'sec-ch-ua': '"Google Chrome";v="131", "Chromium";v="131", "Not_A Brand";v="24"',
                     'sec-ch-ua-mobile': '?0',
@@ -307,10 +317,13 @@ class SeriesListClient:
                     'sec-fetch-mode': 'cors',
                     'sec-fetch-site': 'same-origin',
                 };
+                if (adUserId) {
+                    headers.aduserid = adUserId;
+                }
                 if (!contentApi) {
                     headers['x-secsdk-csrf-token'] = 'DOWNGRADE';
                 }
-                if (platform) {
+                if (platform && rootAdUserId) {
                     headers.rootaduserid = rootAdUserId;
                 }
                 if (referer && !contentApi) {
@@ -355,27 +368,32 @@ class SeriesListClient:
 
         result = self.page.evaluate(
             """async ({ apiPath, bodyStr, app, adUserId, rootAdUserId, referer }) => {
+                const headers = {
+                    accept: 'application/json, text/plain, */*',
+                    'content-type': 'application/json',
+                    appid: String(app.app_id),
+                    apptype: String(app.app_type),
+                    distributorid: String(app.distributor_id),
+                    'agw-js-conv': 'str',
+                    'sec-ch-ua': '"Google Chrome";v="131", "Chromium";v="131", "Not_A Brand";v="24"',
+                    'sec-ch-ua-mobile': '?0',
+                    'sec-ch-ua-platform': '"Windows"',
+                    'sec-fetch-dest': 'empty',
+                    'sec-fetch-mode': 'cors',
+                    'sec-fetch-site': 'same-origin',
+                    'x-secsdk-csrf-token': 'DOWNGRADE',
+                    referer,
+                };
+                if (adUserId) {
+                    headers.aduserid = adUserId;
+                }
+                if (rootAdUserId) {
+                    headers.rootaduserid = rootAdUserId;
+                }
                 const res = await fetch(apiPath, {
                     method: 'POST',
                     credentials: 'include',
-                    headers: {
-                        accept: 'application/json, text/plain, */*',
-                        'content-type': 'application/json',
-                        appid: String(app.app_id),
-                        apptype: String(app.app_type),
-                        distributorid: String(app.distributor_id),
-                        aduserid: adUserId,
-                        rootaduserid: rootAdUserId,
-                        'agw-js-conv': 'str',
-                        'sec-ch-ua': '"Google Chrome";v="131", "Chromium";v="131", "Not_A Brand";v="24"',
-                        'sec-ch-ua-mobile': '?0',
-                        'sec-ch-ua-platform': '"Windows"',
-                        'sec-fetch-dest': 'empty',
-                        'sec-fetch-mode': 'cors',
-                        'sec-fetch-site': 'same-origin',
-                        'x-secsdk-csrf-token': 'DOWNGRADE',
-                        referer,
-                    },
+                    headers,
                     body: bodyStr,
                 });
                 const text = await res.text();
