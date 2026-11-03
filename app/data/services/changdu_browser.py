@@ -28,15 +28,23 @@ DOWNLOAD_CENTER_REFERER = f"{HOME_ORIGIN}/sale/download-center"
 # 4. 遮蔽 WebGL SwiftShader 软件渲染指纹，模拟正常 Intel 显卡特征。
 STEALTH_INIT_SCRIPT = """
 (function() {
-  // 1. 原型链 webdriver 彻底清除
+  // 1. webdriver 伪装成 false
+  // 注意：不能 delete。真实 Chrome 里 navigator.webdriver === false，
+  // delete 之后会变成 undefined，站点的验证码组件会用
+  // String(navigator.webdriver) 上报，得到 "undefined" 反而成为异常特征。
   try {
-    const proto = Object.getPrototypeOf(navigator);
-    if ('webdriver' in proto) {
-      delete proto.webdriver;
-    }
+    Object.defineProperty(Navigator.prototype, 'webdriver', {
+      get: function() { return false; },
+      configurable: true,
+      enumerable: true,
+    });
   } catch (e) {}
   try {
-    delete navigator.webdriver;
+    Object.defineProperty(navigator, 'webdriver', {
+      get: function() { return false; },
+      configurable: true,
+      enumerable: true,
+    });
   } catch (e) {}
 
   // 2. 补齐真实的 window.chrome 对象与 [native code] 原生函数特征
